@@ -67,7 +67,7 @@ struct linux_binprm {
 	unsigned long exec;
 
 	struct rlimit rlim_stack; /* Saved RLIMIT_STACK used during exec. */
-
+	bool hydra_repl_enabled;
 	char buf[BINPRM_BUF_SIZE];
 } __randomize_layout;
 

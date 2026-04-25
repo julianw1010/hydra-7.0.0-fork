@@ -307,7 +307,7 @@ static inline bool mm_in_asid_transition(struct mm_struct *mm) { return false; }
 		flush_tlb_mm_range(mm, 0UL, TLB_FLUSH_ALL, 0UL, true)
 
 #define flush_tlb_range(vma, start, end)				\
-	flush_tlb_mm_range((vma)->vm_mm, start, end,			\
+	flush_tlb_vma_range(vma, start, end,				\
 			   ((vma)->vm_flags & VM_HUGETLB)		\
 				? huge_page_shift(hstate_vma(vma))	\
 				: PAGE_SHIFT, true)
@@ -316,11 +316,17 @@ extern void flush_tlb_all(void);
 extern void flush_tlb_mm_range(struct mm_struct *mm, unsigned long start,
 				unsigned long end, unsigned int stride_shift,
 				bool freed_tables);
+extern void flush_tlb_mm_node_range(struct mm_struct *mm, unsigned long start,
+				unsigned long end, unsigned int stride_shift,
+				bool freed_tables, nodemask_t *nodemask);
+extern void flush_tlb_vma_range(struct vm_area_struct *vmm, unsigned long start,
+				unsigned long end, unsigned int stride_shift,
+				bool freed_tables);
 extern void flush_tlb_kernel_range(unsigned long start, unsigned long end);
 
 static inline void flush_tlb_page(struct vm_area_struct *vma, unsigned long a)
 {
-	flush_tlb_mm_range(vma->vm_mm, a, a + PAGE_SIZE, PAGE_SHIFT, false);
+	flush_tlb_vma_range(vma, a, a + PAGE_SIZE, PAGE_SHIFT, false);
 }
 
 static inline bool arch_tlbbatch_should_defer(struct mm_struct *mm)
@@ -487,4 +493,7 @@ static inline void __native_tlb_flush_global(unsigned long cr4)
 	native_write_cr4(cr4 ^ X86_CR4_PGE);
 	native_write_cr4(cr4);
 }
+
+extern int sysctl_hydra_tlbflush_opt;
+
 #endif /* _ASM_X86_TLBFLUSH_H */

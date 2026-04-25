@@ -76,6 +76,12 @@ typedef struct {
 #define _struct_page_alignment	__aligned(sizeof(unsigned long))
 #endif
 
+#ifdef CONFIG_HYDRA_NUMA_NODE_COUNT
+#define NUMA_NODE_COUNT CONFIG_HYDRA_NUMA_NODE_COUNT
+#else
+#error "CONFIG_HYDRA_NUMA_NODE_COUNT is not defined. Enable HYDRA_NUMA_NODE_COUNT in Kconfig."
+#endif
+
 struct page {
 	memdesc_flags_t flags;		/* Atomic flags, some possibly
 					 * updated asynchronously */
@@ -219,6 +225,9 @@ struct page {
 	struct page *kmsan_shadow;
 	struct page *kmsan_origin;
 #endif
+	struct page *next_replica;
+	struct mm_struct *pt_owner_mm;
+	struct mitosis_pte_tracking *mitosis_tracking;
 } _struct_page_alignment;
 
 /*
@@ -988,6 +997,9 @@ struct vm_area_struct {
 #ifdef CONFIG_NUMA_BALANCING
 	struct vma_numab_state *numab_state;	/* NUMA Balancing state */
 #endif
+
+	unsigned long  master_pgd_node;
+
 #ifdef CONFIG_PER_VMA_LOCK
 	/*
 	 * Used to keep track of firstly, whether the VMA is attached, secondly,
@@ -1146,8 +1158,18 @@ struct mm_struct {
 		unsigned long mmap_compat_base;
 		unsigned long mmap_compat_legacy_base;
 #endif
-		unsigned long task_size;	/* size of task vm space */
-		pgd_t * pgd;
+	unsigned long task_size;		/* size of task vm space */
+	unsigned long highest_vm_end;		/* highest vma end address */
+
+	bool          lazy_repl_enabled;
+	
+	
+	pgd_t * repl_pgd[NUMA_NODE_COUNT];
+	
+	spinlock_t hydra_deferred_lock;
+	struct page *hydra_deferred_pages;
+	
+	pgd_t * pgd;
 
 #ifdef CONFIG_MEMBARRIER
 		/**

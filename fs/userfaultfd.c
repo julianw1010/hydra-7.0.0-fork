@@ -33,6 +33,8 @@
 #include <linux/miscdevice.h>
 #include <linux/uio.h>
 
+#include <linux/hydra_util.h>
+
 static int sysctl_unprivileged_userfaultfd __read_mostly;
 
 #ifdef CONFIG_SYSCTL
@@ -296,7 +298,10 @@ static inline bool userfaultfd_must_wait(struct userfaultfd_ctx *ctx,
 
 	assert_fault_locked(vmf);
 
-	pgd = pgd_offset(mm, address);
+	if (mm->lazy_repl_enabled)
+		pgd = pgd_offset_node(mm, address, vmf->vma->master_pgd_node);
+	else
+		pgd = pgd_offset(mm, address);
 	if (!pgd_present(*pgd))
 		return true;
 	p4d = p4d_offset(pgd, address);

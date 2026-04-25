@@ -1636,6 +1636,10 @@ struct task_struct {
 	struct unwind_task_info		unwind_info;
 #endif
 
+#ifdef CONFIG_X86
+	int hydra_fault_target_node;
+#endif
+
 	/* CPU-specific state of this task: */
 	struct thread_struct		thread;
 

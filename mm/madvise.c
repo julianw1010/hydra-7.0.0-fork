@@ -601,6 +601,7 @@ static long madvise_cold(struct madvise_behavior *madv_behavior)
 
 	lru_add_drain();
 	tlb_gather_mmu(&tlb, madv_behavior->mm);
+	tlb.vma = vma;
 	madvise_cold_page_range(&tlb, madv_behavior);
 	tlb_finish_mmu(&tlb);
 
@@ -642,6 +643,7 @@ static long madvise_pageout(struct madvise_behavior *madv_behavior)
 
 	lru_add_drain();
 	tlb_gather_mmu(&tlb, madv_behavior->mm);
+	tlb.vma = vma;
 	madvise_pageout_page_range(&tlb, vma, &madv_behavior->range);
 	tlb_finish_mmu(&tlb);
 

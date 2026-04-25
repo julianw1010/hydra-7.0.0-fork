@@ -32,6 +32,7 @@
 
 #include "internal.h"
 
+#include <linux/hydra_util.h>
 /* Classify the kind of remap operation being performed. */
 enum mremap_type {
 	MREMAP_INVALID,		/* Initial state. */
@@ -72,13 +73,13 @@ struct vma_remap_struct {
 	bool vmi_needs_invalidate;	/* Is the VMA iterator invalidated? */
 };
 
-static pud_t *get_old_pud(struct mm_struct *mm, unsigned long addr)
+static pud_t *get_old_pud(struct mm_struct *mm, struct vm_area_struct *vma, unsigned long addr)
 {
 	pgd_t *pgd;
 	p4d_t *p4d;
 	pud_t *pud;
 
-	pgd = pgd_offset(mm, addr);
+	pgd = mm->lazy_repl_enabled ? pgd_offset_node(mm, addr, vma->master_pgd_node) : pgd_offset(mm, addr);
 	if (pgd_none_or_clear_bad(pgd))
 		return NULL;
 
@@ -93,12 +94,12 @@ static pud_t *get_old_pud(struct mm_struct *mm, unsigned long addr)
 	return pud;
 }
 
-static pmd_t *get_old_pmd(struct mm_struct *mm, unsigned long addr)
+static pmd_t *get_old_pmd(struct mm_struct *mm, struct vm_area_struct *vma, unsigned long addr)
 {
 	pud_t *pud;
 	pmd_t *pmd;
 
-	pud = get_old_pud(mm, addr);
+	pud = get_old_pud(mm, vma, addr);
 	if (!pud)
 		return NULL;
 
@@ -109,25 +110,23 @@ static pmd_t *get_old_pmd(struct mm_struct *mm, unsigned long addr)
 	return pmd;
 }
 
-static pud_t *alloc_new_pud(struct mm_struct *mm, unsigned long addr)
+static pud_t *alloc_new_pud(struct mm_struct *mm, struct vm_area_struct *vma, unsigned long addr)
 {
 	pgd_t *pgd;
 	p4d_t *p4d;
-
-	pgd = pgd_offset(mm, addr);
+	pgd = mm->lazy_repl_enabled ? pgd_offset_node(mm, addr, vma->master_pgd_node) : pgd_offset(mm, addr);
 	p4d = p4d_alloc(mm, pgd, addr);
 	if (!p4d)
 		return NULL;
-
 	return pud_alloc(mm, p4d, addr);
 }
 
-static pmd_t *alloc_new_pmd(struct mm_struct *mm, unsigned long addr)
+static pmd_t *alloc_new_pmd(struct mm_struct *mm, struct vm_area_struct *vma, unsigned long addr)
 {
 	pud_t *pud;
 	pmd_t *pmd;
 
-	pud = alloc_new_pud(mm, addr);
+	pud = alloc_new_pud(mm, vma, addr);
 	if (!pud)
 		return NULL;
 
@@ -798,6 +797,7 @@ unsigned long move_page_tables(struct pagetable_move_control *pmc)
 	struct mmu_notifier_range range;
 	pmd_t *old_pmd, *new_pmd;
 	pud_t *old_pud, *new_pud;
+	struct hydra_node_scope scope;
 	struct mm_struct *mm = pmc->old->vm_mm;
 
 	if (!pmc->len_in)
@@ -818,6 +818,8 @@ unsigned long move_page_tables(struct pagetable_move_control *pmc)
 				pmc->old_addr, pmc->old_end);
 	mmu_notifier_invalidate_range_start(&range);
 
+	scope = hydra_enter_node_scope(mm, pmc->new->master_pgd_node);
+
 	for (; !pmc_done(pmc); pmc_next(pmc, extent)) {
 		cond_resched();
 		/*
@@ -826,10 +828,10 @@ unsigned long move_page_tables(struct pagetable_move_control *pmc)
 		 */
 		extent = get_extent(NORMAL_PUD, pmc);
 
-		old_pud = get_old_pud(mm, pmc->old_addr);
+		old_pud = get_old_pud(mm, pmc->old, pmc->old_addr);
 		if (!old_pud)
 			continue;
-		new_pud = alloc_new_pud(mm, pmc->new_addr);
+		new_pud = alloc_new_pud(mm, pmc->new, pmc->new_addr);
 		if (!new_pud)
 			break;
 		if (pud_trans_huge(*old_pud)) {
@@ -844,10 +846,10 @@ unsigned long move_page_tables(struct pagetable_move_control *pmc)
 		}
 
 		extent = get_extent(NORMAL_PMD, pmc);
-		old_pmd = get_old_pmd(mm, pmc->old_addr);
+		old_pmd = get_old_pmd(mm, pmc->old, pmc->old_addr);
 		if (!old_pmd)
 			continue;
-		new_pmd = alloc_new_pmd(mm, pmc->new_addr);
+		new_pmd = alloc_new_pmd(mm, pmc->new, pmc->new_addr);
 		if (!new_pmd)
 			break;
 again:
@@ -872,6 +874,8 @@ again:
 		if (move_ptes(pmc, extent, old_pmd, new_pmd) < 0)
 			goto again;
 	}
+
+	hydra_exit_node_scope(&scope);
 
 	mmu_notifier_invalidate_range_end(&range);
 

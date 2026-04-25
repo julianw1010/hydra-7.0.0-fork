@@ -2431,9 +2431,7 @@ static void do_pages_stat_array(struct mm_struct *mm, unsigned long nr_pages,
 				const void __user **pages, int *status)
 {
 	unsigned long i;
-
 	mmap_read_lock(mm);
-
 	for (i = 0; i < nr_pages; i++) {
 		unsigned long addr = (unsigned long)(*pages);
 		struct vm_area_struct *vma;
@@ -2457,13 +2455,12 @@ static void do_pages_stat_array(struct mm_struct *mm, unsigned long nr_pages,
 		} else {
 			err = -ENOENT;
 		}
+
 set_status:
 		*status = err;
-
 		pages++;
 		status++;
 	}
-
 	mmap_read_unlock(mm);
 }
 

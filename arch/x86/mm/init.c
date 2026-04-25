@@ -847,7 +847,7 @@ void __init poking_init(void)
 	 * needed for poking now. Later, poking may be performed in an atomic
 	 * section, which might cause allocation to fail.
 	 */
-	ptep = get_locked_pte(text_poke_mm, text_poke_mm_addr, &ptl);
+	ptep = get_locked_pte(text_poke_mm, text_poke_mm_addr, &ptl, NULL);
 	BUG_ON(!ptep);
 	pte_unmap_unlock(ptep, ptl);
 }

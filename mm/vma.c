@@ -195,13 +195,17 @@ static void init_multi_vma_prep(struct vma_prepare *vp,
 static bool can_vma_merge_before(struct vma_merge_struct *vmg)
 {
 	pgoff_t pglen = PHYS_PFN(vmg->end - vmg->start);
+	struct mm_struct *mm = vmg->next->vm_mm;
 
-	if (is_mergeable_vma(vmg, /* merge_next = */ true) &&
-	    is_mergeable_anon_vma(vmg, /* merge_next = */ true)) {
+	if (mm->lazy_repl_enabled &&
+	    vmg->next->master_pgd_node != vmg->master_pgd_node)
+		return false;
+
+	if (is_mergeable_vma(vmg, true) &&
+	    is_mergeable_anon_vma(vmg, true)) {
 		if (vmg->next->vm_pgoff == vmg->pgoff + pglen)
 			return true;
 	}
-
 	return false;
 }
 
@@ -216,8 +220,14 @@ static bool can_vma_merge_before(struct vma_merge_struct *vmg)
  */
 static bool can_vma_merge_after(struct vma_merge_struct *vmg)
 {
-	if (is_mergeable_vma(vmg, /* merge_next = */ false) &&
-	    is_mergeable_anon_vma(vmg, /* merge_next = */ false)) {
+	struct mm_struct *mm = vmg->prev->vm_mm;
+
+	if (mm->lazy_repl_enabled &&
+	    vmg->prev->master_pgd_node != vmg->master_pgd_node)
+		return false;
+
+	if (is_mergeable_vma(vmg, false) &&
+	    is_mergeable_anon_vma(vmg, false)) {
 		if (vmg->prev->vm_pgoff + vma_pages(vmg->prev) == vmg->pgoff)
 			return true;
 	}
@@ -493,7 +503,7 @@ void unmap_region(struct unmap_desc *unmap)
  * has already been checked or doesn't make sense to fail.
  * VMA Iterator will point to the original VMA.
  */
-static __must_check int
+__must_check int
 __split_vma(struct vma_iterator *vmi, struct vm_area_struct *vma,
 	    unsigned long addr, int new_below)
 {

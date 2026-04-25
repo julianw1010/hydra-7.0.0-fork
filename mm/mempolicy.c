@@ -118,6 +118,11 @@
 #include <linux/uaccess.h>
 #include <linux/memory.h>
 
+#include <asm/pgtable.h>
+#include <asm/mmu_context.h>
+#include <asm/pgalloc.h>
+#include <asm/hydra_pti.h>
+
 #include "internal.h"
 
 /* Internal flags */
@@ -894,6 +899,8 @@ unsigned long change_prot_numa(struct vm_area_struct *vma,
 	long nr_updated;
 
 	tlb_gather_mmu(&tlb, vma->vm_mm);
+
+	tlb.vma = vma;
 
 	nr_updated = change_protection(&tlb, vma, addr, end, MM_CP_PROT_NUMA);
 	if (nr_updated > 0) {

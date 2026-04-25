@@ -10,6 +10,11 @@
 #
 # Normal rules (sorted alphabetically)
 #
+initramfs*
+boot.sh
+diffall.sh
+compile.sh
+hydra700.txt
 .*
 *.a
 *.asn1.[ch]

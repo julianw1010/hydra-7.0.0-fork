@@ -39,6 +39,8 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/exceptions.h>
 
+#include <linux/hydra_util.h>
+
 /*
  * Returns 0 if mmiotrace is disabled, or if the fault is not
  * handled by mmiotrace:
@@ -1382,6 +1384,7 @@ retry:
 	 * userland). The return to userland is identified whenever
 	 * FAULT_FLAG_USER|FAULT_FLAG_KILLABLE are both set in flags.
 	 */
+	 
 	fault = handle_mm_fault(vma, address, flags, regs);
 
 	if (fault_signal_pending(fault, regs)) {

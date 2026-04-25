@@ -1169,6 +1169,8 @@ static inline int pgd_none(pgd_t pgd)
 
 #endif	/* __ASSEMBLER__ */
 
+#define pgd_offset_node(mm, address, node) pgd_offset_pgd((mm)->repl_pgd[(node)], (address))
+
 #define KERNEL_PGD_BOUNDARY	pgd_index(PAGE_OFFSET)
 #define KERNEL_PGD_PTRS		(PTRS_PER_PGD - KERNEL_PGD_BOUNDARY)
 
@@ -1248,49 +1250,25 @@ extern int ptep_clear_flush_young(struct vm_area_struct *vma,
 				  unsigned long address, pte_t *ptep);
 
 #define __HAVE_ARCH_PTEP_GET_AND_CLEAR
-static inline pte_t ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
-				       pte_t *ptep)
-{
-	pte_t pte = native_ptep_get_and_clear(ptep);
-	page_table_check_pte_clear(mm, addr, pte);
-	return pte;
-}
+pte_t ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
+				       pte_t *ptep);
 
 #define __HAVE_ARCH_PTEP_GET_AND_CLEAR_FULL
 static inline pte_t ptep_get_and_clear_full(struct mm_struct *mm,
 					    unsigned long addr, pte_t *ptep,
 					    int full)
 {
-	pte_t pte;
-	if (full) {
-		/*
-		 * Full address destruction in progress; paravirt does not
-		 * care about updates and native needs no locking
-		 */
-		pte = native_local_ptep_get_and_clear(ptep);
+	if (full && (!mm || !mm->lazy_repl_enabled)) {
+		pte_t pte = native_ptep_get_and_clear(ptep);
 		page_table_check_pte_clear(mm, addr, pte);
-	} else {
-		pte = ptep_get_and_clear(mm, addr, ptep);
+		return pte;
 	}
-	return pte;
+	return ptep_get_and_clear(mm, addr, ptep);
 }
 
 #define __HAVE_ARCH_PTEP_SET_WRPROTECT
-static inline void ptep_set_wrprotect(struct mm_struct *mm,
-				      unsigned long addr, pte_t *ptep)
-{
-	/*
-	 * Avoid accidentally creating shadow stack PTEs
-	 * (Write=0,Dirty=1).  Use cmpxchg() to prevent races with
-	 * the hardware setting Dirty=1.
-	 */
-	pte_t old_pte, new_pte;
-
-	old_pte = READ_ONCE(*ptep);
-	do {
-		new_pte = pte_wrprotect(old_pte);
-	} while (!try_cmpxchg((long *)&ptep->pte, (long *)&old_pte, *(long *)&new_pte));
-}
+void ptep_set_wrprotect(struct mm_struct *mm,
+				      unsigned long addr, pte_t *ptep);
 
 #define flush_tlb_fix_spurious_fault(vma, address, ptep) do { } while (0)
 
@@ -1314,15 +1292,8 @@ extern int pmdp_clear_flush_young(struct vm_area_struct *vma,
 
 
 #define __HAVE_ARCH_PMDP_HUGE_GET_AND_CLEAR
-static inline pmd_t pmdp_huge_get_and_clear(struct mm_struct *mm, unsigned long addr,
-				       pmd_t *pmdp)
-{
-	pmd_t pmd = native_pmdp_get_and_clear(pmdp);
-
-	page_table_check_pmd_clear(mm, addr, pmd);
-
-	return pmd;
-}
+pmd_t pmdp_huge_get_and_clear(struct mm_struct *mm, unsigned long addr,
+			      pmd_t *pmdp);
 
 #define __HAVE_ARCH_PUDP_HUGE_GET_AND_CLEAR
 static inline pud_t pudp_huge_get_and_clear(struct mm_struct *mm,
@@ -1336,35 +1307,17 @@ static inline pud_t pudp_huge_get_and_clear(struct mm_struct *mm,
 }
 
 #define __HAVE_ARCH_PMDP_SET_WRPROTECT
-static inline void pmdp_set_wrprotect(struct mm_struct *mm,
-				      unsigned long addr, pmd_t *pmdp)
-{
-	/*
-	 * Avoid accidentally creating shadow stack PTEs
-	 * (Write=0,Dirty=1).  Use cmpxchg() to prevent races with
-	 * the hardware setting Dirty=1.
-	 */
-	pmd_t old_pmd, new_pmd;
-
-	old_pmd = READ_ONCE(*pmdp);
-	do {
-		new_pmd = pmd_wrprotect(old_pmd);
-	} while (!try_cmpxchg((long *)pmdp, (long *)&old_pmd, *(long *)&new_pmd));
-}
+void pmdp_set_wrprotect(struct mm_struct *mm,
+			unsigned long addr, pmd_t *pmdp);
 
 #ifndef pmdp_establish
 #define pmdp_establish pmdp_establish
+pmd_t hydra_pmdp_establish(pmd_t *pmdp, pmd_t pmd);
 static inline pmd_t pmdp_establish(struct vm_area_struct *vma,
 		unsigned long address, pmd_t *pmdp, pmd_t pmd)
 {
 	page_table_check_pmd_set(vma->vm_mm, address, pmdp, pmd);
-	if (IS_ENABLED(CONFIG_SMP)) {
-		return xchg(pmdp, pmd);
-	} else {
-		pmd_t old = *pmdp;
-		WRITE_ONCE(*pmdp, pmd);
-		return old;
-	}
+	return hydra_pmdp_establish(pmdp, pmd);
 }
 #endif
 
@@ -1741,6 +1694,20 @@ bool arch_is_platform_page(u64 paddr);
 	WARN_ON_ONCE(pgd_present(*pgdp) && !pgd_same(*pgdp, pgd)); \
 	set_pgd(pgdp, pgd); \
 })
+
+void pgtable_repl_set_pte(pte_t *ptep, pte_t pteval);
+pte_t pgtable_repl_get_pte(pte_t *ptep);
+void pgtable_repl_set_pte_at(struct mm_struct *mm, unsigned long addr, pte_t *ptep, pte_t pteval);
+
+pmd_t hydra_get_pmd(pmd_t *pmdp);
+
+void pgd_dtor(pgd_t *pgd);
+
+void pgtable_track_set_pmd(pmd_t *pmdp, pmd_t pmd);
+void pgtable_track_set_pud(pud_t *pudp, pud_t pud);
+void pgtable_track_set_p4d(p4d_t *p4dp, p4d_t p4d);
+void pgtable_track_set_pgd(pgd_t *pgdp, pgd_t pgd);
+
 #endif	/* __ASSEMBLER__ */
 
 #endif /* _ASM_X86_PGTABLE_H */

@@ -85,6 +85,10 @@ extern void * high_memory;
 
 #ifdef CONFIG_SYSCTL
 extern int sysctl_legacy_va_layout;
+#ifdef CONFIG_X86
+extern int sysctl_hydra_repl_order;
+extern int sysctl_hydra_auto_enable;
+#endif
 #else
 #define sysctl_legacy_va_layout 0
 #endif
@@ -2894,6 +2898,8 @@ struct vm_area_struct *lock_mm_and_find_vma(struct mm_struct *mm,
 		unsigned long address, struct pt_regs *regs);
 
 #ifdef CONFIG_MMU
+int __handle_mm_fault(struct vm_area_struct *vma, unsigned long address,
+		unsigned int flags, int use_master);
 extern vm_fault_t handle_mm_fault(struct vm_area_struct *vma,
 				  unsigned long address, unsigned int flags,
 				  struct pt_regs *regs);
@@ -3075,21 +3081,18 @@ void mm_trace_rss_stat(struct mm_struct *mm, int member);
 static inline void add_mm_counter(struct mm_struct *mm, int member, long value)
 {
 	percpu_counter_add(&mm->rss_stat[member], value);
-
 	mm_trace_rss_stat(mm, member);
 }
 
 static inline void inc_mm_counter(struct mm_struct *mm, int member)
 {
 	percpu_counter_inc(&mm->rss_stat[member]);
-
 	mm_trace_rss_stat(mm, member);
 }
 
 static inline void dec_mm_counter(struct mm_struct *mm, int member)
 {
 	percpu_counter_dec(&mm->rss_stat[member]);
-
 	mm_trace_rss_stat(mm, member);
 }
 
@@ -3197,16 +3200,21 @@ static inline pud_t pud_mkspecial(pud_t pud)
 #endif	/* CONFIG_ARCH_SUPPORTS_PUD_PFNMAP */
 
 extern pte_t *get_locked_pte(struct mm_struct *mm, unsigned long addr,
-			     spinlock_t **ptl);
-
+			     spinlock_t **ptl, struct vm_area_struct *vma);
 #ifdef __PAGETABLE_P4D_FOLDED
 static inline int __p4d_alloc(struct mm_struct *mm, pgd_t *pgd,
 						unsigned long address)
 {
 	return 0;
 }
+static inline int __repl_p4d_alloc(struct mm_struct *mm, pgd_t *pgd,
+					unsigned long address, size_t nid)
+{
+	return 0;
+}
 #else
 int __p4d_alloc(struct mm_struct *mm, pgd_t *pgd, unsigned long address);
+int __repl_p4d_alloc(struct mm_struct *mm, pgd_t *pgd, unsigned long address, size_t nid);
 #endif
 
 #if defined(__PAGETABLE_PUD_FOLDED) || !defined(CONFIG_MMU)
@@ -3220,6 +3228,7 @@ static inline void mm_dec_nr_puds(struct mm_struct *mm) {}
 
 #else
 int __pud_alloc(struct mm_struct *mm, p4d_t *p4d, unsigned long address);
+int __repl_pud_alloc(struct mm_struct *mm, p4d_t *p4d, unsigned long address, size_t nid);
 
 static inline void mm_inc_nr_puds(struct mm_struct *mm)
 {
@@ -3248,6 +3257,7 @@ static inline void mm_dec_nr_pmds(struct mm_struct *mm) {}
 
 #else
 int __pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address);
+int __repl_pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address, size_t nid, size_t owner_node);
 
 static inline void mm_inc_nr_pmds(struct mm_struct *mm)
 {
@@ -3307,6 +3317,12 @@ static inline p4d_t *p4d_alloc(struct mm_struct *mm, pgd_t *pgd,
 	return (unlikely(pgd_none(*pgd)) && __p4d_alloc(mm, pgd, address)) ?
 		NULL : p4d_offset(pgd, address);
 }
+static inline p4d_t *repl_p4d_alloc(struct mm_struct *mm, pgd_t *pgd,
+		unsigned long address, size_t nid)
+{
+	return (unlikely(pgd_none(*pgd)) && __repl_p4d_alloc(mm, pgd, address, nid)) ?
+		NULL : p4d_offset(pgd, address);
+}
 
 static inline pud_t *pud_alloc(struct mm_struct *mm, p4d_t *p4d,
 		unsigned long address)
@@ -3315,11 +3331,25 @@ static inline pud_t *pud_alloc(struct mm_struct *mm, p4d_t *p4d,
 		NULL : pud_offset(p4d, address);
 }
 
+static inline pud_t *repl_pud_alloc(struct mm_struct *mm, p4d_t *p4d,
+		unsigned long address, size_t nid)
+{
+	return (unlikely(p4d_none(*p4d)) && __repl_pud_alloc(mm, p4d, address, nid)) ?
+		NULL : pud_offset(p4d, address);
+}
+
 static inline pmd_t *pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address)
 {
 	return (unlikely(pud_none(*pud)) && __pmd_alloc(mm, pud, address))?
 		NULL: pmd_offset(pud, address);
 }
+
+static inline pmd_t *repl_pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address, size_t nid, size_t owner_node)
+{
+	return (unlikely(pud_none(*pud)) && __repl_pmd_alloc(mm, pud, address, nid, owner_node))?
+		NULL: pmd_offset(pud, address);
+}
+
 #endif /* CONFIG_MMU */
 
 enum pt_flags {

@@ -1015,7 +1015,7 @@ static struct page *follow_page_mask(struct vm_area_struct *vma,
 	vma_pgtable_walk_begin(vma);
 
 	*page_mask = 0;
-	pgd = pgd_offset(mm, address);
+	pgd = mm->lazy_repl_enabled ? pgd_offset_node(mm, address, vma->master_pgd_node) : pgd_offset(mm, address);
 
 	if (pgd_none(*pgd) || unlikely(pgd_bad(*pgd)))
 		page = no_page_table(vma, flags, address);
@@ -3132,6 +3132,9 @@ static unsigned long gup_fast(unsigned long start, unsigned long end,
 	unsigned long flags;
 	int nr_pinned = 0;
 	unsigned seq;
+
+	if (current->mm->lazy_repl_enabled)
+		return 0;
 
 	if (!IS_ENABLED(CONFIG_HAVE_GUP_FAST) ||
 	    !gup_fast_permitted(start, end))

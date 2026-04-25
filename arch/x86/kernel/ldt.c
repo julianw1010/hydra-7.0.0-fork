@@ -263,19 +263,43 @@ static void sanity_check_ldt_mapping(struct mm_struct *mm)
 
 static void map_ldt_struct_to_user(struct mm_struct *mm)
 {
-	pgd_t *pgd = pgd_offset(mm, LDT_BASE_ADDR);
+	pgd_t *pgd;
 
-	if (boot_cpu_has(X86_FEATURE_PTI) && !mm->context.ldt)
+	if (!boot_cpu_has(X86_FEATURE_PTI) || mm->context.ldt)
+		return;
+
+	if (mm->lazy_repl_enabled) {
+		int n;
+		for (n = 0; n < NUMA_NODE_COUNT; n++) {
+			if (!mm->repl_pgd[n])
+				continue;
+			pgd = pgd_offset_pgd(mm->repl_pgd[n], LDT_BASE_ADDR);
+			set_pgd(kernel_to_user_pgdp(pgd), *pgd);
+		}
+	} else {
+		pgd = pgd_offset(mm, LDT_BASE_ADDR);
 		set_pgd(kernel_to_user_pgdp(pgd), *pgd);
+	}
 }
 
 static void sanity_check_ldt_mapping(struct mm_struct *mm)
 {
-	pgd_t *pgd = pgd_offset(mm, LDT_BASE_ADDR);
-	bool had_kernel = (pgd->pgd != 0);
-	bool had_user   = (kernel_to_user_pgdp(pgd)->pgd != 0);
+	pgd_t *pgd;
 
-	do_sanity_check(mm, had_kernel, had_user);
+	if (mm->lazy_repl_enabled) {
+		int n;
+		for (n = 0; n < NUMA_NODE_COUNT; n++) {
+			if (!mm->repl_pgd[n])
+				continue;
+			pgd = pgd_offset_pgd(mm->repl_pgd[n], LDT_BASE_ADDR);
+			do_sanity_check(mm, pgd->pgd != 0,
+					kernel_to_user_pgdp(pgd)->pgd != 0);
+		}
+	} else {
+		pgd = pgd_offset(mm, LDT_BASE_ADDR);
+		do_sanity_check(mm, pgd->pgd != 0,
+				kernel_to_user_pgdp(pgd)->pgd != 0);
+	}
 }
 
 #endif /* CONFIG_X86_PAE */
@@ -323,7 +347,7 @@ map_ldt_struct(struct mm_struct *mm, struct ldt_struct *ldt, int slot)
 		 * get_locked_pte() will allocate all needed pagetables
 		 * and account for them in this mm.
 		 */
-		ptep = get_locked_pte(mm, va, &ptl);
+		ptep = get_locked_pte(mm, va, &ptl, NULL);
 		if (!ptep)
 			return -ENOMEM;
 		/*
@@ -366,7 +390,7 @@ static void unmap_ldt_struct(struct mm_struct *mm, struct ldt_struct *ldt)
 		pte_t *ptep;
 
 		va = (unsigned long)ldt_slot_va(ldt->slot) + offset;
-		ptep = get_locked_pte(mm, va, &ptl);
+		ptep = get_locked_pte(mm, va, &ptl, NULL);
 		if (!WARN_ON_ONCE(!ptep)) {
 			pte_clear(mm, va, ptep);
 			pte_unmap_unlock(ptep, ptl);

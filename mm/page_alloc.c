@@ -5284,6 +5284,13 @@ struct page *__alloc_pages_noprof(gfp_t gfp, unsigned int order,
 	page = __alloc_frozen_pages_noprof(gfp, order, preferred_nid, nodemask);
 	if (page)
 		set_page_refcounted(page);
+
+	if (page) {
+		page->next_replica = NULL;
+		page->pt_owner_mm = NULL;
+		page->mitosis_tracking = NULL;
+	}
+
 	return page;
 }
 EXPORT_SYMBOL(__alloc_pages_noprof);
@@ -5326,6 +5333,13 @@ static void ___free_pages(struct page *page, unsigned int order,
 	int head = PageHead(page);
 	/* get alloc tag in case the page is released by others */
 	struct alloc_tag *tag = pgalloc_tag_get(page);
+
+	page->next_replica = NULL;
+	page->pt_owner_mm = NULL;
+	if (page->mitosis_tracking) {
+		kfree(page->mitosis_tracking);
+		page->mitosis_tracking = NULL;
+	}
 
 	if (put_page_testzero(page))
 		__free_frozen_pages(page, order, fpi_flags);

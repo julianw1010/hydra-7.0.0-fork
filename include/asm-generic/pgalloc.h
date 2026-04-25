@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0 */
+#/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __ASM_GENERIC_PGALLOC_H
 #define __ASM_GENERIC_PGALLOC_H
 
@@ -7,39 +7,30 @@
 #define GFP_PGTABLE_KERNEL	(GFP_KERNEL | __GFP_ZERO)
 #define GFP_PGTABLE_USER	(GFP_PGTABLE_KERNEL | __GFP_ACCOUNT)
 
-/**
- * __pte_alloc_one_kernel - allocate memory for a PTE-level kernel page table
- * @mm: the mm_struct of the current context
- *
- * This function is intended for architectures that need
- * anything beyond simple page allocation.
- *
- * Return: pointer to the allocated memory or %NULL on error
- */
+#include <asm/pgtable.h>
+#include <linux/hydra_util.h>
+
 static inline pte_t *__pte_alloc_one_kernel_noprof(struct mm_struct *mm)
 {
-	struct ptdesc *ptdesc = pagetable_alloc_noprof(GFP_PGTABLE_KERNEL, 0);
+	struct ptdesc *ptdesc;
+	struct page *page;
 
-	if (!ptdesc)
+	page = hydra_alloc_pt_page(mm, GFP_PGTABLE_KERNEL, 0);
+	if (!page)
 		return NULL;
+
+	ptdesc = page_ptdesc(page);
 	if (!pagetable_pte_ctor(mm, ptdesc)) {
-		pagetable_free(ptdesc);
+		__free_page(page);
 		return NULL;
 	}
-
 	ptdesc_set_kernel(ptdesc);
-
 	return ptdesc_address(ptdesc);
 }
+
 #define __pte_alloc_one_kernel(...)	alloc_hooks(__pte_alloc_one_kernel_noprof(__VA_ARGS__))
 
 #ifndef __HAVE_ARCH_PTE_ALLOC_ONE_KERNEL
-/**
- * pte_alloc_one_kernel - allocate memory for a PTE-level kernel page table
- * @mm: the mm_struct of the current context
- *
- * Return: pointer to the allocated memory or %NULL on error
- */
 static inline pte_t *pte_alloc_one_kernel_noprof(struct mm_struct *mm)
 {
 	return __pte_alloc_one_kernel_noprof(mm);
@@ -47,37 +38,32 @@ static inline pte_t *pte_alloc_one_kernel_noprof(struct mm_struct *mm)
 #define pte_alloc_one_kernel(...)	alloc_hooks(pte_alloc_one_kernel_noprof(__VA_ARGS__))
 #endif
 
-/**
- * pte_free_kernel - free PTE-level kernel page table memory
- * @mm: the mm_struct of the current context
- * @pte: pointer to the memory containing the page table
- */
 static inline void pte_free_kernel(struct mm_struct *mm, pte_t *pte)
 {
-	pagetable_dtor_free(virt_to_ptdesc(pte));
+	struct ptdesc *ptdesc = virt_to_ptdesc(pte);
+	struct page *page = ptdesc_page(ptdesc);
+
+	hydra_break_chain(page);
+	pagetable_dtor(ptdesc);
+
+	if (hydra_try_return_page(page))
+		return;
+
+	pagetable_free(ptdesc);
 }
 
-/**
- * __pte_alloc_one - allocate memory for a PTE-level user page table
- * @mm: the mm_struct of the current context
- * @gfp: GFP flags to use for the allocation
- *
- * Allocate memory for a page table and ptdesc and runs pagetable_pte_ctor().
- *
- * This function is intended for architectures that need
- * anything beyond simple page allocation or must have custom GFP flags.
- *
- * Return: `struct page` referencing the ptdesc or %NULL on error
- */
 static inline pgtable_t __pte_alloc_one_noprof(struct mm_struct *mm, gfp_t gfp)
 {
 	struct ptdesc *ptdesc;
+	struct page *page;
 
-	ptdesc = pagetable_alloc_noprof(gfp, 0);
-	if (!ptdesc)
+	page = hydra_alloc_pt_page(mm, gfp, 0);
+	if (!page)
 		return NULL;
+
+	ptdesc = page_ptdesc(page);
 	if (!pagetable_pte_ctor(mm, ptdesc)) {
-		pagetable_free(ptdesc);
+		__free_page(page);
 		return NULL;
 	}
 
@@ -86,14 +72,6 @@ static inline pgtable_t __pte_alloc_one_noprof(struct mm_struct *mm, gfp_t gfp)
 #define __pte_alloc_one(...)	alloc_hooks(__pte_alloc_one_noprof(__VA_ARGS__))
 
 #ifndef __HAVE_ARCH_PTE_ALLOC_ONE
-/**
- * pte_alloc_one - allocate a page for PTE-level user page table
- * @mm: the mm_struct of the current context
- *
- * Allocate memory for a page table and ptdesc and runs pagetable_pte_ctor().
- *
- * Return: `struct page` referencing the ptdesc or %NULL on error
- */
 static inline pgtable_t pte_alloc_one_noprof(struct mm_struct *mm)
 {
 	return __pte_alloc_one_noprof(mm, GFP_PGTABLE_USER);
@@ -101,50 +79,38 @@ static inline pgtable_t pte_alloc_one_noprof(struct mm_struct *mm)
 #define pte_alloc_one(...)	alloc_hooks(pte_alloc_one_noprof(__VA_ARGS__))
 #endif
 
-/*
- * Should really implement gc for free page table pages. This could be
- * done with a reference count in struct page.
- */
-
-/**
- * pte_free - free PTE-level user page table memory
- * @mm: the mm_struct of the current context
- * @pte_page: the `struct page` referencing the ptdesc
- */
 static inline void pte_free(struct mm_struct *mm, struct page *pte_page)
 {
 	struct ptdesc *ptdesc = page_ptdesc(pte_page);
 
-	pagetable_dtor_free(ptdesc);
-}
+	hydra_break_chain(pte_page);
+	pagetable_dtor(ptdesc);
 
+	if (hydra_try_return_page(pte_page))
+		return;
+
+	pagetable_free(ptdesc);
+}
 
 #if CONFIG_PGTABLE_LEVELS > 2
 
 #ifndef __HAVE_ARCH_PMD_ALLOC_ONE
-/**
- * pmd_alloc_one - allocate memory for a PMD-level page table
- * @mm: the mm_struct of the current context
- *
- * Allocate memory for a page table and ptdesc and runs pagetable_pmd_ctor().
- *
- * Allocations use %GFP_PGTABLE_USER in user context and
- * %GFP_PGTABLE_KERNEL in kernel context.
- *
- * Return: pointer to the allocated memory or %NULL on error
- */
 static inline pmd_t *pmd_alloc_one_noprof(struct mm_struct *mm, unsigned long addr)
 {
 	struct ptdesc *ptdesc;
+	struct page *page;
 	gfp_t gfp = GFP_PGTABLE_USER;
 
 	if (mm == &init_mm)
 		gfp = GFP_PGTABLE_KERNEL;
-	ptdesc = pagetable_alloc_noprof(gfp, 0);
-	if (!ptdesc)
+
+	page = hydra_alloc_pt_page(mm, gfp, 0);
+	if (!page)
 		return NULL;
+
+	ptdesc = page_ptdesc(page);
 	if (!pagetable_pmd_ctor(mm, ptdesc)) {
-		pagetable_free(ptdesc);
+		__free_page(page);
 		return NULL;
 	}
 
@@ -160,9 +126,16 @@ static inline pmd_t *pmd_alloc_one_noprof(struct mm_struct *mm, unsigned long ad
 static inline void pmd_free(struct mm_struct *mm, pmd_t *pmd)
 {
 	struct ptdesc *ptdesc = virt_to_ptdesc(pmd);
+	struct page *page = ptdesc_page(ptdesc);
 
-	BUG_ON((unsigned long)pmd & (PAGE_SIZE-1));
-	pagetable_dtor_free(ptdesc);
+	BUG_ON((unsigned long)pmd & (PAGE_SIZE - 1));
+	hydra_break_chain(page);
+	pagetable_dtor(ptdesc);
+
+	if (hydra_try_return_page(page))
+		return;
+
+	pagetable_free(ptdesc);
 }
 #endif
 
@@ -172,16 +145,18 @@ static inline void pmd_free(struct mm_struct *mm, pmd_t *pmd)
 
 static inline pud_t *__pud_alloc_one_noprof(struct mm_struct *mm, unsigned long addr)
 {
-	gfp_t gfp = GFP_PGTABLE_USER;
 	struct ptdesc *ptdesc;
+	struct page *page;
+	gfp_t gfp = GFP_PGTABLE_USER;
 
 	if (mm == &init_mm)
 		gfp = GFP_PGTABLE_KERNEL;
 
-	ptdesc = pagetable_alloc_noprof(gfp, 0);
-	if (!ptdesc)
+	page = hydra_alloc_pt_page(mm, gfp | __GFP_ZERO, 0);
+	if (!page)
 		return NULL;
 
+	ptdesc = page_ptdesc(page);
 	pagetable_pud_ctor(ptdesc);
 
 	if (mm == &init_mm)
@@ -192,15 +167,6 @@ static inline pud_t *__pud_alloc_one_noprof(struct mm_struct *mm, unsigned long 
 #define __pud_alloc_one(...)	alloc_hooks(__pud_alloc_one_noprof(__VA_ARGS__))
 
 #ifndef __HAVE_ARCH_PUD_ALLOC_ONE
-/**
- * pud_alloc_one - allocate memory for a PUD-level page table
- * @mm: the mm_struct of the current context
- *
- * Allocate memory for a page table using %GFP_PGTABLE_USER for user context
- * and %GFP_PGTABLE_KERNEL for kernel context.
- *
- * Return: pointer to the allocated memory or %NULL on error
- */
 static inline pud_t *pud_alloc_one_noprof(struct mm_struct *mm, unsigned long addr)
 {
 	return __pud_alloc_one_noprof(mm, addr);
@@ -211,8 +177,13 @@ static inline pud_t *pud_alloc_one_noprof(struct mm_struct *mm, unsigned long ad
 static inline void __pud_free(struct mm_struct *mm, pud_t *pud)
 {
 	struct ptdesc *ptdesc = virt_to_ptdesc(pud);
+	struct page *page = ptdesc_page(ptdesc);
 
-	BUG_ON((unsigned long)pud & (PAGE_SIZE-1));
+	BUG_ON((unsigned long)pud & (PAGE_SIZE - 1));
+
+	if (hydra_try_return_page(page))
+		return;
+
 	pagetable_dtor_free(ptdesc);
 }
 
@@ -229,16 +200,18 @@ static inline void pud_free(struct mm_struct *mm, pud_t *pud)
 
 static inline p4d_t *__p4d_alloc_one_noprof(struct mm_struct *mm, unsigned long addr)
 {
-	gfp_t gfp = GFP_PGTABLE_USER;
 	struct ptdesc *ptdesc;
+	struct page *page;
+	gfp_t gfp = GFP_PGTABLE_USER;
 
 	if (mm == &init_mm)
 		gfp = GFP_PGTABLE_KERNEL;
 
-	ptdesc = pagetable_alloc_noprof(gfp, 0);
-	if (!ptdesc)
+	page = hydra_alloc_pt_page(mm, gfp | __GFP_ZERO, 0);
+	if (!page)
 		return NULL;
 
+	ptdesc = page_ptdesc(page);
 	pagetable_p4d_ctor(ptdesc);
 
 	if (mm == &init_mm)
@@ -256,11 +229,18 @@ static inline p4d_t *p4d_alloc_one_noprof(struct mm_struct *mm, unsigned long ad
 #define p4d_alloc_one(...)	alloc_hooks(p4d_alloc_one_noprof(__VA_ARGS__))
 #endif
 
+extern p4d_t *repl_p4d_alloc_one(struct mm_struct *mm, unsigned long addr, size_t nid);
+
 static inline void __p4d_free(struct mm_struct *mm, p4d_t *p4d)
 {
 	struct ptdesc *ptdesc = virt_to_ptdesc(p4d);
+	struct page *page = ptdesc_page(ptdesc);
 
-	BUG_ON((unsigned long)p4d & (PAGE_SIZE-1));
+	BUG_ON((unsigned long)p4d & (PAGE_SIZE - 1));
+
+	if (hydra_try_return_page(page))
+		return;
+
 	pagetable_dtor_free(ptdesc);
 }
 

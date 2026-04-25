@@ -20,6 +20,8 @@
 #include "internal.h"
 #include "swap.h"
 
+#include <linux/hydra_util.h>
+
 static __always_inline
 bool validate_dst_vma(struct vm_area_struct *dst_vma, unsigned long dst_end)
 {
@@ -462,25 +464,29 @@ out:
 	return ret;
 }
 
-static pmd_t *mm_alloc_pmd(struct mm_struct *mm, unsigned long address)
+static pmd_t *mm_alloc_pmd(struct mm_struct *mm, struct vm_area_struct *vma, unsigned long address)
 {
 	pgd_t *pgd;
 	p4d_t *p4d;
 	pud_t *pud;
+	pmd_t *ret;
+	struct hydra_node_scope scope = hydra_enter_node_scope(mm, vma->master_pgd_node);
 
-	pgd = pgd_offset(mm, address);
+	pgd = mm->lazy_repl_enabled ? pgd_offset_node(mm, address, vma->master_pgd_node) : pgd_offset(mm, address);
 	p4d = p4d_alloc(mm, pgd, address);
-	if (!p4d)
+	if (!p4d) {
+		hydra_exit_node_scope(&scope);
 		return NULL;
+	}
 	pud = pud_alloc(mm, p4d, address);
-	if (!pud)
+	if (!pud) {
+		hydra_exit_node_scope(&scope);
 		return NULL;
-	/*
-	 * Note that we didn't run this because the pmd was
-	 * missing, the *pmd may be already established and in
-	 * turn it may also be a trans_huge_pmd.
-	 */
-	return pmd_alloc(mm, pud, address);
+	}
+
+	ret = pmd_alloc(mm, pud, address);
+	hydra_exit_node_scope(&scope);
+	return ret;
 }
 
 #ifdef CONFIG_HUGETLB_PAGE
@@ -784,17 +790,21 @@ retry:
 
 		VM_WARN_ON_ONCE(dst_addr >= dst_start + len);
 
-		dst_pmd = mm_alloc_pmd(dst_mm, dst_addr);
+		dst_pmd = mm_alloc_pmd(dst_mm, dst_vma, dst_addr);
 		if (unlikely(!dst_pmd)) {
 			err = -ENOMEM;
 			break;
 		}
 
 		dst_pmdval = pmdp_get_lockless(dst_pmd);
-		if (unlikely(pmd_none(dst_pmdval)) &&
-		    unlikely(__pte_alloc(dst_mm, dst_pmd))) {
-			err = -ENOMEM;
-			break;
+		if (unlikely(pmd_none(dst_pmdval))) {
+			struct hydra_node_scope pte_scope = hydra_enter_node_scope(dst_mm, dst_vma->master_pgd_node);
+			int pte_err = __pte_alloc(dst_mm, dst_pmd);
+			hydra_exit_node_scope(&pte_scope);
+			if (unlikely(pte_err)) {
+				err = -ENOMEM;
+				break;
+			}
 		}
 		dst_pmdval = pmdp_get_lockless(dst_pmd);
 		/*
@@ -927,6 +937,7 @@ long uffd_wp_range(struct vm_area_struct *dst_vma,
 	if (!enable_wp && vma_wants_manual_pte_write_upgrade(dst_vma))
 		mm_cp_flags |= MM_CP_TRY_CHANGE_WRITABLE;
 	tlb_gather_mmu(&tlb, dst_vma->vm_mm);
+	tlb.vma = dst_vma;
 	ret = change_protection(&tlb, dst_vma, start, start + len, mm_cp_flags);
 	tlb_finish_mmu(&tlb);
 
@@ -1822,19 +1833,19 @@ ssize_t move_pages(struct userfaultfd_ctx *ctx, unsigned long dst_start,
 		 * transparent huge PUD. If file-backed support is added,
 		 * that case would need to be handled here.
 		 */
-		src_pmd = mm_find_pmd(mm, src_addr);
+		src_pmd = mm_find_pmd(mm, src_vma, src_addr);
 		if (unlikely(!src_pmd)) {
 			if (!(mode & UFFDIO_MOVE_MODE_ALLOW_SRC_HOLES)) {
 				err = -ENOENT;
 				break;
 			}
-			src_pmd = mm_alloc_pmd(mm, src_addr);
+			src_pmd = mm_alloc_pmd(mm, src_vma, src_addr);
 			if (unlikely(!src_pmd)) {
 				err = -ENOMEM;
 				break;
 			}
 		}
-		dst_pmd = mm_alloc_pmd(mm, dst_addr);
+		dst_pmd = mm_alloc_pmd(mm, dst_vma, dst_addr);
 		if (unlikely(!dst_pmd)) {
 			err = -ENOMEM;
 			break;

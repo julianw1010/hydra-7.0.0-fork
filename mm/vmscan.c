@@ -3527,7 +3527,7 @@ restart:
 	for (i = pte_index(start), addr = start; addr != end; i++, addr += PAGE_SIZE) {
 		unsigned long pfn;
 		struct folio *folio;
-		pte_t ptent = ptep_get(pte + i);
+		pte_t ptent = pgtable_repl_get_pte(pte + i);
 
 		total++;
 		walk->mm_stats[MM_LEAF_TOTAL]++;
@@ -3641,7 +3641,7 @@ static void walk_pmd_range_locked(pud_t *pud, unsigned long addr, struct vm_area
 			dirty = false;
 		}
 
-		if (pmd_dirty(pmd[i]))
+		if (pmd_dirty(hydra_get_pmd(pmd + i)))
 			dirty = true;
 
 		walk->mm_stats[MM_LEAF_YOUNG]++;
@@ -3682,7 +3682,7 @@ restart:
 	/* walk_pte_range() may call get_next_vma() */
 	vma = args->vma;
 	for (i = pmd_index(start), addr = start; addr != end; i++, addr = next) {
-		pmd_t val = pmdp_get_lockless(pmd + i);
+		pmd_t val = hydra_get_pmd(pmd + i);
 
 		next = pmd_addr_end(addr, end);
 

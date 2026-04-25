@@ -47,6 +47,7 @@
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/thp.h>
+#include <linux/hydra_util.h>
 
 /*
  * By default, transparent hugepage support is disabled in order to avoid
@@ -320,6 +321,7 @@ static ssize_t enabled_store(struct kobject *kobj,
 			     struct kobj_attribute *attr,
 			     const char *buf, size_t count)
 {
+
 	ssize_t ret = count;
 
 	if (sysfs_streq(buf, "always")) {
@@ -1778,7 +1780,7 @@ bool touch_pmd(struct vm_area_struct *vma, unsigned long addr,
 {
 	pmd_t entry;
 
-	entry = pmd_mkyoung(*pmd);
+	entry = pmd_mkyoung(hydra_get_pmd(pmd));
 	if (write)
 		entry = pmd_mkdirty(entry);
 	if (pmdp_set_access_flags(vma, addr & HPAGE_PMD_MASK,
@@ -1863,20 +1865,10 @@ int copy_huge_pmd(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 		dst_ptl = pmd_lock(dst_mm, dst_pmd);
 		src_ptl = pmd_lockptr(src_mm, src_pmd);
 		spin_lock_nested(src_ptl, SINGLE_DEPTH_NESTING);
-		/*
-		 * No need to recheck the pmd, it can't change with write
-		 * mmap lock held here.
-		 *
-		 * Meanwhile, making sure it's not a CoW VMA with writable
-		 * mapping, otherwise it means either the anon page wrongly
-		 * applied special bit, or we made the PRIVATE mapping be
-		 * able to wrongly write to the backend MMIO.
-		 */
 		VM_WARN_ON_ONCE(is_cow_mapping(src_vma->vm_flags) && pmd_write(pmd));
 		goto set_pmd;
 	}
 
-	/* Skip if can be re-fill on fault */
 	if (!vma_is_anonymous(dst_vma))
 		return 0;
 
@@ -1889,7 +1881,7 @@ int copy_huge_pmd(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 	spin_lock_nested(src_ptl, SINGLE_DEPTH_NESTING);
 
 	ret = -EAGAIN;
-	pmd = *src_pmd;
+	pmd = hydra_get_pmd(src_pmd);
 
 	if (unlikely(thp_migration_supported() &&
 		     pmd_is_valid_softleaf(pmd))) {
@@ -1903,17 +1895,8 @@ int copy_huge_pmd(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 		pte_free(dst_mm, pgtable);
 		goto out_unlock;
 	}
-	/*
-	 * When page table lock is held, the huge zero pmd should not be
-	 * under splitting since we don't split the page itself, only pmd to
-	 * a page table.
-	 */
+
 	if (is_huge_zero_pmd(pmd)) {
-		/*
-		 * mm_get_huge_zero_folio() will never allocate a new
-		 * folio here, since we already have a zero page to
-		 * copy. It just takes a reference.
-		 */
 		mm_get_huge_zero_folio(dst_mm);
 		goto out_zero_page;
 	}
@@ -1924,7 +1907,6 @@ int copy_huge_pmd(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 
 	folio_get(src_folio);
 	if (unlikely(folio_try_dup_anon_rmap_pmd(src_folio, src_page, dst_vma, src_vma))) {
-		/* Page maybe pinned: split and retry the fault on PTEs. */
 		folio_put(src_folio);
 		pte_free(dst_mm, pgtable);
 		spin_unlock(src_ptl);
@@ -1932,22 +1914,28 @@ int copy_huge_pmd(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 		__split_huge_pmd(src_vma, src_pmd, addr, false);
 		return -EAGAIN;
 	}
+
 	add_mm_counter(dst_mm, MM_ANONPAGES, HPAGE_PMD_NR);
+
 out_zero_page:
 	mm_inc_nr_ptes(dst_mm);
 	pgtable_trans_huge_deposit(dst_mm, dst_pmd, pgtable);
 	pmdp_set_wrprotect(src_mm, addr, src_pmd);
+
 	if (!userfaultfd_wp(dst_vma))
 		pmd = pmd_clear_uffd_wp(pmd);
 	pmd = pmd_wrprotect(pmd);
+
 set_pmd:
 	pmd = pmd_mkold(pmd);
 	set_pmd_at(dst_mm, addr, dst_pmd, pmd);
 
 	ret = 0;
+
 out_unlock:
 	spin_unlock(src_ptl);
 	spin_unlock(dst_ptl);
+
 out:
 	return ret;
 }
@@ -2194,7 +2182,7 @@ vm_fault_t do_huge_pmd_numa_page(struct vm_fault *vmf)
 	int flags = 0;
 
 	vmf->ptl = pmd_lock(vma->vm_mm, vmf->pmd);
-	old_pmd = pmdp_get(vmf->pmd);
+	old_pmd = hydra_get_pmd(vmf->pmd);
 
 	if (unlikely(!pmd_same(old_pmd, vmf->orig_pmd))) {
 		spin_unlock(vmf->ptl);
@@ -2233,6 +2221,7 @@ vm_fault_t do_huge_pmd_numa_page(struct vm_fault *vmf)
 	if (!migrate_misplaced_folio(folio, target_nid)) {
 		flags |= TNF_MIGRATED;
 		nid = target_nid;
+			
 		task_numa_fault(last_cpupid, nid, HPAGE_PMD_NR, flags);
 		return 0;
 	}
@@ -2245,7 +2234,7 @@ vm_fault_t do_huge_pmd_numa_page(struct vm_fault *vmf)
 	}
 out_map:
 	/* Restore the PMD */
-	pmd = pmd_modify(pmdp_get(vmf->pmd), vma->vm_page_prot);
+	pmd = pmd_modify(hydra_get_pmd(vmf->pmd), vma->vm_page_prot);
 	pmd = pmd_mkyoung(pmd);
 	if (writable)
 		pmd = pmd_mkwrite(pmd, vma);
@@ -2277,7 +2266,7 @@ bool madvise_free_huge_pmd(struct mmu_gather *tlb, struct vm_area_struct *vma,
 	if (!ptl)
 		goto out_unlocked;
 
-	orig_pmd = *pmd;
+	orig_pmd = hydra_get_pmd(pmd);
 	if (is_huge_zero_pmd(orig_pmd))
 		goto out;
 
@@ -2583,57 +2572,23 @@ int change_huge_pmd(struct mmu_gather *tlb, struct vm_area_struct *vma,
 	}
 
 	if (prot_numa) {
-
-		/*
-		 * Avoid trapping faults against the zero page. The read-only
-		 * data is likely to be read-cached on the local CPU and
-		 * local/remote hits to the zero page are not interesting.
-		 */
 		if (is_huge_zero_pmd(*pmd))
 			goto unlock;
-
 		if (pmd_protnone(*pmd))
 			goto unlock;
-
 		if (!folio_can_map_prot_numa(pmd_folio(*pmd), vma,
 					     vma_is_single_threaded_private(vma)))
 			goto unlock;
 	}
-	/*
-	 * In case prot_numa, we are under mmap_read_lock(mm). It's critical
-	 * to not clear pmd intermittently to avoid race with MADV_DONTNEED
-	 * which is also under mmap_read_lock(mm):
-	 *
-	 *	CPU0:				CPU1:
-	 *				change_huge_pmd(prot_numa=1)
-	 *				 pmdp_huge_get_and_clear_notify()
-	 * madvise_dontneed()
-	 *  zap_pmd_range()
-	 *   pmd_trans_huge(*pmd) == 0 (without ptl)
-	 *   // skip the pmd
-	 *				 set_pmd_at();
-	 *				 // pmd is re-established
-	 *
-	 * The race makes MADV_DONTNEED miss the huge pmd and don't clear it
-	 * which may break userspace.
-	 *
-	 * pmdp_invalidate_ad() is required to make sure we don't miss
-	 * dirty/young flags set by hardware.
-	 */
-	oldpmd = pmdp_invalidate_ad(vma, addr, pmd);
 
+	oldpmd = pmdp_invalidate_ad(vma, addr, pmd);
 	entry = pmd_modify(oldpmd, newprot);
+
 	if (uffd_wp)
 		entry = pmd_mkuffd_wp(entry);
 	else if (uffd_wp_resolve)
-		/*
-		 * Leave the write bit to be handled by PF interrupt
-		 * handler, then things like COW could be properly
-		 * handled.
-		 */
 		entry = pmd_clear_uffd_wp(entry);
 
-	/* See change_pte_range(). */
 	if ((cp_flags & MM_CP_TRY_CHANGE_WRITABLE) && !pmd_write(entry) &&
 	    can_change_pmd_writable(vma, addr, entry))
 		entry = pmd_mkwrite(entry, vma);
@@ -2643,6 +2598,7 @@ int change_huge_pmd(struct mmu_gather *tlb, struct vm_area_struct *vma,
 
 	if (huge_pmd_needs_flush(oldpmd, entry))
 		tlb_flush_pmd_range(tlb, addr, HPAGE_PMD_SIZE);
+
 unlock:
 	spin_unlock(ptl);
 	return ret;
@@ -3172,6 +3128,25 @@ static void __split_huge_pmd_locked(struct vm_area_struct *vma, pmd_t *pmd,
 	 * This's critical for some architectures (Power).
 	 */
 	pgtable = pgtable_trans_huge_withdraw(mm, pmd);
+	
+	if (mm->lazy_repl_enabled && virt_addr_valid(pmd)) {
+		int pmd_node = page_to_nid(virt_to_page(pmd));
+		int pte_node = page_to_nid(pgtable);
+		if (pmd_node != pte_node) {
+			struct page *new_pte = repl_alloc_page_on_node(pmd_node, 0);
+			if (new_pte) {
+				if (pagetable_pte_ctor(mm, page_ptdesc(new_pte))) {
+					new_pte->pt_owner_mm = mm;
+					pagetable_dtor(page_ptdesc(pgtable));
+					__free_page(pgtable);
+					pgtable = new_pte;
+				} else {
+					__free_page(new_pte);
+				}
+			}
+		}
+	}
+	
 	pmd_populate(mm, &_pmd, pgtable);
 
 	pte = pte_offset_map(&_pmd, haddr);
@@ -3279,21 +3254,50 @@ void __split_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
 {
 	spinlock_t *ptl;
 	struct mmu_notifier_range range;
+	struct mm_struct *mm = vma->vm_mm;
+	unsigned long haddr = address & HPAGE_PMD_MASK;
+	struct hydra_node_scope scope = { .saved = -1, .active = false };
 
-	mmu_notifier_range_init(&range, MMU_NOTIFY_CLEAR, 0, vma->vm_mm,
-				address & HPAGE_PMD_MASK,
-				(address & HPAGE_PMD_MASK) + HPAGE_PMD_SIZE);
+	if (mm->lazy_repl_enabled) {
+		pgd_t *pgd;
+		p4d_t *p4d;
+		pud_t *pud;
+		pmd_t *master_pmd;
+
+		pgd = pgd_offset_node(mm, haddr, vma->master_pgd_node);
+		if (pgd_none(*pgd) || pgd_bad(*pgd))
+			return;
+		p4d = p4d_offset(pgd, haddr);
+		if (p4d_none(*p4d) || p4d_bad(*p4d))
+			return;
+		pud = pud_offset(p4d, haddr);
+		if (pud_none(*pud) || pud_bad(*pud))
+			return;
+		master_pmd = pmd_offset(pud, haddr);
+		pmd = master_pmd;
+	}
+	
+	scope = hydra_enter_node_scope(mm, vma->master_pgd_node);
+
+	mmu_notifier_range_init(&range, MMU_NOTIFY_CLEAR, 0, mm,
+				haddr,
+				haddr + HPAGE_PMD_SIZE);
 	mmu_notifier_invalidate_range_start(&range);
-	ptl = pmd_lock(vma->vm_mm, pmd);
+	ptl = pmd_lock(mm, pmd);
+	
+	
 	split_huge_pmd_locked(vma, range.start, pmd, freeze);
+	
 	spin_unlock(ptl);
 	mmu_notifier_invalidate_range_end(&range);
+	
+	hydra_exit_node_scope(&scope);
 }
 
 void split_huge_pmd_address(struct vm_area_struct *vma, unsigned long address,
 		bool freeze)
 {
-	pmd_t *pmd = mm_find_pmd(vma->vm_mm, address);
+	pmd_t *pmd = mm_find_pmd(vma->vm_mm, vma, address);
 
 	if (!pmd)
 		return;
@@ -4921,19 +4925,21 @@ void remove_migration_pmd(struct page_vma_mapped_walk *pvmw, struct page *new)
 	unsigned long haddr = address & HPAGE_PMD_MASK;
 	pmd_t pmde;
 	softleaf_t entry;
+	pmd_t pmdval;
 
 	if (!(pvmw->pmd && !pvmw->pte))
 		return;
 
-	entry = softleaf_from_pmd(*pvmw->pmd);
+	pmdval = hydra_get_pmd(pvmw->pmd);
+	entry = softleaf_from_pmd(pmdval);
 	folio_get(folio);
 	pmde = folio_mk_pmd(folio, READ_ONCE(vma->vm_page_prot));
 
-	if (pmd_swp_soft_dirty(*pvmw->pmd))
+	if (pmd_swp_soft_dirty(pmdval))
 		pmde = pmd_mksoft_dirty(pmde);
 	if (softleaf_is_migration_write(entry))
 		pmde = pmd_mkwrite(pmde, vma);
-	if (pmd_swp_uffd_wp(*pvmw->pmd))
+	if (pmd_swp_uffd_wp(pmdval))
 		pmde = pmd_mkuffd_wp(pmde);
 	if (!softleaf_is_migration_young(entry))
 		pmde = pmd_mkold(pmde);
@@ -4952,9 +4958,9 @@ void remove_migration_pmd(struct page_vma_mapped_walk *pvmw, struct page *new)
 							page_to_pfn(new));
 		pmde = swp_entry_to_pmd(entry);
 
-		if (pmd_swp_soft_dirty(*pvmw->pmd))
+		if (pmd_swp_soft_dirty(pmdval))
 			pmde = pmd_swp_mksoft_dirty(pmde);
-		if (pmd_swp_uffd_wp(*pvmw->pmd))
+		if (pmd_swp_uffd_wp(pmdval))
 			pmde = pmd_swp_mkuffd_wp(pmde);
 	}
 

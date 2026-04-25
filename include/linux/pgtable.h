@@ -153,7 +153,7 @@ static inline pgd_t *pgd_offset_pgd(pgd_t *pgd, unsigned long address)
  * a shortcut which implies the use of the kernel's pgd, instead
  * of a process's
  */
-#define pgd_offset_k(address)		pgd_offset(&init_mm, (address))
+#define pgd_offset_k(address)		pgd_offset_pgd(init_mm.pgd, (address))
 
 /*
  * In many cases it is known that a virtual address is mapped at PMD or PTE
@@ -162,15 +162,9 @@ static inline pgd_t *pgd_offset_pgd(pgd_t *pgd, unsigned long address)
  * address to the pointer in the PTE in the kernel page tables with simple
  * helpers.
  */
-static inline pmd_t *pmd_off(struct mm_struct *mm, unsigned long va)
-{
-	return pmd_offset(pud_offset(p4d_offset(pgd_offset(mm, va), va), va), va);
-}
+extern pmd_t *pmd_off(struct mm_struct *mm, unsigned long va);
 
-static inline pmd_t *pmd_off_k(unsigned long va)
-{
-	return pmd_offset(pud_offset(p4d_offset(pgd_offset_k(va), va), va), va);
-}
+extern pmd_t *pmd_off_k(unsigned long va);
 
 static inline pte_t *virt_to_kpte(unsigned long vaddr)
 {

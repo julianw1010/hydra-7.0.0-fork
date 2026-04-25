@@ -57,7 +57,7 @@ void gmap_helper_zap_one_page(struct mm_struct *mm, unsigned long vmaddr)
 		return;
 
 	/* Get pointer to the page table entry */
-	ptep = get_locked_pte(mm, vmaddr, &ptl);
+	ptep = get_locked_pte(mm, vmaddr, &ptl, NULL);
 	if (unlikely(!ptep))
 		return;
 	if (pte_swap(*ptep)) {

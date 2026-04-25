@@ -78,6 +78,9 @@
 
 #include <trace/events/sched.h>
 
+#include <asm/pgalloc.h>
+#include <linux/hydra_util.h>
+
 /* For vma exec functions. */
 #include "../mm/internal.h"
 
@@ -262,6 +265,12 @@ static int bprm_mm_init(struct linux_binprm *bprm)
 	err = -ENOMEM;
 	if (!mm)
 		goto err;
+
+	if (current->mm && current->mm->lazy_repl_enabled) {
+		bprm->hydra_repl_enabled = true;
+	} else {
+		bprm->hydra_repl_enabled = sysctl_hydra_auto_enable ? true : false;
+	}
 
 	/* Save current stack limit for all calculations made during exec. */
 	task_lock(current->group_leader);
@@ -1756,6 +1765,10 @@ static int bprm_execve(struct linux_binprm *bprm)
 	user_events_execve(current);
 	acct_update_integrals(current);
 	task_numa_free(current, false);
+	
+	if (bprm->hydra_repl_enabled)
+		hydra_enable_replication(current->mm);
+	
 	return retval;
 
 out:
