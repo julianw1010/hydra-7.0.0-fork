@@ -484,6 +484,11 @@ static pmd_t *mm_alloc_pmd(struct mm_struct *mm, struct vm_area_struct *vma, uns
 		return NULL;
 	}
 
+	/*
+	 * Note that we didn't run this because the pmd was
+	 * missing, the *pmd may be already established and in
+	 * turn it may also be a trans_huge_pmd.
+	 */
 	ret = pmd_alloc(mm, pud, address);
 	hydra_exit_node_scope(&scope);
 	return ret;

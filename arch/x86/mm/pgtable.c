@@ -44,6 +44,10 @@ void ___pmd_free_tlb(struct mmu_gather *tlb, pmd_t *pmd)
 
 	hydra_break_chain(page);
 	paravirt_release_pmd(__pa(pmd) >> PAGE_SHIFT);
+	/*
+	 * NOTE! For PAE, any changes to the top page-directory-pointer-table
+	 * entries need a full cr3 reload to flush.
+	 */
 #ifdef CONFIG_X86_PAE
 	tlb->need_flush_all = 1;
 #endif

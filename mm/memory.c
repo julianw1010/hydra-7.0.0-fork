@@ -262,7 +262,6 @@ static inline void free_pud_range(struct mmu_gather *tlb, p4d_t *p4d,
 	pud = pud_offset(p4d, addr);
 	do {
 		next = pud_addr_end(addr, end);
-		
 		if (pud_none_or_clear_bad(pud))
 			continue;
 		free_pmd_range(tlb, pud, addr, next, floor, ceiling);
@@ -297,7 +296,6 @@ static inline void free_p4d_range(struct mmu_gather *tlb, pgd_t *pgd,
 	p4d = p4d_offset(pgd, addr);
 	do {
 		next = p4d_addr_end(addr, end);
-		
 		if (p4d_none_or_clear_bad(p4d))
 			continue;
 		free_pud_range(tlb, p4d, addr, next, floor, ceiling);
@@ -610,6 +608,7 @@ int __pte_alloc(struct mm_struct *mm, pmd_t *pmd)
 
 	if (!new)
 		return -ENOMEM;
+
 	pmd_install(mm, pmd, &new);
 	if (new)
 		pte_free(mm, new);
@@ -2481,6 +2480,7 @@ static pmd_t *walk_to_pmd(struct mm_struct *mm, unsigned long addr, int master_n
 	pmd = pmd_alloc(mm, pud, addr);
 	if (!pmd)
 		return NULL;
+
 	VM_BUG_ON(pmd_trans_huge(*pmd));
 	return pmd;
 }
@@ -6161,12 +6161,10 @@ static vm_fault_t do_fault(struct vm_fault *vmf)
 
 			pte_unmap_unlock(vmf->pte, vmf->ptl);
 		}
-	} else if (!(vmf->flags & FAULT_FLAG_WRITE)) {
+	} else if (!(vmf->flags & FAULT_FLAG_WRITE))
 		ret = do_read_fault(vmf);
-	}
-	else if (!(vma->vm_flags & VM_SHARED)) {
+	else if (!(vma->vm_flags & VM_SHARED))
 		ret = do_cow_fault(vmf);
-	}
 	else
 		ret = do_shared_fault(vmf);
 
@@ -6339,7 +6337,6 @@ static vm_fault_t do_numa_page(struct vm_fault *vmf)
 	if (!migrate_misplaced_folio(folio, target_nid)) {
 		nid = target_nid;
 		flags |= TNF_MIGRATED;
-		
 		task_numa_fault(last_cpupid, nid, nr_pages, flags);
 		return 0;
 	}
@@ -7021,11 +7018,30 @@ static int handle_pte_fault(struct vm_fault *vmf, int has_recursed)
 		    fault_node != vmf->vma->master_pgd_node) {
 			return try_lazy_repl(vmf, fault_node);
 		}
+		/*
+		 * Leave __pte_alloc() until later: because vm_ops->fault may
+		 * want to allocate huge page, and if we expose page table
+		 * for an instant, it will be difficult to retract from
+		 * concurrent faults and from rmap lookups.
+		 */
 		vmf->pte = NULL;
 		vmf->flags &= ~FAULT_FLAG_ORIG_PTE_VALID;
 	} else {
 		pmd_t dummy_pmdval;
 
+		/*
+		 * A regular pmd is established and it can't morph into a huge
+		 * pmd by anon khugepaged, since that takes mmap_lock in write
+		 * mode; but shmem or file collapse to THP could still morph
+		 * it into a huge pmd: just retry later if so.
+		 *
+		 * Use the maywrite version to indicate that vmf->pte may be
+		 * modified, but since we will use pte_same() to detect the
+		 * change of the !pte_none() entry, there is no need to recheck
+		 * the pmdval. Here we choose to pass a dummy variable instead
+		 * of NULL, which helps new user think about why this place is
+		 * special.
+		 */
 		vmf->pte = pte_offset_map_rw_nolock(vmf->vma->vm_mm, vmf->pmd,
 						    vmf->address, &dummy_pmdval,
 						    &vmf->ptl);
@@ -7183,6 +7199,11 @@ retry_pud:
 
 		barrier();
 		if (pud_trans_huge(orig_pud)) {
+
+			/*
+			 * TODO once we support anonymous PUDs: NUMA case and
+			 * FAULT_FLAG_UNSHARE handling.
+			 */
 			if ((flags & FAULT_FLAG_WRITE) && !pud_write(orig_pud)) {
 				ret = wp_huge_pud(&vmf, orig_pud);
 				if (!(ret & VM_FAULT_FALLBACK))
@@ -7206,6 +7227,7 @@ retry_pud:
 		goto out_restore;
 	}
 
+	/* Huge pud page fault raced with pmd_alloc? */
 	if (pud_trans_unstable(vmf.pud))
 		goto retry_pud;
 
@@ -7265,7 +7287,7 @@ retry_pud:
 					return master_ret;
 				return 0;
 			}
-			
+
 			if (!huge_pmd_set_accessed(&vmf))
 				fix_spurious_fault(&vmf, PGTABLE_LEVEL_PMD);
 			spin_unlock(vmf.ptl);
@@ -7517,10 +7539,10 @@ int __p4d_alloc(struct mm_struct *mm, pgd_t *pgd, unsigned long address)
 		return -ENOMEM;
 
 	spin_lock(&mm->page_table_lock);
-	if (pgd_present(*pgd)) {
+	if (pgd_present(*pgd)) {	/* Another has populated it */
 		p4d_free(mm, new);
 	} else {
-		smp_wmb();
+		smp_wmb(); /* See comment in pmd_install() */
 		pgd_populate(mm, pgd, new);
 	}
 	spin_unlock(&mm->page_table_lock);
@@ -7567,11 +7589,10 @@ int __pud_alloc(struct mm_struct *mm, p4d_t *p4d, unsigned long address)
 	spin_lock(&mm->page_table_lock);
 	if (!p4d_present(*p4d)) {
 		mm_inc_nr_puds(mm);
-		smp_wmb();
+		smp_wmb(); /* See comment in pmd_install() */
 		p4d_populate(mm, p4d, new);
-	} else {
+	} else	/* Another has populated it */
 		pud_free(mm, new);
-	}
 	spin_unlock(&mm->page_table_lock);
 	return 0;
 }

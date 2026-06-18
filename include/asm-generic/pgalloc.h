@@ -1,4 +1,4 @@
-#/* SPDX-License-Identifier: GPL-2.0 */
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __ASM_GENERIC_PGALLOC_H
 #define __ASM_GENERIC_PGALLOC_H
 
@@ -10,6 +10,15 @@
 #include <asm/pgtable.h>
 #include <linux/hydra_util.h>
 
+/**
+ * __pte_alloc_one_kernel - allocate memory for a PTE-level kernel page table
+ * @mm: the mm_struct of the current context
+ *
+ * This function is intended for architectures that need
+ * anything beyond simple page allocation.
+ *
+ * Return: pointer to the allocated memory or %NULL on error
+ */
 static inline pte_t *__pte_alloc_one_kernel_noprof(struct mm_struct *mm)
 {
 	struct ptdesc *ptdesc;
@@ -25,12 +34,18 @@ static inline pte_t *__pte_alloc_one_kernel_noprof(struct mm_struct *mm)
 		return NULL;
 	}
 	ptdesc_set_kernel(ptdesc);
+
 	return ptdesc_address(ptdesc);
 }
-
 #define __pte_alloc_one_kernel(...)	alloc_hooks(__pte_alloc_one_kernel_noprof(__VA_ARGS__))
 
 #ifndef __HAVE_ARCH_PTE_ALLOC_ONE_KERNEL
+/**
+ * pte_alloc_one_kernel - allocate memory for a PTE-level kernel page table
+ * @mm: the mm_struct of the current context
+ *
+ * Return: pointer to the allocated memory or %NULL on error
+ */
 static inline pte_t *pte_alloc_one_kernel_noprof(struct mm_struct *mm)
 {
 	return __pte_alloc_one_kernel_noprof(mm);
@@ -38,6 +53,11 @@ static inline pte_t *pte_alloc_one_kernel_noprof(struct mm_struct *mm)
 #define pte_alloc_one_kernel(...)	alloc_hooks(pte_alloc_one_kernel_noprof(__VA_ARGS__))
 #endif
 
+/**
+ * pte_free_kernel - free PTE-level kernel page table memory
+ * @mm: the mm_struct of the current context
+ * @pte: pointer to the memory containing the page table
+ */
 static inline void pte_free_kernel(struct mm_struct *mm, pte_t *pte)
 {
 	struct ptdesc *ptdesc = virt_to_ptdesc(pte);
@@ -52,6 +72,18 @@ static inline void pte_free_kernel(struct mm_struct *mm, pte_t *pte)
 	pagetable_free(ptdesc);
 }
 
+/**
+ * __pte_alloc_one - allocate memory for a PTE-level user page table
+ * @mm: the mm_struct of the current context
+ * @gfp: GFP flags to use for the allocation
+ *
+ * Allocate memory for a page table and ptdesc and runs pagetable_pte_ctor().
+ *
+ * This function is intended for architectures that need
+ * anything beyond simple page allocation or must have custom GFP flags.
+ *
+ * Return: `struct page` referencing the ptdesc or %NULL on error
+ */
 static inline pgtable_t __pte_alloc_one_noprof(struct mm_struct *mm, gfp_t gfp)
 {
 	struct ptdesc *ptdesc;
@@ -72,6 +104,14 @@ static inline pgtable_t __pte_alloc_one_noprof(struct mm_struct *mm, gfp_t gfp)
 #define __pte_alloc_one(...)	alloc_hooks(__pte_alloc_one_noprof(__VA_ARGS__))
 
 #ifndef __HAVE_ARCH_PTE_ALLOC_ONE
+/**
+ * pte_alloc_one - allocate a page for PTE-level user page table
+ * @mm: the mm_struct of the current context
+ *
+ * Allocate memory for a page table and ptdesc and runs pagetable_pte_ctor().
+ *
+ * Return: `struct page` referencing the ptdesc or %NULL on error
+ */
 static inline pgtable_t pte_alloc_one_noprof(struct mm_struct *mm)
 {
 	return __pte_alloc_one_noprof(mm, GFP_PGTABLE_USER);
@@ -79,6 +119,16 @@ static inline pgtable_t pte_alloc_one_noprof(struct mm_struct *mm)
 #define pte_alloc_one(...)	alloc_hooks(pte_alloc_one_noprof(__VA_ARGS__))
 #endif
 
+/*
+ * Should really implement gc for free page table pages. This could be
+ * done with a reference count in struct page.
+ */
+
+/**
+ * pte_free - free PTE-level user page table memory
+ * @mm: the mm_struct of the current context
+ * @pte_page: the `struct page` referencing the ptdesc
+ */
 static inline void pte_free(struct mm_struct *mm, struct page *pte_page)
 {
 	struct ptdesc *ptdesc = page_ptdesc(pte_page);
@@ -95,6 +145,17 @@ static inline void pte_free(struct mm_struct *mm, struct page *pte_page)
 #if CONFIG_PGTABLE_LEVELS > 2
 
 #ifndef __HAVE_ARCH_PMD_ALLOC_ONE
+/**
+ * pmd_alloc_one - allocate memory for a PMD-level page table
+ * @mm: the mm_struct of the current context
+ *
+ * Allocate memory for a page table and ptdesc and runs pagetable_pmd_ctor().
+ *
+ * Allocations use %GFP_PGTABLE_USER in user context and
+ * %GFP_PGTABLE_KERNEL in kernel context.
+ *
+ * Return: pointer to the allocated memory or %NULL on error
+ */
 static inline pmd_t *pmd_alloc_one_noprof(struct mm_struct *mm, unsigned long addr)
 {
 	struct ptdesc *ptdesc;
@@ -167,6 +228,15 @@ static inline pud_t *__pud_alloc_one_noprof(struct mm_struct *mm, unsigned long 
 #define __pud_alloc_one(...)	alloc_hooks(__pud_alloc_one_noprof(__VA_ARGS__))
 
 #ifndef __HAVE_ARCH_PUD_ALLOC_ONE
+/**
+ * pud_alloc_one - allocate memory for a PUD-level page table
+ * @mm: the mm_struct of the current context
+ *
+ * Allocate memory for a page table using %GFP_PGTABLE_USER for user context
+ * and %GFP_PGTABLE_KERNEL for kernel context.
+ *
+ * Return: pointer to the allocated memory or %NULL on error
+ */
 static inline pud_t *pud_alloc_one_noprof(struct mm_struct *mm, unsigned long addr)
 {
 	return __pud_alloc_one_noprof(mm, addr);

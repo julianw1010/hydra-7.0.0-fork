@@ -3081,18 +3081,21 @@ void mm_trace_rss_stat(struct mm_struct *mm, int member);
 static inline void add_mm_counter(struct mm_struct *mm, int member, long value)
 {
 	percpu_counter_add(&mm->rss_stat[member], value);
+
 	mm_trace_rss_stat(mm, member);
 }
 
 static inline void inc_mm_counter(struct mm_struct *mm, int member)
 {
 	percpu_counter_inc(&mm->rss_stat[member]);
+
 	mm_trace_rss_stat(mm, member);
 }
 
 static inline void dec_mm_counter(struct mm_struct *mm, int member)
 {
 	percpu_counter_dec(&mm->rss_stat[member]);
+
 	mm_trace_rss_stat(mm, member);
 }
 

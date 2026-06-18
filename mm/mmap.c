@@ -1416,7 +1416,7 @@ void exit_mmap(struct mm_struct *mm)
 	unmap.mm_wr_locked = true;
 	mt_clear_in_rcu(&mm->mm_mt);
 	unmap_pgtable_init(&unmap, &vmi);
-	
+
 	if (mm->lazy_repl_enabled) {
 	    struct vm_area_struct *v;
 	    struct unlink_vma_file_batch vb;
@@ -1439,7 +1439,7 @@ void exit_mmap(struct mm_struct *mm)
 	} else {
 	    free_pgtables(&tlb, &unmap);
 	}
-	
+
 	tlb_finish_mmu(&tlb);
 
 	/*
@@ -1919,9 +1919,9 @@ __latent_entropy int dup_mmap(struct mm_struct *mm, struct mm_struct *oldmm)
 		if (retval)
 			goto fail_nomem_policy;
 		tmp->vm_mm = mm;
-		
+
 		tmp->master_pgd_node = mpnt->master_pgd_node;
-		
+
 		retval = dup_userfaultfd(tmp, &uf);
 		if (retval)
 			goto fail_nomem_anon_vma_fork;

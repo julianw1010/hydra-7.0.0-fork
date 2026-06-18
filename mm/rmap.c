@@ -906,7 +906,6 @@ pmd_t *mm_find_pmd(struct mm_struct *mm, struct vm_area_struct *vma,
 		goto out;
 
 	pmd = pmd_offset(pud, address);
-
 out:
 	return pmd;
 }

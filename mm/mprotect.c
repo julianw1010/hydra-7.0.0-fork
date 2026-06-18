@@ -35,9 +35,6 @@
 #include <asm/mmu_context.h>
 #include <asm/tlbflush.h>
 #include <asm/tlb.h>
-#include <linux/hydra_util.h>
-
-
 
 #include "internal.h"
 
@@ -661,10 +658,9 @@ long change_protection(struct mmu_gather *tlb,
 	if (is_vm_hugetlb_page(vma))
 		pages = hugetlb_change_protection(vma, start, end, newprot,
 						  cp_flags);
-	else {
+	else
 		pages = change_protection_range(tlb, vma, start, end, newprot,
 						cp_flags);
-    }
 
 	return pages;
 }
@@ -821,8 +817,9 @@ static int do_mprotect_pkey(unsigned long start, size_t len,
 	start = untagged_addr(start);
 
 	prot &= ~(PROT_GROWSDOWN|PROT_GROWSUP);
-	if (grows == (PROT_GROWSDOWN|PROT_GROWSUP))
+	if (grows == (PROT_GROWSDOWN|PROT_GROWSUP)) /* can't be both */
 		return -EINVAL;
+
 	if (start & ~PAGE_MASK)
 		return -EINVAL;
 	if (!len)
@@ -839,6 +836,10 @@ static int do_mprotect_pkey(unsigned long start, size_t len,
 	if (mmap_write_lock_killable(current->mm))
 		return -EINTR;
 
+	/*
+	 * If userspace did not allocate the pkey, do not let
+	 * them use it here.
+	 */
 	error = -EINVAL;
 	if ((pkey != -1) && !mm_pkey_is_allocated(current->mm, pkey))
 		goto out;
@@ -886,15 +887,22 @@ static int do_mprotect_pkey(unsigned long start, size_t len,
 
 		tlb.vma = vma;
 
+		/* Does the application expect PROT_READ to imply PROT_EXEC */
 		if (rier && (vma->vm_flags & VM_MAYEXEC))
 			prot |= PROT_EXEC;
 
+		/*
+		 * Each mprotect() call explicitly passes r/w/x permissions.
+		 * If a permission is not passed to mprotect(), it must be
+		 * cleared from the VMA.
+		 */
 		mask_off_old_flags = VM_ACCESS_FLAGS | VM_FLAGS_CLEAR;
 
 		new_vma_pkey = arch_override_mprotect_pkey(vma, prot, pkey);
 		newflags = calc_vm_prot_bits(prot, new_vma_pkey);
 		newflags |= (vma->vm_flags & ~mask_off_old_flags);
 
+		/* newflags >> 4 shift VM_MAY% in place of VM_% */
 		if ((newflags & ~(newflags >> 4)) & VM_ACCESS_FLAGS) {
 			error = -EACCES;
 			break;
@@ -905,6 +913,7 @@ static int do_mprotect_pkey(unsigned long start, size_t len,
 			break;
 		}
 
+		/* Allow architectures to sanity-check the new flags */
 		if (!arch_validate_flags(newflags)) {
 			error = -EINVAL;
 			break;
@@ -932,7 +941,6 @@ static int do_mprotect_pkey(unsigned long start, size_t len,
 		nstart = tmp;
 		prot = reqprot;
 	}
-
 	tlb_finish_mmu(&tlb);
 
 	if (!error && tmp < end)

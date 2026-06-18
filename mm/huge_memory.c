@@ -321,7 +321,6 @@ static ssize_t enabled_store(struct kobject *kobj,
 			     struct kobj_attribute *attr,
 			     const char *buf, size_t count)
 {
-
 	ssize_t ret = count;
 
 	if (sysfs_streq(buf, "always")) {
@@ -1865,10 +1864,20 @@ int copy_huge_pmd(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 		dst_ptl = pmd_lock(dst_mm, dst_pmd);
 		src_ptl = pmd_lockptr(src_mm, src_pmd);
 		spin_lock_nested(src_ptl, SINGLE_DEPTH_NESTING);
+		/*
+		 * No need to recheck the pmd, it can't change with write
+		 * mmap lock held here.
+		 *
+		 * Meanwhile, making sure it's not a CoW VMA with writable
+		 * mapping, otherwise it means either the anon page wrongly
+		 * applied special bit, or we made the PRIVATE mapping be
+		 * able to wrongly write to the backend MMIO.
+		 */
 		VM_WARN_ON_ONCE(is_cow_mapping(src_vma->vm_flags) && pmd_write(pmd));
 		goto set_pmd;
 	}
 
+	/* Skip if can be re-fill on fault */
 	if (!vma_is_anonymous(dst_vma))
 		return 0;
 
@@ -1896,7 +1905,17 @@ int copy_huge_pmd(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 		goto out_unlock;
 	}
 
+	/*
+	 * When page table lock is held, the huge zero pmd should not be
+	 * under splitting since we don't split the page itself, only pmd to
+	 * a page table.
+	 */
 	if (is_huge_zero_pmd(pmd)) {
+		/*
+		 * mm_get_huge_zero_folio() will never allocate a new
+		 * folio here, since we already have a zero page to
+		 * copy. It just takes a reference.
+		 */
 		mm_get_huge_zero_folio(dst_mm);
 		goto out_zero_page;
 	}
@@ -1907,6 +1926,7 @@ int copy_huge_pmd(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 
 	folio_get(src_folio);
 	if (unlikely(folio_try_dup_anon_rmap_pmd(src_folio, src_page, dst_vma, src_vma))) {
+		/* Page maybe pinned: split and retry the fault on PTEs. */
 		folio_put(src_folio);
 		pte_free(dst_mm, pgtable);
 		spin_unlock(src_ptl);
@@ -1916,26 +1936,21 @@ int copy_huge_pmd(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 	}
 
 	add_mm_counter(dst_mm, MM_ANONPAGES, HPAGE_PMD_NR);
-
 out_zero_page:
 	mm_inc_nr_ptes(dst_mm);
 	pgtable_trans_huge_deposit(dst_mm, dst_pmd, pgtable);
 	pmdp_set_wrprotect(src_mm, addr, src_pmd);
-
 	if (!userfaultfd_wp(dst_vma))
 		pmd = pmd_clear_uffd_wp(pmd);
 	pmd = pmd_wrprotect(pmd);
-
 set_pmd:
 	pmd = pmd_mkold(pmd);
 	set_pmd_at(dst_mm, addr, dst_pmd, pmd);
 
 	ret = 0;
-
 out_unlock:
 	spin_unlock(src_ptl);
 	spin_unlock(dst_ptl);
-
 out:
 	return ret;
 }
@@ -2221,7 +2236,6 @@ vm_fault_t do_huge_pmd_numa_page(struct vm_fault *vmf)
 	if (!migrate_misplaced_folio(folio, target_nid)) {
 		flags |= TNF_MIGRATED;
 		nid = target_nid;
-			
 		task_numa_fault(last_cpupid, nid, HPAGE_PMD_NR, flags);
 		return 0;
 	}
@@ -2572,6 +2586,12 @@ int change_huge_pmd(struct mmu_gather *tlb, struct vm_area_struct *vma,
 	}
 
 	if (prot_numa) {
+
+		/*
+		 * Avoid trapping faults against the zero page. The read-only
+		 * data is likely to be read-cached on the local CPU and
+		 * local/remote hits to the zero page are not interesting.
+		 */
 		if (is_huge_zero_pmd(*pmd))
 			goto unlock;
 		if (pmd_protnone(*pmd))
@@ -2581,14 +2601,40 @@ int change_huge_pmd(struct mmu_gather *tlb, struct vm_area_struct *vma,
 			goto unlock;
 	}
 
+	/*
+	 * In case prot_numa, we are under mmap_read_lock(mm). It's critical
+	 * to not clear pmd intermittently to avoid race with MADV_DONTNEED
+	 * which is also under mmap_read_lock(mm):
+	 *
+	 *	CPU0:				CPU1:
+	 *				change_huge_pmd(prot_numa=1)
+	 *				 pmdp_huge_get_and_clear_notify()
+	 * madvise_dontneed()
+	 *  zap_pmd_range()
+	 *   pmd_trans_huge(*pmd) == 0 (without ptl)
+	 *   // skip the pmd
+	 *				 set_pmd_at();
+	 *				 // pmd is re-established
+	 *
+	 * The race makes MADV_DONTNEED miss the huge pmd and don't clear it
+	 * which may break userspace.
+	 *
+	 * pmdp_invalidate_ad() is required to make sure we don't miss
+	 * dirty/young flags set by hardware.
+	 */
 	oldpmd = pmdp_invalidate_ad(vma, addr, pmd);
 	entry = pmd_modify(oldpmd, newprot);
-
 	if (uffd_wp)
 		entry = pmd_mkuffd_wp(entry);
 	else if (uffd_wp_resolve)
+		/*
+		 * Leave the write bit to be handled by PF interrupt
+		 * handler, then things like COW could be properly
+		 * handled.
+		 */
 		entry = pmd_clear_uffd_wp(entry);
 
+	/* See change_pte_range(). */
 	if ((cp_flags & MM_CP_TRY_CHANGE_WRITABLE) && !pmd_write(entry) &&
 	    can_change_pmd_writable(vma, addr, entry))
 		entry = pmd_mkwrite(entry, vma);
@@ -2598,7 +2644,6 @@ int change_huge_pmd(struct mmu_gather *tlb, struct vm_area_struct *vma,
 
 	if (huge_pmd_needs_flush(oldpmd, entry))
 		tlb_flush_pmd_range(tlb, addr, HPAGE_PMD_SIZE);
-
 unlock:
 	spin_unlock(ptl);
 	return ret;
@@ -3128,7 +3173,7 @@ static void __split_huge_pmd_locked(struct vm_area_struct *vma, pmd_t *pmd,
 	 * This's critical for some architectures (Power).
 	 */
 	pgtable = pgtable_trans_huge_withdraw(mm, pmd);
-	
+
 	if (mm->lazy_repl_enabled && virt_addr_valid(pmd)) {
 		int pmd_node = page_to_nid(virt_to_page(pmd));
 		int pte_node = page_to_nid(pgtable);
@@ -3146,7 +3191,7 @@ static void __split_huge_pmd_locked(struct vm_area_struct *vma, pmd_t *pmd,
 			}
 		}
 	}
-	
+
 	pmd_populate(mm, &_pmd, pgtable);
 
 	pte = pte_offset_map(&_pmd, haddr);
@@ -3276,7 +3321,7 @@ void __split_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
 		master_pmd = pmd_offset(pud, haddr);
 		pmd = master_pmd;
 	}
-	
+
 	scope = hydra_enter_node_scope(mm, vma->master_pgd_node);
 
 	mmu_notifier_range_init(&range, MMU_NOTIFY_CLEAR, 0, mm,
@@ -3284,13 +3329,13 @@ void __split_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
 				haddr + HPAGE_PMD_SIZE);
 	mmu_notifier_invalidate_range_start(&range);
 	ptl = pmd_lock(mm, pmd);
-	
-	
+
+
 	split_huge_pmd_locked(vma, range.start, pmd, freeze);
-	
+
 	spin_unlock(ptl);
 	mmu_notifier_invalidate_range_end(&range);
-	
+
 	hydra_exit_node_scope(&scope);
 }
 

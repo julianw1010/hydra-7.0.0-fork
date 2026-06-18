@@ -14,6 +14,7 @@ static inline void tlb_flush(struct mmu_gather *tlb)
 {
 	unsigned long start = 0UL, end = TLB_FLUSH_ALL;
 	unsigned int stride_shift = tlb_get_unmap_shift(tlb);
+
 	if (!tlb->fullmm && !tlb->need_flush_all) {
 		start = tlb->start;
 		end = tlb->end;

@@ -190,24 +190,26 @@ arch_get_unmapped_area_topdown(struct file *filp, unsigned long addr0,
 		addr &= PAGE_MASK;
 		if (!mmap_address_hint_valid(addr, len))
 			goto get_unmapped_area;
+
 		vma = find_vma(mm, addr);
 		if (!vma || addr + len <= vm_start_gap(vma))
 			return addr;
 	}
-
 get_unmapped_area:
+
 	info.flags = VM_UNMAPPED_AREA_TOPDOWN;
 	info.length = len;
 	if (!in_32bit_syscall() && (flags & MAP_ABOVE4G))
 		info.low_limit = SZ_4G;
 	else
 		info.low_limit = PAGE_SIZE;
-	info.high_limit = get_mmap_base(0);
 
+	info.high_limit = get_mmap_base(0);
 	if (!(filp && is_file_hugepages(filp))) {
 		info.start_gap = stack_guard_placement(vm_flags);
 		info.align_offset = pgoff << PAGE_SHIFT;
 	}
+
 	/*
 	 * If hint address is above DEFAULT_MAP_WINDOW, look for unmapped area
 	 * in the full address space.
@@ -222,7 +224,6 @@ get_unmapped_area:
 		info.align_mask = get_align_mask(filp);
 		info.align_offset += get_align_bits();
 	}
-
 	addr = vm_unmapped_area(&info);
 	if (!(addr & ~PAGE_MASK))
 		return addr;

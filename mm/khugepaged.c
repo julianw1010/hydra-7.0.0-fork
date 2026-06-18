@@ -948,6 +948,7 @@ static enum scan_result find_pmd_or_thp_or_none(struct mm_struct *mm,
 	*pmd = mm_find_pmd(mm, vma, address);
 	if (!*pmd)
 		return SCAN_NO_PTE_TABLE;
+
 	return check_pmd_state(*pmd);
 }
 
@@ -1144,7 +1145,6 @@ static enum scan_result collapse_huge_page(struct mm_struct *mm, unsigned long a
 	/* check if the pmd is still valid */
 	vma_start_write(vma);
 	result = check_pmd_still_valid(mm, vma, address, pmd);
-	
 	if (result != SCAN_SUCCEED)
 		goto out_up_write;
 
@@ -1221,8 +1221,7 @@ static enum scan_result collapse_huge_page(struct mm_struct *mm, unsigned long a
 	spin_unlock(pmd_ptl);
 
 	folio = NULL;
-	
-	
+
 	result = SCAN_SUCCEED;
 out_up_write:
 	mmap_write_unlock(mm);

@@ -201,11 +201,12 @@ static bool can_vma_merge_before(struct vma_merge_struct *vmg)
 	    vmg->next->master_pgd_node != vmg->master_pgd_node)
 		return false;
 
-	if (is_mergeable_vma(vmg, true) &&
-	    is_mergeable_anon_vma(vmg, true)) {
+	if (is_mergeable_vma(vmg, /* merge_next = */ true) &&
+	    is_mergeable_anon_vma(vmg, /* merge_next = */ true)) {
 		if (vmg->next->vm_pgoff == vmg->pgoff + pglen)
 			return true;
 	}
+
 	return false;
 }
 
@@ -226,8 +227,8 @@ static bool can_vma_merge_after(struct vma_merge_struct *vmg)
 	    vmg->prev->master_pgd_node != vmg->master_pgd_node)
 		return false;
 
-	if (is_mergeable_vma(vmg, false) &&
-	    is_mergeable_anon_vma(vmg, false)) {
+	if (is_mergeable_vma(vmg, /* merge_next = */ false) &&
+	    is_mergeable_anon_vma(vmg, /* merge_next = */ false)) {
 		if (vmg->prev->vm_pgoff + vma_pages(vmg->prev) == vmg->pgoff)
 			return true;
 	}

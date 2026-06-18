@@ -2251,11 +2251,11 @@ __latent_entropy struct task_struct *copy_process(
 	retval = copy_mm(clone_flags, p);
 	if (retval)
 		goto bad_fork_cleanup_signal;
-		
+
 #ifdef CONFIG_X86
 	p->hydra_fault_target_node = -1;
-#endif	
-		
+#endif
+
 	retval = copy_namespaces(clone_flags, p);
 	if (retval)
 		goto bad_fork_cleanup_mm;
