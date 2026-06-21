@@ -5,7 +5,6 @@
 #include <linux/gfp.h>
 #include <linux/hydra_util.h>
 
-extern int sysctl_hydra_verify_enabled;
 extern int sysctl_hydra_repl_order;
 extern int sysctl_hydra_tlbflush_opt;
 
@@ -109,48 +108,6 @@ static const struct proc_ops hydra_cache_ops = {
 	.proc_release	= single_release,
 };
 
-static int hydra_verify_show(struct seq_file *m, void *v)
-{
-	seq_printf(m, "%d\n", sysctl_hydra_verify_enabled);
-	return 0;
-}
-
-static int hydra_verify_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, hydra_verify_show, NULL);
-}
-
-static ssize_t hydra_verify_write(struct file *file, const char __user *ubuf,
-				  size_t count, loff_t *ppos)
-{
-	char buf[32];
-	size_t len;
-	long val;
-
-	len = min(count, sizeof(buf) - 1);
-	if (copy_from_user(buf, ubuf, len))
-		return -EFAULT;
-	buf[len] = '\0';
-
-	if (kstrtol(buf, 10, &val))
-		return -EINVAL;
-
-	sysctl_hydra_verify_enabled = (val != 0) ? 1 : 0;
-
-	pr_info("HYDRA: fault verification %s\n",
-		sysctl_hydra_verify_enabled ? "enabled" : "disabled");
-
-	return count;
-}
-
-static const struct proc_ops hydra_verify_ops = {
-	.proc_open	= hydra_verify_open,
-	.proc_read	= seq_read,
-	.proc_write	= hydra_verify_write,
-	.proc_lseek	= seq_lseek,
-	.proc_release	= single_release,
-};
-
 static int hydra_repl_order_show(struct seq_file *m, void *v)
 {
 	seq_printf(m, "%d\n", sysctl_hydra_repl_order);
@@ -246,9 +203,6 @@ static int __init hydra_proc_init(void)
 		return -ENOMEM;
 
 	if (!proc_create("cache", 0644, hydra_dir, &hydra_cache_ops))
-		goto fail;
-
-	if (!proc_create("verify", 0644, hydra_dir, &hydra_verify_ops))
 		goto fail;
 
 	if (!proc_create("repl_order", 0644, hydra_dir, &hydra_repl_order_ops))

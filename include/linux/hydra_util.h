@@ -215,10 +215,6 @@ static inline void hydra_break_chain(struct page *page)
 
 extern void hydra_free_replica_chain(struct page *primary, int level);
 
-extern int sysctl_hydra_verify_enabled;
-void hydra_verify_fault_walk(struct mm_struct *mm, unsigned long address,
-			     int expected_node);
-
 static inline bool hydra_try_return_page(struct page *page)
 {
 	int nid = page_to_nid(page);

@@ -7225,10 +7225,6 @@ fallback:
 	ret = handle_pte_fault(&vmf, use_master);
 
 out_restore:
-	if (mm->lazy_repl_enabled &&
-	    !(ret & (VM_FAULT_ERROR | VM_FAULT_RETRY)))
-		hydra_verify_fault_walk(mm, address, node_to_use);
-
 	hydra_exit_node_scope(&scope);
 	return ret;
 }
