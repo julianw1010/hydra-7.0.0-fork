@@ -298,10 +298,7 @@ static inline bool userfaultfd_must_wait(struct userfaultfd_ctx *ctx,
 
 	assert_fault_locked(vmf);
 
-	if (mm->lazy_repl_enabled)
-		pgd = pgd_offset_node(mm, address, vmf->vma->master_pgd_node);
-	else
-		pgd = pgd_offset(mm, address);
+	pgd = hydra_pgd_offset(mm, address, vmf->vma->master_pgd_node);
 	if (!pgd_present(*pgd))
 		return true;
 	p4d = p4d_offset(pgd, address);

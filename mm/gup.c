@@ -1015,7 +1015,7 @@ static struct page *follow_page_mask(struct vm_area_struct *vma,
 	vma_pgtable_walk_begin(vma);
 
 	*page_mask = 0;
-	pgd = mm->lazy_repl_enabled ? pgd_offset_node(mm, address, vma->master_pgd_node) : pgd_offset(mm, address);
+	pgd = hydra_pgd_offset(mm, address, vma->master_pgd_node);
 
 	if (pgd_none(*pgd) || unlikely(pgd_bad(*pgd)))
 		page = no_page_table(vma, flags, address);

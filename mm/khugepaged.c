@@ -1442,10 +1442,7 @@ static enum scan_result set_huge_pmd(struct vm_area_struct *vma, unsigned long a
 	mmap_assert_locked(vma->vm_mm);
 
 	if (!pmdp) {
-		if (mm->lazy_repl_enabled)
-			pgdp = pgd_offset_node(mm, addr, vma->master_pgd_node);
-		else
-			pgdp = pgd_offset(mm, addr);
+		pgdp = hydra_pgd_offset(mm, addr, vma->master_pgd_node);
 		p4dp = p4d_alloc(mm, pgdp, addr);
 		if (!p4dp)
 			return SCAN_FAIL;

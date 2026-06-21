@@ -6941,7 +6941,7 @@ int huge_pmd_unshare(struct mmu_gather *tlb, struct vm_area_struct *vma,
 {
 	unsigned long sz = huge_page_size(hstate_vma(vma));
 	struct mm_struct *mm = vma->vm_mm;
-	pgd_t *pgd = mm->lazy_repl_enabled ? pgd_offset_node(mm, addr, vma->master_pgd_node) : pgd_offset(mm, addr);
+	pgd_t *pgd = hydra_pgd_offset(mm, addr, vma->master_pgd_node);
 	p4d_t *p4d = p4d_offset(pgd, addr);
 	pud_t *pud = pud_offset(p4d, addr);
 
@@ -7020,7 +7020,7 @@ pte_t *huge_pte_alloc(struct mm_struct *mm, struct vm_area_struct *vma,
 	pud_t *pud;
 	pte_t *pte = NULL;
 
-	pgd = mm->lazy_repl_enabled ? pgd_offset_node(mm, addr, vma->master_pgd_node) : pgd_offset(mm, addr);
+	pgd = hydra_pgd_offset(mm, addr, vma->master_pgd_node);
 	p4d = p4d_alloc(mm, pgd, addr);
 	if (!p4d)
 		return NULL;
@@ -7064,12 +7064,10 @@ pte_t *huge_pte_offset(struct mm_struct *mm,
 	pud_t *pud;
 	pmd_t *pmd;
 
-	if (mm->lazy_repl_enabled && vma)
-		pgd = pgd_offset_node(mm, addr, vma->master_pgd_node);
-	else if (mm->lazy_repl_enabled)
+	if (mm->lazy_repl_enabled && !vma)
 		BUG();
-	else
-		pgd = pgd_offset(mm, addr);
+	pgd = vma ? hydra_pgd_offset(mm, addr, vma->master_pgd_node)
+		  : pgd_offset(mm, addr);
 	if (!pgd_present(*pgd))
 		return NULL;
 	p4d = p4d_offset(pgd, addr);

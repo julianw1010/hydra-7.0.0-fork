@@ -890,10 +890,7 @@ pmd_t *mm_find_pmd(struct mm_struct *mm, struct vm_area_struct *vma,
 	pud_t *pud;
 	pmd_t *pmd = NULL;
 
-	if (mm->lazy_repl_enabled)
-		pgd = pgd_offset_node(mm, address, vma->master_pgd_node);
-	else
-		pgd = pgd_offset(mm, address);
+	pgd = hydra_pgd_offset(mm, address, vma->master_pgd_node);
 	if (!pgd_present(*pgd))
 		goto out;
 

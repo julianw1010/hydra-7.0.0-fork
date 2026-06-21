@@ -26,6 +26,15 @@ int hydra_enable_replication(struct mm_struct *mm);
 
 #define HYDRA_FIND_BAD(r) (((unsigned long)(r) & 1) == 1)
 
+static inline pgd_t *hydra_pgd_offset(struct mm_struct *mm,
+				       unsigned long address,
+				       unsigned long node)
+{
+	if (mm->lazy_repl_enabled)
+		return pgd_offset_node(mm, address, node);
+	return pgd_offset(mm, address);
+}
+
 struct mitosis_pte_tracking {
     DECLARE_BITMAP(propagated, PTRS_PER_PTE);
     DECLARE_BITMAP(ever_accessed, PTRS_PER_PTE);
@@ -194,6 +203,39 @@ static inline bool hydra_try_return_page(struct page *page)
 		return true;
 
 	return false;
+}
+
+static inline void hydra_dtor_free_page(struct page *page)
+{
+	struct ptdesc *ptdesc = page_ptdesc(page);
+
+	pagetable_dtor(ptdesc);
+
+	if (hydra_try_return_page(page))
+		return;
+
+	pagetable_free(ptdesc);
+}
+
+static inline struct page *hydra_alloc_pt_page_near(struct mm_struct *mm,
+						    gfp_t gfp,
+						    void *parent)
+{
+	int node;
+	struct page *page;
+
+	if (parent && virt_addr_valid(parent))
+		node = page_to_nid(virt_to_page(parent));
+	else
+		node = numa_node_id();
+
+	page = hydra_cache_pop(node);
+	if (!page)
+		page = alloc_pages_node(node, gfp | __GFP_THISNODE, 0);
+	if (page)
+		page->pt_owner_mm = mm;
+
+	return page;
 }
 
 static inline struct page *hydra_alloc_pt_page(struct mm_struct *mm,

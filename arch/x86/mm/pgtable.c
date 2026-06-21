@@ -24,16 +24,21 @@ pgtable_t pte_alloc_one(struct mm_struct *mm, pmd_t *pmd)
 	return __pte_alloc_one(mm, GFP_PGTABLE_USER, pmd);
 }
 
+static void hydra_free_tlb_page(struct mmu_gather *tlb, struct page *page)
+{
+	pagetable_dtor(page_ptdesc(page));
+
+	if (hydra_try_return_page(page))
+		return;
+
+	tlb_remove_ptdesc(tlb, page_ptdesc(page));
+}
+
 void ___pte_free_tlb(struct mmu_gather *tlb, struct page *pte)
 {
 	hydra_free_replica_chain(pte, HYDRA_LEVEL_PTE);
 	paravirt_release_pte(page_to_pfn(pte));
-	pagetable_dtor(page_ptdesc(pte));
-
-	if (hydra_try_return_page(pte))
-		return;
-
-	tlb_remove_ptdesc(tlb, page_ptdesc(pte));
+	hydra_free_tlb_page(tlb, pte);
 }
 
 #if CONFIG_PGTABLE_LEVELS > 2
@@ -50,12 +55,7 @@ void ___pmd_free_tlb(struct mmu_gather *tlb, pmd_t *pmd)
 #ifdef CONFIG_X86_PAE
 	tlb->need_flush_all = 1;
 #endif
-	pagetable_dtor(virt_to_ptdesc(pmd));
-
-	if (hydra_try_return_page(page))
-		return;
-
-	tlb_remove_ptdesc(tlb, virt_to_ptdesc(pmd));
+	hydra_free_tlb_page(tlb, page);
 }
 
 #if CONFIG_PGTABLE_LEVELS > 3
@@ -64,11 +64,7 @@ void ___pud_free_tlb(struct mmu_gather *tlb, pud_t *pud)
 	struct page *page = virt_to_page(pud);
 
 	paravirt_release_pud(__pa(pud) >> PAGE_SHIFT);
-
-	if (hydra_try_return_page(page))
-		return;
-
-	tlb_remove_ptdesc(tlb, virt_to_ptdesc(pud));
+	hydra_free_tlb_page(tlb, page);
 }
 
 #if CONFIG_PGTABLE_LEVELS > 4
@@ -77,11 +73,7 @@ void ___p4d_free_tlb(struct mmu_gather *tlb, p4d_t *p4d)
 	struct page *page = virt_to_page(p4d);
 
 	paravirt_release_p4d(__pa(p4d) >> PAGE_SHIFT);
-
-	if (hydra_try_return_page(page))
-		return;
-
-	tlb_remove_ptdesc(tlb, virt_to_ptdesc(p4d));
+	hydra_free_tlb_page(tlb, page);
 }
 #endif	/* CONFIG_PGTABLE_LEVELS > 4 */
 #endif	/* CONFIG_PGTABLE_LEVELS > 3 */

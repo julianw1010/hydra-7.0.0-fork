@@ -218,7 +218,7 @@ bool page_vma_mapped_walk(struct page_vma_mapped_walk *pvmw)
 		goto next_pte;
 restart:
 	do {
-	    pgd = mm->lazy_repl_enabled ? pgd_offset_node(mm, pvmw->address, pvmw->vma->master_pgd_node) : pgd_offset(mm, pvmw->address);
+		pgd = hydra_pgd_offset(mm, pvmw->address, pvmw->vma->master_pgd_node);
 		if (!pgd_present(*pgd)) {
 			step_forward(pvmw, PGDIR_SIZE);
 			continue;

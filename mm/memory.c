@@ -623,9 +623,8 @@ static void __print_bad_page_map_pgtable(struct mm_struct *mm,
 	 * Although this looks like a fully lockless pgtable walk, it is not:
 	 * see locking requirements for print_bad_page_map().
 	 */
-	pgdp = (mm->lazy_repl_enabled && vma)
-		? pgd_offset_node(mm, addr, vma->master_pgd_node)
-		: pgd_offset(mm, addr);
+	pgdp = vma ? hydra_pgd_offset(mm, addr, vma->master_pgd_node)
+		   : pgd_offset(mm, addr);
 	pgdv = pgd_val(*pgdp);
 
 	if (!pgd_present(*pgdp) || pgd_leaf(*pgdp)) {
@@ -1624,17 +1623,8 @@ copy_page_range(struct vm_area_struct *dst_vma, struct vm_area_struct *src_vma)
 	}
 
 	ret = 0;
-	if (dst_mm->lazy_repl_enabled) {
-		dst_pgd = pgd_offset_node(dst_mm, addr, dst_vma->master_pgd_node);
-	} else {
-		dst_pgd = pgd_offset(dst_mm, addr);
-	}
-
-	if (src_mm->lazy_repl_enabled) {
-		src_pgd = pgd_offset_node(src_mm, addr, src_vma->master_pgd_node);
-	} else {
-		src_pgd = pgd_offset(src_mm, addr);
-	}
+	dst_pgd = hydra_pgd_offset(dst_mm, addr, dst_vma->master_pgd_node);
+	src_pgd = hydra_pgd_offset(src_mm, addr, src_vma->master_pgd_node);
 	do {
 		next = pgd_addr_end(addr, end);
 		if (pgd_none_or_clear_bad(src_pgd))
@@ -2174,11 +2164,7 @@ void unmap_page_range(struct mmu_gather *tlb,
 
 	BUG_ON(addr >= end);
 	tlb_start_vma(tlb, vma);
-	if (mm->lazy_repl_enabled) {
-		pgd = pgd_offset_node(vma->vm_mm, addr, vma->master_pgd_node);
-	} else {
-		pgd = pgd_offset(vma->vm_mm, addr);
-	}
+	pgd = hydra_pgd_offset(mm, addr, vma->master_pgd_node);
 	do {
 		next = pgd_addr_end(addr, end);
 		if (pgd_none_or_clear_bad(pgd))
@@ -2362,10 +2348,7 @@ static pmd_t *walk_to_pmd(struct mm_struct *mm, unsigned long addr, int master_n
 	pud_t *pud;
 	pmd_t *pmd;
 
-	if (mm->lazy_repl_enabled)
-		pgd = pgd_offset_node(mm, addr, master_node);
-	else
-		pgd = pgd_offset(mm, addr);
+	pgd = hydra_pgd_offset(mm, addr, master_node);
 	p4d = p4d_alloc(mm, pgd, addr);
 	if (!p4d)
 		return NULL;
@@ -3101,28 +3084,16 @@ static int remap_pfn_range_internal(struct vm_area_struct *vma, unsigned long ad
 
 	BUG_ON(addr >= end);
 	pfn -= addr >> PAGE_SHIFT;
-	if (mm->lazy_repl_enabled) {
-		pgd = pgd_offset_node(vma->vm_mm, addr, vma->master_pgd_node);
-		flush_cache_range(vma, addr, end);
-		do {
-			next = pgd_addr_end(addr, end);
-			err = remap_p4d_range(mm, pgd, addr, next,
-					pfn + (addr >> PAGE_SHIFT), prot);
-			if (err) {
-				return err;
-			}
-		} while (pgd++, addr = next, addr != end);
-	} else {
-		pgd = pgd_offset(vma->vm_mm, addr);
-		flush_cache_range(vma, addr, end);
-		do {
-			next = pgd_addr_end(addr, end);
-			err = remap_p4d_range(mm, pgd, addr, next,
-					pfn + (addr >> PAGE_SHIFT), prot);
-			if (err)
-				return err;
-		} while (pgd++, addr = next, addr != end);
-	}
+	pgd = hydra_pgd_offset(mm, addr, vma->master_pgd_node);
+	flush_cache_range(vma, addr, end);
+	do {
+		next = pgd_addr_end(addr, end);
+		err = remap_p4d_range(mm, pgd, addr, next,
+				pfn + (addr >> PAGE_SHIFT), prot);
+		if (err)
+			return err;
+	} while (pgd++, addr = next, addr != end);
+
 	return 0;
 }
 
@@ -7054,10 +7025,7 @@ int __handle_mm_fault(struct vm_area_struct *vma,
 
 	on_replica = mm->lazy_repl_enabled && (node_to_use != owner_node);
 
-	if (mm->lazy_repl_enabled)
-		pgd = pgd_offset_node(mm, address, node_to_use);
-	else
-		pgd = pgd_offset(mm, address);
+	pgd = hydra_pgd_offset(mm, address, node_to_use);
 
 	p4d = p4d_alloc(mm, pgd, address);
 	if (!p4d) {
@@ -7561,10 +7529,7 @@ int follow_pfnmap_start(struct follow_pfnmap_args *args)
 	if (!(vma->vm_flags & (VM_IO | VM_PFNMAP)))
 		goto out;
 retry:
-	if (mm->lazy_repl_enabled)
-		pgdp = pgd_offset_node(mm, address, vma->master_pgd_node);
-	else
-		pgdp = pgd_offset(mm, address);
+	pgdp = hydra_pgd_offset(mm, address, vma->master_pgd_node);
 	if (pgd_none(*pgdp) || unlikely(pgd_bad(*pgdp)))
 		goto out;
 

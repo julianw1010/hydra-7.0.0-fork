@@ -79,7 +79,7 @@ static pud_t *get_old_pud(struct mm_struct *mm, struct vm_area_struct *vma, unsi
 	p4d_t *p4d;
 	pud_t *pud;
 
-	pgd = mm->lazy_repl_enabled ? pgd_offset_node(mm, addr, vma->master_pgd_node) : pgd_offset(mm, addr);
+	pgd = hydra_pgd_offset(mm, addr, vma->master_pgd_node);
 	if (pgd_none_or_clear_bad(pgd))
 		return NULL;
 
@@ -115,7 +115,7 @@ static pud_t *alloc_new_pud(struct mm_struct *mm, struct vm_area_struct *vma, un
 	pgd_t *pgd;
 	p4d_t *p4d;
 
-	pgd = mm->lazy_repl_enabled ? pgd_offset_node(mm, addr, vma->master_pgd_node) : pgd_offset(mm, addr);
+	pgd = hydra_pgd_offset(mm, addr, vma->master_pgd_node);
 	p4d = p4d_alloc(mm, pgd, addr);
 	if (!p4d)
 		return NULL;
