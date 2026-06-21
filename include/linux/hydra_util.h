@@ -19,14 +19,6 @@ void migrate_pgtables_to_node(struct mm_struct *mm, pgd_t *pgd, int target_node)
 void hydra_reload_cr3(void *info);
 int hydra_enable_replication(struct mm_struct *mm);
 
-#define for_each_replica(start, cur)                                     \
-    for (unsigned int __repl_n = 1,                                      \
-             __repl_go = 1;                                              \
-         __repl_go; __repl_go = 0)                                       \
-        for (cur = READ_ONCE((start)->next_replica);                     \
-             cur && cur != (start) && __repl_n < NUMA_NODE_COUNT * 2;    \
-             cur = READ_ONCE(cur->next_replica), ++__repl_n)
-
 static inline int hydra_alloc_node(struct mm_struct *mm)
 {
 	if (!mm->lazy_repl_enabled)
@@ -119,13 +111,16 @@ static inline pte_t *hydra_find_pte(struct mm_struct *mm, unsigned long address,
 
 static inline int hydra_collect_repl_nodes(struct page *const ptpage, nodemask_t *nodemask)
 {
-	struct page *cur;
+	struct page *cur_page;
+	struct page *start_page;
 
-	node_set(page_to_nid(ptpage), *nodemask);
+	start_page = ptpage;
+	cur_page = ptpage;
 
-	for_each_replica(ptpage, cur) {
-		node_set(page_to_nid(cur), *nodemask);
-	}
+	do {
+		node_set(page_to_nid(cur_page), *nodemask);
+		cur_page = cur_page->next_replica;
+	} while (cur_page && cur_page != start_page);
 
 	return 0;
 }
@@ -160,7 +155,8 @@ static inline void hydra_chain_unlock(struct page *master)
 static inline void hydra_link_page_to_replica_chain(struct page *existing_page,
 						    struct page *new_page)
 {
-	struct page *cur;
+	struct page *cur_page;
+	struct page *start_page;
 	struct page *next_repl;
 	int chain_len = 0;
 
@@ -172,16 +168,18 @@ static inline void hydra_link_page_to_replica_chain(struct page *existing_page,
 
 	hydra_chain_lock(existing_page);
 
-	for (cur = READ_ONCE(existing_page->next_replica);
-	     cur && cur != existing_page;
-	     cur = READ_ONCE(cur->next_replica)) {
+	start_page = existing_page;
+	cur_page = READ_ONCE(existing_page->next_replica);
+
+	while (cur_page && cur_page != start_page) {
 		chain_len++;
-		if (cur == new_page)
+		if (cur_page == new_page)
 			goto out_unlock;
-		if (WARN_ON(page_to_nid(cur) == page_to_nid(new_page)))
+		if (WARN_ON(page_to_nid(cur_page) == page_to_nid(new_page)))
 			goto out_unlock;
 		if (WARN_ON(chain_len >= NUMA_NODE_COUNT))
 			goto out_unlock;
+		cur_page = READ_ONCE(cur_page->next_replica);
 	}
 
 	next_repl = existing_page->next_replica;
@@ -195,20 +193,23 @@ out_unlock:
 
 static inline void hydra_break_chain(struct page *page)
 {
-	struct page *cur, *next;
+	struct page *cur_page, *next_page;
+	struct page *start_page;
 
 	if (!page || !page->next_replica)
 		return;
 
+	start_page = page;
+
 	hydra_chain_lock(page);
-	cur = page->next_replica;
+	cur_page = page->next_replica;
 	page->next_replica = NULL;
 	hydra_chain_unlock(page);
 
-	while (cur && cur != page) {
-		next = READ_ONCE(cur->next_replica);
-		WRITE_ONCE(cur->next_replica, NULL);
-		cur = next;
+	while (cur_page && cur_page != start_page) {
+		next_page = READ_ONCE(cur_page->next_replica);
+		WRITE_ONCE(cur_page->next_replica, NULL);
+		cur_page = next_page;
 	}
 }
 

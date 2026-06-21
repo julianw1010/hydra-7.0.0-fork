@@ -123,24 +123,27 @@ EXPORT_SYMBOL(hydra_cache_drain_all);
 
 void hydra_free_replica_chain(struct page *primary, int level)
 {
-	struct page *cur, *next;
+	struct page *cur_page, *next_page;
+	struct page *start_page;
 
 	if (!primary || !primary->next_replica)
 		return;
 
+	start_page = primary;
+
 	hydra_chain_lock(primary);
-	cur = primary->next_replica;
+	cur_page = primary->next_replica;
 	primary->next_replica = NULL;
 	hydra_chain_unlock(primary);
 
-	while (cur && cur != primary) {
-		struct mm_struct *owner_mm = cur->pt_owner_mm;
+	while (cur_page && cur_page != start_page) {
+		struct mm_struct *owner_mm = cur_page->pt_owner_mm;
 
-		next = READ_ONCE(cur->next_replica);
-		cur->next_replica = NULL;
+		next_page = READ_ONCE(cur_page->next_replica);
+		cur_page->next_replica = NULL;
 
 		if (level <= HYDRA_LEVEL_PMD)
-			pagetable_dtor(page_ptdesc(cur));
+			pagetable_dtor(page_ptdesc(cur_page));
 
 		if (owner_mm) {
 			if (level == HYDRA_LEVEL_PTE)
@@ -149,9 +152,9 @@ void hydra_free_replica_chain(struct page *primary, int level)
 				mm_dec_nr_pmds(owner_mm);
 		}
 
-		if (!hydra_try_return_page(cur))
-			__free_page(cur);
+		if (!hydra_try_return_page(cur_page))
+			__free_page(cur_page);
 
-		cur = next;
+		cur_page = next_page;
 	}
 }
