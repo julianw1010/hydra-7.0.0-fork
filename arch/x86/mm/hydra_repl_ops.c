@@ -4,42 +4,21 @@
 #include <linux/hydra_util.h>
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
-#include <asm/hydra_pti.h>
 #include <asm/page.h>
 
 void pgtable_track_set_pgd(pgd_t *pgdp, pgd_t pgd)
 {
-	pgd_t *user_entry;
-
 	native_set_pgd(pgdp, pgd);
-
-	user_entry = hydra_get_user_pgd_entry(pgdp);
-	if (user_entry) {
-		WRITE_ONCE(*user_entry, __pgd(pgd_val(pgd)));
-	}
-
 }
 
 void pgtable_track_set_p4d(p4d_t *p4dp, p4d_t p4d)
 {
-	pgd_t *user_entry;
-
 	native_set_p4d(p4dp, p4d);
-
-	if (!pgtable_l5_enabled()) {
-		user_entry = hydra_get_user_pgd_entry((pgd_t *)p4dp);
-		if (user_entry) {
-			WRITE_ONCE(*user_entry, __pgd(p4d_val(p4d)));
-		}
-	}
-
 }
 
 void pgtable_track_set_pud(pud_t *pudp, pud_t pud)
 {
-
 	native_set_pud(pudp, pud);
-
 }
 
 void pgtable_track_set_pmd(pmd_t *pmdp, pmd_t pmd)

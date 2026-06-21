@@ -121,7 +121,6 @@
 #include <asm/pgtable.h>
 #include <asm/mmu_context.h>
 #include <asm/pgalloc.h>
-#include <asm/hydra_pti.h>
 
 #include "internal.h"
 

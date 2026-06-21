@@ -12,7 +12,6 @@
 #include <linux/hydra_util.h>
 #include <linux/mempolicy.h>
 #include <linux/slab.h>
-#include <asm/hydra_pti.h>
 
 #ifdef CONFIG_DYNAMIC_PHYSICAL_MASK
 phys_addr_t physical_mask __ro_after_init = (1ULL << __PHYSICAL_MASK_SHIFT) - 1;
@@ -339,7 +338,7 @@ static void pgd_prepopulate_user_pmd(struct mm_struct *mm,
 static inline pgd_t *_pgd_alloc(struct mm_struct *mm)
 {
 	struct page *page;
-	int order = hydra_pgd_alloc_order();
+	int order = pgd_allocation_order();
 
 	page = hydra_alloc_pt_page(mm, GFP_PGTABLE_USER, order);
 	if (!page)
@@ -865,7 +864,7 @@ pgd_t *repl_pgd_alloc(struct mm_struct *mm, size_t nid)
 	pgd_t *pgd;
 	pmd_t *pmds[PREALLOCATED_PMDS];
 	struct page *page;
-	int order = hydra_pgd_alloc_order();
+	int order = pgd_allocation_order();
 	nodemask_t nm = NODE_MASK_NONE;
 
 	if (order == 0) {

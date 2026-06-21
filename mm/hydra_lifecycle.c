@@ -9,7 +9,6 @@
 #include <asm/pgalloc.h>
 #include <asm/tlbflush.h>
 #include <asm/mmu_context.h>
-#include <asm/hydra_pti.h>
 
 static struct page *migrate_pgtable_page(struct page *page, int target_node)
 {
