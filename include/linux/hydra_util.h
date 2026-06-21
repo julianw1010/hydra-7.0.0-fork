@@ -12,6 +12,8 @@
 #include <asm/pgtable.h>
 #include <asm/tlbflush.h>
 
+#define HYDRA_LEVEL_PTE 0
+#define HYDRA_LEVEL_PMD 1
 
 void migrate_pgtables_to_node(struct mm_struct *mm, pgd_t *pgd, int target_node);
 void hydra_reload_cr3(void *info);
@@ -210,9 +212,7 @@ static inline void hydra_break_chain(struct page *page)
 	}
 }
 
-extern void hydra_defer_pte_page_free(struct mm_struct *mm, struct page *page);
-
-extern void hydra_drain_deferred_pages(struct mm_struct *mm);
+extern void hydra_free_replica_chain(struct page *primary, int level);
 
 extern int sysctl_hydra_verify_enabled;
 void hydra_verify_fault_walk(struct mm_struct *mm, unsigned long address,
@@ -236,24 +236,8 @@ static inline struct page *hydra_alloc_pt_page(struct mm_struct *mm,
 					       gfp_t gfp, unsigned int order)
 {
 	struct page *page;
-	int node;
 
-	if (mm->lazy_repl_enabled) {
-		node = hydra_alloc_node(mm);
-		gfp |= __GFP_THISNODE;
-
-		if (order == 0) {
-			page = hydra_cache_pop(node);
-			if (page) {
-				page->pt_owner_mm = mm;
-				return page;
-			}
-		}
-
-		page = alloc_pages_node(node, gfp, order);
-	} else {
-		page = alloc_pages(gfp, order);
-	}
+	page = alloc_pages(gfp, order);
 
 	if (page)
 		page->pt_owner_mm = mm;

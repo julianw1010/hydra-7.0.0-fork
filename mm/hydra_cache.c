@@ -121,46 +121,37 @@ int hydra_cache_drain_all(void)
 }
 EXPORT_SYMBOL(hydra_cache_drain_all);
 
-void hydra_defer_pte_page_free(struct mm_struct *mm, struct page *page)
+void hydra_free_replica_chain(struct page *primary, int level)
 {
-	unsigned long flags;
+	struct page *cur, *next;
 
-	hydra_break_chain(page);
-	pagetable_dtor(page_ptdesc(page));
-
-	if (!mm) {
-		ClearPageHydraFromCache(page);
-		__free_page(page);
-		return;
-	}
-
-	spin_lock_irqsave(&mm->hydra_deferred_lock, flags);
-	page->next_replica = mm->hydra_deferred_pages;
-	mm->hydra_deferred_pages = page;
-	spin_unlock_irqrestore(&mm->hydra_deferred_lock, flags);
-}
-EXPORT_SYMBOL(hydra_defer_pte_page_free);
-
-void hydra_drain_deferred_pages(struct mm_struct *mm)
-{
-	struct page *page, *next;
-	unsigned long flags;
-
-	if (!READ_ONCE(mm->hydra_deferred_pages))
+	if (!primary || !primary->next_replica)
 		return;
 
-	spin_lock_irqsave(&mm->hydra_deferred_lock, flags);
-	page = mm->hydra_deferred_pages;
-	mm->hydra_deferred_pages = NULL;
-	spin_unlock_irqrestore(&mm->hydra_deferred_lock, flags);
+	hydra_chain_lock(primary);
+	cur = primary->next_replica;
+	primary->next_replica = NULL;
+	hydra_chain_unlock(primary);
 
-	while (page) {
-		next = page->next_replica;
+	while (cur && cur != primary) {
+		struct mm_struct *owner_mm = cur->pt_owner_mm;
 
-		if (!hydra_try_return_page(page))
-			__free_page(page);
+		next = READ_ONCE(cur->next_replica);
+		cur->next_replica = NULL;
 
-		page = next;
+		if (level <= HYDRA_LEVEL_PMD)
+			pagetable_dtor(page_ptdesc(cur));
+
+		if (owner_mm) {
+			if (level == HYDRA_LEVEL_PTE)
+				mm_dec_nr_ptes(owner_mm);
+			else if (level == HYDRA_LEVEL_PMD)
+				mm_dec_nr_pmds(owner_mm);
+		}
+
+		if (!hydra_try_return_page(cur))
+			__free_page(cur);
+
+		cur = next;
 	}
 }
-EXPORT_SYMBOL(hydra_drain_deferred_pages);

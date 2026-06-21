@@ -1162,13 +1162,9 @@ struct mm_struct {
 	unsigned long highest_vm_end;		/* highest vma end address */
 
 	bool          lazy_repl_enabled;
-	
-	
+
 	pgd_t * repl_pgd[NUMA_NODE_COUNT];
-	
-	spinlock_t hydra_deferred_lock;
-	struct page *hydra_deferred_pages;
-	
+
 	pgd_t * pgd;
 
 #ifdef CONFIG_MEMBARRIER

@@ -1403,7 +1403,6 @@ void exit_mmap(struct mm_struct *mm)
 	unmap_vmas(&tlb, &unmap);
 	if (mm->lazy_repl_enabled) {
 		hydra_unlink_all_replica_chains(mm);
-		hydra_drain_deferred_pages(mm);
 	}
 	mmap_read_unlock(mm);
 

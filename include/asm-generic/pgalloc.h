@@ -63,7 +63,7 @@ static inline void pte_free_kernel(struct mm_struct *mm, pte_t *pte)
 	struct ptdesc *ptdesc = virt_to_ptdesc(pte);
 	struct page *page = ptdesc_page(ptdesc);
 
-	hydra_break_chain(page);
+	hydra_free_replica_chain(page, HYDRA_LEVEL_PTE);
 	pagetable_dtor(ptdesc);
 
 	if (hydra_try_return_page(page))
@@ -133,7 +133,7 @@ static inline void pte_free(struct mm_struct *mm, struct page *pte_page)
 {
 	struct ptdesc *ptdesc = page_ptdesc(pte_page);
 
-	hydra_break_chain(pte_page);
+	hydra_free_replica_chain(pte_page, HYDRA_LEVEL_PTE);
 	pagetable_dtor(ptdesc);
 
 	if (hydra_try_return_page(pte_page))
@@ -190,7 +190,7 @@ static inline void pmd_free(struct mm_struct *mm, pmd_t *pmd)
 	struct page *page = ptdesc_page(ptdesc);
 
 	BUG_ON((unsigned long)pmd & (PAGE_SIZE - 1));
-	hydra_break_chain(page);
+	hydra_free_replica_chain(page, HYDRA_LEVEL_PMD);
 	pagetable_dtor(ptdesc);
 
 	if (hydra_try_return_page(page))

@@ -596,16 +596,13 @@ void pmd_install(struct mm_struct *mm, pmd_t *pmd, pgtable_t *pte)
 
 int __pte_alloc(struct mm_struct *mm, pmd_t *pmd)
 {
-	struct hydra_node_scope scope = { .saved = -1, .active = false };
 	pgtable_t new;
+	int node = numa_node_id();
 
-	if (mm->lazy_repl_enabled && virt_addr_valid(pmd))
-		scope = hydra_enter_node_scope(mm, page_to_nid(virt_to_page(pmd)));
+	if (virt_addr_valid(pmd))
+		node = page_to_nid(virt_to_page(pmd));
 
-	new = pte_alloc_one(mm);
-
-	hydra_exit_node_scope(&scope);
-
+	new = repl_pte_alloc_one(mm, 0, node);
 	if (!new)
 		return -ENOMEM;
 
@@ -614,7 +611,6 @@ int __pte_alloc(struct mm_struct *mm, pmd_t *pmd)
 		pte_free(mm, new);
 	return 0;
 }
-
 
 int __repl_pte_alloc(struct mm_struct *mm, pmd_t *pmd, unsigned long address,
                      pte_t *master_ptep, size_t nid)
@@ -6809,7 +6805,10 @@ static int hydra_replicate_huge_pmd_range(struct mm_struct *mm,
 
 			if (owner_mm)
 				mm_dec_nr_ptes(owner_mm);
-			hydra_defer_pte_page_free(owner_mm, pte_page);
+			hydra_break_chain(pte_page);
+			pagetable_dtor(page_ptdesc(pte_page));
+			if (!hydra_try_return_page(pte_page))
+				__free_page(pte_page);
 		}
 
 		native_set_pmd(&repl_pmd_base[i], pmd_mkold(master_val));
@@ -7534,15 +7533,22 @@ EXPORT_SYMBOL_GPL(handle_mm_fault);
  */
 int __p4d_alloc(struct mm_struct *mm, pgd_t *pgd, unsigned long address)
 {
-	p4d_t *new = p4d_alloc_one(mm, address);
+	p4d_t *new;
+	int node = numa_node_id();
+
+	if (virt_addr_valid(pgd))
+		node = page_to_nid(virt_to_page(pgd));
+
+	new = repl_p4d_alloc_one(mm, address, node);
 	if (!new)
 		return -ENOMEM;
 
+	smp_wmb(); /* See comment in pmd_install() */
+
 	spin_lock(&mm->page_table_lock);
-	if (pgd_present(*pgd)) {	/* Another has populated it */
+	if (pgd_present(*pgd)) {
 		p4d_free(mm, new);
 	} else {
-		smp_wmb(); /* See comment in pmd_install() */
 		pgd_populate(mm, pgd, new);
 	}
 	spin_unlock(&mm->page_table_lock);
@@ -7582,17 +7588,25 @@ int __repl_p4d_alloc(struct mm_struct *mm, pgd_t *pgd, unsigned long address,
  */
 int __pud_alloc(struct mm_struct *mm, p4d_t *p4d, unsigned long address)
 {
-	pud_t *new = pud_alloc_one(mm, address);
+	pud_t *new;
+	int node = numa_node_id();
+
+	if (virt_addr_valid(p4d))
+		node = page_to_nid(virt_to_page(p4d));
+
+	new = repl_pud_alloc_one(mm, address, node);
 	if (!new)
 		return -ENOMEM;
+
+	smp_wmb(); /* See comment in pmd_install() */
 
 	spin_lock(&mm->page_table_lock);
 	if (!p4d_present(*p4d)) {
 		mm_inc_nr_puds(mm);
-		smp_wmb(); /* See comment in pmd_install() */
 		p4d_populate(mm, p4d, new);
-	} else	/* Another has populated it */
+	} else {
 		pud_free(mm, new);
+	}
 	spin_unlock(&mm->page_table_lock);
 	return 0;
 }
@@ -7632,16 +7646,23 @@ int __repl_pud_alloc(struct mm_struct *mm, p4d_t *p4d, unsigned long address,
 int __pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address)
 {
 	spinlock_t *ptl;
-	pmd_t *new = pmd_alloc_one(mm, address);
+	pmd_t *new;
+	int node = numa_node_id();
+
+	if (virt_addr_valid(pud))
+		node = page_to_nid(virt_to_page(pud));
+
+	new = repl_pmd_alloc_one(mm, address, node);
 	if (!new)
 		return -ENOMEM;
+
+	smp_wmb(); /* See comment in pmd_install() */
 
 	ptl = pud_lock(mm, pud);
 	if (!pud_present(*pud)) {
 		mm_inc_nr_pmds(mm);
-		smp_wmb(); /* See comment in pmd_install() */
 		pud_populate(mm, pud, new);
-	} else {	/* Another has populated it */
+	} else { /* Another has populated it */
 		pmd_free(mm, new);
 	}
 	spin_unlock(ptl);

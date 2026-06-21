@@ -317,8 +317,6 @@ int hydra_enable_replication(struct mm_struct *mm)
 		}
 	}
 
-	migrate_pgtables_to_node(mm, mm->pgd, primary_node);
-
 	for (i = 0; i < NUMA_NODE_COUNT; i++) {
 		if (i == primary_node) {
 			mm->repl_pgd[i] = mm->pgd;
