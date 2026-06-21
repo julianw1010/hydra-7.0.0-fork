@@ -93,7 +93,7 @@
 #include <linux/hydra_util.h>
 
 int __repl_pte_alloc(struct mm_struct *mm, pmd_t *pmd, unsigned long address,
-		     pte_t *master_pte, size_t nid);
+		     pte_t *master_pte);
 
 #if defined(LAST_CPUPID_NOT_IN_PAGE_FLAGS) && !defined(CONFIG_COMPILE_TEST)
 #warning Unfortunate NUMA and NUMA Balancing config, growing page-frame for last_cpupid.
@@ -512,10 +512,10 @@ int __pte_alloc(struct mm_struct *mm, pmd_t *pmd)
 }
 
 int __repl_pte_alloc(struct mm_struct *mm, pmd_t *pmd, unsigned long address,
-                     pte_t *master_ptep, size_t nid)
+                     pte_t *master_ptep)
 {
 	spinlock_t *ptl;
-	pgtable_t new = repl_pte_alloc_one(mm, address, nid);
+	pgtable_t new = pte_alloc_one(mm, pmd);
 	struct page *master_pte_page, *repl_pte_page;
 	int allocated = 0;
 
@@ -6501,21 +6501,20 @@ static int hydra_replicate_partial_pte(struct mm_struct *mm,
 	master_pte_base = (pte_t *)((unsigned long)master_pte & PAGE_MASK);
 
 	repl_pgd = pgd_offset_node(mm, addr, current_node);
-	repl_p4d = repl_p4d_alloc(mm, repl_pgd, addr, current_node);
+	repl_p4d = p4d_alloc(mm, repl_pgd, addr);
 	if (!repl_p4d)
 		return -ENOMEM;
 
-	repl_pud = repl_pud_alloc(mm, repl_p4d, addr, current_node);
+	repl_pud = pud_alloc(mm, repl_p4d, addr);
 	if (!repl_pud)
 		return -ENOMEM;
 
-	repl_pmd = repl_pmd_alloc(mm, repl_pud, addr, current_node, master_node);
+	repl_pmd = repl_pmd_alloc(mm, repl_pud, addr, master_node);
 	if (!repl_pmd)
 		return -ENOMEM;
 
 	if (pmd_none(*repl_pmd)) {
-		ret = __repl_pte_alloc(mm, repl_pmd, addr, master_pte,
-				       current_node);
+		ret = __repl_pte_alloc(mm, repl_pmd, addr, master_pte);
 		if (ret < 0)
 			return ret;
 	}
@@ -6629,15 +6628,15 @@ static int hydra_replicate_huge_pmd_range(struct mm_struct *mm,
 		return -EAGAIN;
 
 	repl_pgd = pgd_offset_node(mm, haddr, current_node);
-	repl_p4d = repl_p4d_alloc(mm, repl_pgd, haddr, current_node);
+	repl_p4d = p4d_alloc(mm, repl_pgd, haddr);
 	if (!repl_p4d)
 		return -ENOMEM;
 
-	repl_pud = repl_pud_alloc(mm, repl_p4d, haddr, current_node);
+	repl_pud = pud_alloc(mm, repl_p4d, haddr);
 	if (!repl_pud)
 		return -ENOMEM;
 
-	repl_pmd = repl_pmd_alloc(mm, repl_pud, haddr, current_node, master_node);
+	repl_pmd = repl_pmd_alloc(mm, repl_pud, haddr, master_node);
 	if (!repl_pmd)
 		return -ENOMEM;
 
@@ -7055,24 +7054,18 @@ int __handle_mm_fault(struct vm_area_struct *vma,
 
 	on_replica = mm->lazy_repl_enabled && (node_to_use != owner_node);
 
-	if (mm->lazy_repl_enabled) {
+	if (mm->lazy_repl_enabled)
 		pgd = pgd_offset_node(mm, address, node_to_use);
-		p4d = repl_p4d_alloc(mm, pgd, address, node_to_use);
-		if (!p4d) {
-			ret = VM_FAULT_OOM;
-			goto out_restore;
-		}
-		vmf.pud = repl_pud_alloc(mm, p4d, address, node_to_use);
-	} else {
+	else
 		pgd = pgd_offset(mm, address);
-		p4d = p4d_alloc(mm, pgd, address);
-		if (!p4d) {
-			ret = VM_FAULT_OOM;
-			goto out_restore;
-		}
-		vmf.pud = pud_alloc(mm, p4d, address);
+
+	p4d = p4d_alloc(mm, pgd, address);
+	if (!p4d) {
+		ret = VM_FAULT_OOM;
+		goto out_restore;
 	}
 
+	vmf.pud = pud_alloc(mm, p4d, address);
 	if (!vmf.pud) {
 		ret = VM_FAULT_OOM;
 		goto out_restore;
@@ -7107,7 +7100,7 @@ retry_pud:
 	}
 
 	if (mm->lazy_repl_enabled) {
-		vmf.pmd = repl_pmd_alloc(mm, vmf.pud, address, node_to_use, owner_node);
+		vmf.pmd = repl_pmd_alloc(mm, vmf.pud, address, owner_node);
 	} else {
 		vmf.pmd = pmd_alloc(mm, vmf.pud, address);
 	}
@@ -7434,30 +7427,6 @@ int __p4d_alloc(struct mm_struct *mm, pgd_t *pgd, unsigned long address)
 	return 0;
 }
 
-int __repl_p4d_alloc(struct mm_struct *mm, pgd_t *pgd, unsigned long address,
-		     size_t nid)
-{
-	p4d_t *new = repl_p4d_alloc_one(mm, address, nid);
-	struct page *page;
-
-	if (!new)
-		return -ENOMEM;
-
-	smp_wmb();
-
-	spin_lock(&mm->page_table_lock);
-	if (pgd_present(*pgd)) {
-		page = virt_to_page(new);
-
-		if (!hydra_try_return_page(page))
-			free_page((unsigned long)new);
-	} else {
-		pgd_populate(mm, pgd, new);
-	}
-	spin_unlock(&mm->page_table_lock);
-	return 0;
-}
-
 #endif /* __PAGETABLE_P4D_FOLDED */
 
 #ifndef __PAGETABLE_PUD_FOLDED
@@ -7479,31 +7448,6 @@ int __pud_alloc(struct mm_struct *mm, p4d_t *p4d, unsigned long address)
 		p4d_populate(mm, p4d, new);
 	} else {
 		pud_free(mm, new);
-	}
-	spin_unlock(&mm->page_table_lock);
-	return 0;
-}
-
-int __repl_pud_alloc(struct mm_struct *mm, p4d_t *p4d, unsigned long address,
-		     size_t nid)
-{
-	pud_t *new = repl_pud_alloc_one(mm, address, nid);
-	struct page *page;
-
-	if (!new)
-		return -ENOMEM;
-
-	smp_wmb();
-
-	spin_lock(&mm->page_table_lock);
-	if (!p4d_present(*p4d)) {
-		mm_inc_nr_puds(mm);
-		p4d_populate(mm, p4d, new);
-	} else {
-		page = virt_to_page(new);
-
-		if (!hydra_try_return_page(page))
-			free_page((unsigned long)new);
 	}
 	spin_unlock(&mm->page_table_lock);
 	return 0;
@@ -8309,10 +8253,10 @@ void vma_pgtable_walk_end(struct vm_area_struct *vma)
 }
 
 int __repl_pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address,
-                     size_t nid, size_t owner_node)
+                     size_t owner_node)
 {
 	spinlock_t *ptl;
-	pmd_t *new = repl_pmd_alloc_one(mm, address, nid);
+	pmd_t *new = pmd_alloc_one(mm, address, pud);
 	struct page *new_page, *master_pmd_page = NULL;
 	pgd_t *m_pgd;
 	p4d_t *m_p4d;

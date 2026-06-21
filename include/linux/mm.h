@@ -3210,14 +3210,8 @@ static inline int __p4d_alloc(struct mm_struct *mm, pgd_t *pgd,
 {
 	return 0;
 }
-static inline int __repl_p4d_alloc(struct mm_struct *mm, pgd_t *pgd,
-					unsigned long address, size_t nid)
-{
-	return 0;
-}
 #else
 int __p4d_alloc(struct mm_struct *mm, pgd_t *pgd, unsigned long address);
-int __repl_p4d_alloc(struct mm_struct *mm, pgd_t *pgd, unsigned long address, size_t nid);
 #endif
 
 #if defined(__PAGETABLE_PUD_FOLDED) || !defined(CONFIG_MMU)
@@ -3231,7 +3225,6 @@ static inline void mm_dec_nr_puds(struct mm_struct *mm) {}
 
 #else
 int __pud_alloc(struct mm_struct *mm, p4d_t *p4d, unsigned long address);
-int __repl_pud_alloc(struct mm_struct *mm, p4d_t *p4d, unsigned long address, size_t nid);
 
 static inline void mm_inc_nr_puds(struct mm_struct *mm)
 {
@@ -3260,7 +3253,7 @@ static inline void mm_dec_nr_pmds(struct mm_struct *mm) {}
 
 #else
 int __pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address);
-int __repl_pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address, size_t nid, size_t owner_node);
+int __repl_pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address, size_t owner_node);
 
 static inline void mm_inc_nr_pmds(struct mm_struct *mm)
 {
@@ -3320,24 +3313,11 @@ static inline p4d_t *p4d_alloc(struct mm_struct *mm, pgd_t *pgd,
 	return (unlikely(pgd_none(*pgd)) && __p4d_alloc(mm, pgd, address)) ?
 		NULL : p4d_offset(pgd, address);
 }
-static inline p4d_t *repl_p4d_alloc(struct mm_struct *mm, pgd_t *pgd,
-		unsigned long address, size_t nid)
-{
-	return (unlikely(pgd_none(*pgd)) && __repl_p4d_alloc(mm, pgd, address, nid)) ?
-		NULL : p4d_offset(pgd, address);
-}
 
 static inline pud_t *pud_alloc(struct mm_struct *mm, p4d_t *p4d,
 		unsigned long address)
 {
 	return (unlikely(p4d_none(*p4d)) && __pud_alloc(mm, p4d, address)) ?
-		NULL : pud_offset(p4d, address);
-}
-
-static inline pud_t *repl_pud_alloc(struct mm_struct *mm, p4d_t *p4d,
-		unsigned long address, size_t nid)
-{
-	return (unlikely(p4d_none(*p4d)) && __repl_pud_alloc(mm, p4d, address, nid)) ?
 		NULL : pud_offset(p4d, address);
 }
 
@@ -3347,9 +3327,9 @@ static inline pmd_t *pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long a
 		NULL: pmd_offset(pud, address);
 }
 
-static inline pmd_t *repl_pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address, size_t nid, size_t owner_node)
+static inline pmd_t *repl_pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address, size_t owner_node)
 {
-	return (unlikely(pud_none(*pud)) && __repl_pmd_alloc(mm, pud, address, nid, owner_node))?
+	return (unlikely(pud_none(*pud)) && __repl_pmd_alloc(mm, pud, address, owner_node))?
 		NULL: pmd_offset(pud, address);
 }
 

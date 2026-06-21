@@ -52,7 +52,6 @@ extern pgd_t *repl_pgd_alloc(struct mm_struct *, size_t node_id);
 extern void pgd_free(struct mm_struct *mm, pgd_t *pgd);
 
 extern pgtable_t pte_alloc_one(struct mm_struct *, pmd_t *);
-extern pgtable_t repl_pte_alloc_one(struct mm_struct *, unsigned long, size_t node_id);
 
 extern struct page *repl_alloc_page_on_node(size_t nid, unsigned int order);
 
@@ -88,8 +87,6 @@ static inline void pmd_populate(struct mm_struct *mm, pmd_t *pmd,
 }
 
 #if CONFIG_PGTABLE_LEVELS > 2
-
-extern pmd_t *repl_pmd_alloc_one(struct mm_struct *mm, unsigned long addr, size_t nid);
 
 extern void ___pmd_free_tlb(struct mmu_gather *tlb, pmd_t *pmd);
 
@@ -127,8 +124,6 @@ static inline void p4d_populate_safe(struct mm_struct *mm, p4d_t *p4d, pud_t *pu
 	paravirt_alloc_pud(mm, __pa(pud) >> PAGE_SHIFT);
 	set_p4d_safe(p4d, __p4d(_PAGE_TABLE | __pa(pud)));
 }
-
-extern pud_t *repl_pud_alloc_one(struct mm_struct *mm, unsigned long addr, size_t nid);
 
 extern void ___pud_free_tlb(struct mmu_gather *tlb, pud_t *pud);
 

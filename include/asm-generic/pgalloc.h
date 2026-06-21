@@ -331,8 +331,6 @@ static inline p4d_t *p4d_alloc_one_noprof(struct mm_struct *mm, unsigned long ad
 #define p4d_alloc_one(...)	alloc_hooks(p4d_alloc_one_noprof(__VA_ARGS__))
 #endif
 
-extern p4d_t *repl_p4d_alloc_one(struct mm_struct *mm, unsigned long addr, size_t nid);
-
 static inline void __p4d_free(struct mm_struct *mm, p4d_t *p4d)
 {
 	struct ptdesc *ptdesc = virt_to_ptdesc(p4d);
