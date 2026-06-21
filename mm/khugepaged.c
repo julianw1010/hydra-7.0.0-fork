@@ -23,6 +23,7 @@
 #include <linux/ksm.h>
 #include <linux/pgalloc.h>
 #include <linux/backing-dev.h>
+#include <linux/hydra_util.h> 
 
 #include <asm/tlb.h>
 #include "internal.h"

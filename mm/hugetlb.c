@@ -38,6 +38,7 @@
 #include <linux/mm_inline.h>
 #include <linux/padata.h>
 #include <linux/pgalloc.h>
+#include <linux/hydra_util.h> 
 
 #include <asm/page.h>
 #include <asm/tlb.h>

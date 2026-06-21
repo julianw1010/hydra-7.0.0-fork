@@ -24,6 +24,7 @@
 
 #include <asm/mmu_context.h>
 #include <asm/tlbflush.h>
+#include <linux/hydra_util.h> 
 
 #include "internal.h"
 #include "swap.h"

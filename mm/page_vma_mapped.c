@@ -4,6 +4,7 @@
 #include <linux/hugetlb.h>
 #include <linux/swap.h>
 #include <linux/leafops.h>
+#include <linux/hydra_util.h> 
 
 #include "internal.h"
 
