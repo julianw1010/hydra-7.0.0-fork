@@ -236,7 +236,7 @@ static long change_pte_range(struct mmu_gather *tlb,
 	lazy_mmu_mode_enable();
 	do {
 		nr_ptes = 1;
-		oldpte = pgtable_repl_get_pte(pte);
+		oldpte = ptep_get(pte);
 		if (pte_present(oldpte)) {
 			const fpb_t flags = FPB_RESPECT_SOFT_DIRTY | FPB_RESPECT_WRITE;
 			int max_nr_ptes = (end - addr) >> PAGE_SHIFT;

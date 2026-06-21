@@ -1143,7 +1143,7 @@ static int page_vma_mkclean_one(struct page_vma_mapped_walk *pvmw)
 		} else {
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
 			pmd_t *pmd = pvmw->pmd;
-			pmd_t entry = hydra_get_pmd(pmd);
+			pmd_t entry = pmdp_get(pmd);
 
 			/*
 			 * Please see the comment above (!pte_present).
