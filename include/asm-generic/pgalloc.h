@@ -21,18 +21,15 @@
  */
 static inline pte_t *__pte_alloc_one_kernel_noprof(struct mm_struct *mm)
 {
-	struct ptdesc *ptdesc;
-	struct page *page;
+	struct ptdesc *ptdesc = pagetable_alloc_noprof(GFP_PGTABLE_KERNEL, 0);
 
-	page = hydra_alloc_pt_page(mm, GFP_PGTABLE_KERNEL, 0);
-	if (!page)
+	if (!ptdesc)
 		return NULL;
-
-	ptdesc = page_ptdesc(page);
 	if (!pagetable_pte_ctor(mm, ptdesc)) {
-		__free_page(page);
+		pagetable_free(ptdesc);
 		return NULL;
 	}
+
 	ptdesc_set_kernel(ptdesc);
 
 	return ptdesc_address(ptdesc);
@@ -60,16 +57,7 @@ static inline pte_t *pte_alloc_one_kernel_noprof(struct mm_struct *mm)
  */
 static inline void pte_free_kernel(struct mm_struct *mm, pte_t *pte)
 {
-	struct ptdesc *ptdesc = virt_to_ptdesc(pte);
-	struct page *page = ptdesc_page(ptdesc);
-
-	hydra_free_replica_chain(page, HYDRA_LEVEL_PTE);
-	pagetable_dtor(ptdesc);
-
-	if (hydra_try_return_page(page))
-		return;
-
-	pagetable_free(ptdesc);
+	pagetable_dtor_free(virt_to_ptdesc(pte));
 }
 
 /**

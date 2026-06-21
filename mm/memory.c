@@ -92,7 +92,6 @@
 
 #include <linux/hydra_util.h>
 
-extern void hydra_free_pgd_tree(struct mmu_gather *tlb, pgd_t *pgd_base);
 int __repl_pte_alloc(struct mm_struct *mm, pmd_t *pmd, unsigned long address,
 		     pte_t *master_pte, size_t nid);
 
@@ -315,100 +314,6 @@ static inline void free_p4d_range(struct mmu_gather *tlb, pgd_t *pgd,
 	p4d = p4d_offset(pgd, start);
 	pgd_clear(pgd);
 	p4d_free_tlb(tlb, p4d, start);
-}
-
-static void hydra_free_all_pte(struct mmu_gather *tlb, pmd_t *pmd,
-			       unsigned long addr, unsigned long end)
-{
-	pmd_t *p;
-	unsigned long next;
-
-	p = pmd;
-	do {
-		next = pmd_addr_end(addr, end);
-		if (pmd_none(*p) || pmd_trans_huge(*p) || pmd_bad(*p)) {
-			if (pmd_trans_huge(*p))
-				pmd_clear(p);
-			continue;
-		}
-		free_pte_range(tlb, p, addr);
-	} while (p++, addr = next, addr != end);
-}
-
-static void hydra_free_all_pmd(struct mmu_gather *tlb, pud_t *pud,
-			       unsigned long addr, unsigned long end)
-{
-	pmd_t *pmd;
-	unsigned long next, start;
-
-	start = addr;
-	pmd = pmd_offset(pud, addr);
-	do {
-		next = pmd_addr_end(addr, end);
-		if (pmd_none(*pmd))
-			continue;
-		if (!pmd_trans_huge(*pmd) && !pmd_bad(*pmd))
-			hydra_free_all_pte(tlb, pmd, addr, next);
-		else if (pmd_trans_huge(*pmd))
-			pmd_clear(pmd);
-	} while (pmd++, addr = next, addr != end);
-
-	pmd = pmd_offset(pud, start);
-	pud_clear(pud);
-	pmd_free_tlb(tlb, pmd, start);
-	mm_dec_nr_pmds(tlb->mm);
-}
-
-static void hydra_free_all_pud(struct mmu_gather *tlb, p4d_t *p4d,
-			       unsigned long addr, unsigned long end)
-{
-	pud_t *pud;
-	unsigned long next, start;
-
-	start = addr;
-	pud = pud_offset(p4d, addr);
-	do {
-		next = pud_addr_end(addr, end);
-		if (pud_none(*pud))
-			continue;
-		hydra_free_all_pmd(tlb, pud, addr, next);
-	} while (pud++, addr = next, addr != end);
-
-	pud = pud_offset(p4d, start);
-	p4d_clear(p4d);
-	pud_free_tlb(tlb, pud, start);
-	mm_dec_nr_puds(tlb->mm);
-}
-
-static void hydra_free_all_p4d(struct mmu_gather *tlb, pgd_t *pgd,
-			       unsigned long addr, unsigned long end)
-{
-	p4d_t *p4d;
-	unsigned long next;
-
-	p4d = p4d_offset(pgd, addr);
-	do {
-		next = p4d_addr_end(addr, end);
-		if (p4d_none(*p4d))
-			continue;
-		hydra_free_all_pud(tlb, p4d, addr, next);
-	} while (p4d++, addr = next, addr != end);
-}
-
-void hydra_free_pgd_tree(struct mmu_gather *tlb, pgd_t *pgd_base)
-{
-	pgd_t *pgd;
-	unsigned long addr, next;
-
-	tlb_change_page_size(tlb, PAGE_SIZE);
-	pgd = pgd_base;
-	addr = 0;
-	do {
-		next = pgd_addr_end(addr, TASK_SIZE);
-		if (pgd_none(*pgd))
-			continue;
-		hydra_free_all_p4d(tlb, pgd, addr, next);
-	} while (pgd++, addr = next, addr != TASK_SIZE);
 }
 
 /**
