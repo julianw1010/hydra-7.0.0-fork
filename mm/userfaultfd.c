@@ -470,28 +470,20 @@ static pmd_t *mm_alloc_pmd(struct mm_struct *mm, struct vm_area_struct *vma, uns
 	p4d_t *p4d;
 	pud_t *pud;
 	pmd_t *ret;
-	struct hydra_node_scope scope = hydra_enter_node_scope(mm, vma->master_pgd_node);
 
 	pgd = mm->lazy_repl_enabled ? pgd_offset_node(mm, address, vma->master_pgd_node) : pgd_offset(mm, address);
 	p4d = p4d_alloc(mm, pgd, address);
-	if (!p4d) {
-		hydra_exit_node_scope(&scope);
+	if (!p4d)
 		return NULL;
-	}
 	pud = pud_alloc(mm, p4d, address);
-	if (!pud) {
-		hydra_exit_node_scope(&scope);
+	if (!pud)
 		return NULL;
-	}
-
 	/*
 	 * Note that we didn't run this because the pmd was
 	 * missing, the *pmd may be already established and in
 	 * turn it may also be a trans_huge_pmd.
 	 */
-	ret = pmd_alloc(mm, pud, address);
-	hydra_exit_node_scope(&scope);
-	return ret;
+	return pmd_alloc(mm, pud, address);
 }
 
 #ifdef CONFIG_HUGETLB_PAGE
@@ -802,14 +794,10 @@ retry:
 		}
 
 		dst_pmdval = pmdp_get_lockless(dst_pmd);
-		if (unlikely(pmd_none(dst_pmdval))) {
-			struct hydra_node_scope pte_scope = hydra_enter_node_scope(dst_mm, dst_vma->master_pgd_node);
-			int pte_err = __pte_alloc(dst_mm, dst_pmd);
-			hydra_exit_node_scope(&pte_scope);
-			if (unlikely(pte_err)) {
-				err = -ENOMEM;
-				break;
-			}
+		if (unlikely(pmd_none(dst_pmdval)) &&
+		    unlikely(__pte_alloc(dst_mm, dst_pmd))) {
+			err = -ENOMEM;
+			break;
 		}
 		dst_pmdval = pmdp_get_lockless(dst_pmd);
 		/*

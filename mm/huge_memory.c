@@ -1333,7 +1333,7 @@ static vm_fault_t __do_huge_pmd_anonymous_page(struct vm_fault *vmf)
 	if (unlikely(!folio))
 		return VM_FAULT_FALLBACK;
 
-	pgtable = pte_alloc_one(vma->vm_mm);
+	pgtable = pte_alloc_one(vma->vm_mm, vmf->pmd);
 	if (unlikely(!pgtable)) {
 		ret = VM_FAULT_OOM;
 		goto release;
@@ -1479,7 +1479,7 @@ vm_fault_t do_huge_pmd_anonymous_page(struct vm_fault *vmf)
 		struct folio *zero_folio;
 		vm_fault_t ret;
 
-		pgtable = pte_alloc_one(vma->vm_mm);
+		pgtable = pte_alloc_one(vma->vm_mm, vmf->pmd);
 		if (unlikely(!pgtable))
 			return VM_FAULT_OOM;
 		zero_folio = mm_get_huge_zero_folio(vma->vm_mm);
@@ -1537,7 +1537,7 @@ static vm_fault_t insert_pmd(struct vm_area_struct *vma, unsigned long addr,
 		return VM_FAULT_SIGBUS;
 
 	if (arch_needs_pgtable_deposit()) {
-		pgtable = pte_alloc_one(vma->vm_mm);
+		pgtable = pte_alloc_one(vma->vm_mm, pmd);
 		if (!pgtable)
 			return VM_FAULT_OOM;
 	}
@@ -1881,7 +1881,7 @@ int copy_huge_pmd(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 	if (!vma_is_anonymous(dst_vma))
 		return 0;
 
-	pgtable = pte_alloc_one(dst_mm);
+	pgtable = pte_alloc_one(dst_mm, dst_pmd);
 	if (unlikely(!pgtable))
 		goto out;
 
@@ -3301,7 +3301,6 @@ void __split_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
 	struct mmu_notifier_range range;
 	struct mm_struct *mm = vma->vm_mm;
 	unsigned long haddr = address & HPAGE_PMD_MASK;
-	struct hydra_node_scope scope = { .saved = -1, .active = false };
 
 	if (mm->lazy_repl_enabled) {
 		pgd_t *pgd;
@@ -3322,8 +3321,6 @@ void __split_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
 		pmd = master_pmd;
 	}
 
-	scope = hydra_enter_node_scope(mm, vma->master_pgd_node);
-
 	mmu_notifier_range_init(&range, MMU_NOTIFY_CLEAR, 0, mm,
 				haddr,
 				haddr + HPAGE_PMD_SIZE);
@@ -3335,8 +3332,6 @@ void __split_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
 
 	spin_unlock(ptl);
 	mmu_notifier_invalidate_range_end(&range);
-
-	hydra_exit_node_scope(&scope);
 }
 
 void split_huge_pmd_address(struct vm_area_struct *vma, unsigned long address,

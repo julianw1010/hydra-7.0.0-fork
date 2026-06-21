@@ -799,7 +799,6 @@ unsigned long move_page_tables(struct pagetable_move_control *pmc)
 	struct mmu_notifier_range range;
 	pmd_t *old_pmd, *new_pmd;
 	pud_t *old_pud, *new_pud;
-	struct hydra_node_scope scope;
 	struct mm_struct *mm = pmc->old->vm_mm;
 
 	if (!pmc->len_in)
@@ -819,8 +818,6 @@ unsigned long move_page_tables(struct pagetable_move_control *pmc)
 	mmu_notifier_range_init(&range, MMU_NOTIFY_UNMAP, 0, mm,
 				pmc->old_addr, pmc->old_end);
 	mmu_notifier_invalidate_range_start(&range);
-
-	scope = hydra_enter_node_scope(mm, pmc->new->master_pgd_node);
 
 	for (; !pmc_done(pmc); pmc_next(pmc, extent)) {
 		cond_resched();
@@ -876,8 +873,6 @@ again:
 		if (move_ptes(pmc, extent, old_pmd, new_pmd) < 0)
 			goto again;
 	}
-
-	hydra_exit_node_scope(&scope);
 
 	mmu_notifier_invalidate_range_end(&range);
 

@@ -1944,14 +1944,8 @@ __latent_entropy int dup_mmap(struct mm_struct *mm, struct mm_struct *oldmm)
 			i_mmap_unlock_write(mapping);
 		}
 
-		if (!(tmp->vm_flags & VM_WIPEONFORK)) {
-			struct hydra_node_scope scope =
-				hydra_enter_node_scope(mm, tmp->master_pgd_node);
-
+		if (!(tmp->vm_flags & VM_WIPEONFORK))
 			retval = copy_page_range(tmp, mpnt);
-
-			hydra_exit_node_scope(&scope);
-		}
 
 		if (retval) {
 			mpnt = vma_next(&vmi);

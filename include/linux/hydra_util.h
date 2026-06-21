@@ -19,39 +19,6 @@ void migrate_pgtables_to_node(struct mm_struct *mm, pgd_t *pgd, int target_node)
 void hydra_reload_cr3(void *info);
 int hydra_enable_replication(struct mm_struct *mm);
 
-static inline int hydra_alloc_node(struct mm_struct *mm)
-{
-	if (!mm->lazy_repl_enabled)
-		return numa_node_id();
-	if (current->hydra_fault_target_node >= 0)
-		return current->hydra_fault_target_node;
-	return numa_node_id();
-}
-
-struct hydra_node_scope {
-	int saved;
-	bool active;
-};
-
-static inline struct hydra_node_scope
-hydra_enter_node_scope(struct mm_struct *mm, int node)
-{
-	struct hydra_node_scope s = { .saved = -1, .active = false };
-
-	if (mm->lazy_repl_enabled) {
-		s.saved = current->hydra_fault_target_node;
-		s.active = true;
-		current->hydra_fault_target_node = node;
-	}
-	return s;
-}
-
-static inline void hydra_exit_node_scope(struct hydra_node_scope *s)
-{
-	if (s->active)
-		current->hydra_fault_target_node = s->saved;
-}
-
 #define HYDRA_FIND_PGD_NONE ((void *)0x1)
 #define HYDRA_FIND_P4D_NONE ((void *)0x11)
 #define HYDRA_FIND_PUD_NONE ((void *)0x21)

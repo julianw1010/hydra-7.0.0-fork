@@ -829,7 +829,7 @@ static int migrate_vma_insert_huge_pmd_page(struct migrate_vma *migrate,
 
 	__folio_mark_uptodate(folio);
 
-	pgtable = pte_alloc_one(vma->vm_mm);
+	pgtable = pte_alloc_one(vma->vm_mm, pmdp);
 	if (unlikely(!pgtable))
 		goto abort;
 

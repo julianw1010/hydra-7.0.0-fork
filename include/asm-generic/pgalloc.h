@@ -72,18 +72,29 @@ static inline void pte_free_kernel(struct mm_struct *mm, pte_t *pte)
  *
  * Return: `struct page` referencing the ptdesc or %NULL on error
  */
-static inline pgtable_t __pte_alloc_one_noprof(struct mm_struct *mm, gfp_t gfp)
+static inline pgtable_t __pte_alloc_one_noprof(struct mm_struct *mm, gfp_t gfp,
+					       pmd_t *pmd)
 {
+	int node;
 	struct ptdesc *ptdesc;
 	struct page *page;
 
-	page = hydra_alloc_pt_page(mm, gfp, 0);
+	if (pmd && virt_addr_valid(pmd))
+		node = page_to_nid(virt_to_page(pmd));
+	else
+		node = numa_node_id();
+
+	page = hydra_cache_pop(node);
+	if (!page)
+		page = alloc_pages_node(node, gfp | __GFP_THISNODE, 0);
 	if (!page)
 		return NULL;
 
+	page->pt_owner_mm = mm;
 	ptdesc = page_ptdesc(page);
 	if (!pagetable_pte_ctor(mm, ptdesc)) {
-		__free_page(page);
+		if (!hydra_try_return_page(page))
+			__free_page(page);
 		return NULL;
 	}
 
@@ -100,9 +111,9 @@ static inline pgtable_t __pte_alloc_one_noprof(struct mm_struct *mm, gfp_t gfp)
  *
  * Return: `struct page` referencing the ptdesc or %NULL on error
  */
-static inline pgtable_t pte_alloc_one_noprof(struct mm_struct *mm)
+static inline pgtable_t pte_alloc_one_noprof(struct mm_struct *mm, pmd_t *pmd)
 {
-	return __pte_alloc_one_noprof(mm, GFP_PGTABLE_USER);
+	return __pte_alloc_one_noprof(mm, GFP_PGTABLE_USER, pmd);
 }
 #define pte_alloc_one(...)	alloc_hooks(pte_alloc_one_noprof(__VA_ARGS__))
 #endif
@@ -144,22 +155,33 @@ static inline void pte_free(struct mm_struct *mm, struct page *pte_page)
  *
  * Return: pointer to the allocated memory or %NULL on error
  */
-static inline pmd_t *pmd_alloc_one_noprof(struct mm_struct *mm, unsigned long addr)
+static inline pmd_t *pmd_alloc_one_noprof(struct mm_struct *mm, unsigned long addr,
+					  pud_t *pud)
 {
 	struct ptdesc *ptdesc;
 	struct page *page;
+	int node;
 	gfp_t gfp = GFP_PGTABLE_USER;
 
 	if (mm == &init_mm)
 		gfp = GFP_PGTABLE_KERNEL;
 
-	page = hydra_alloc_pt_page(mm, gfp, 0);
+	if (pud && virt_addr_valid(pud))
+		node = page_to_nid(virt_to_page(pud));
+	else
+		node = numa_node_id();
+
+	page = hydra_cache_pop(node);
+	if (!page)
+		page = alloc_pages_node(node, gfp | __GFP_THISNODE, 0);
 	if (!page)
 		return NULL;
 
+	page->pt_owner_mm = mm;
 	ptdesc = page_ptdesc(page);
 	if (!pagetable_pmd_ctor(mm, ptdesc)) {
-		__free_page(page);
+		if (!hydra_try_return_page(page))
+			__free_page(page);
 		return NULL;
 	}
 
@@ -192,19 +214,29 @@ static inline void pmd_free(struct mm_struct *mm, pmd_t *pmd)
 
 #if CONFIG_PGTABLE_LEVELS > 3
 
-static inline pud_t *__pud_alloc_one_noprof(struct mm_struct *mm, unsigned long addr)
+static inline pud_t *__pud_alloc_one_noprof(struct mm_struct *mm, unsigned long addr,
+					    p4d_t *p4d)
 {
 	struct ptdesc *ptdesc;
 	struct page *page;
+	int node;
 	gfp_t gfp = GFP_PGTABLE_USER;
 
 	if (mm == &init_mm)
 		gfp = GFP_PGTABLE_KERNEL;
 
-	page = hydra_alloc_pt_page(mm, gfp | __GFP_ZERO, 0);
+	if (p4d && virt_addr_valid(p4d))
+		node = page_to_nid(virt_to_page(p4d));
+	else
+		node = numa_node_id();
+
+	page = hydra_cache_pop(node);
+	if (!page)
+		page = alloc_pages_node(node, gfp | __GFP_ZERO | __GFP_THISNODE, 0);
 	if (!page)
 		return NULL;
 
+	page->pt_owner_mm = mm;
 	ptdesc = page_ptdesc(page);
 	pagetable_pud_ctor(ptdesc);
 
@@ -225,9 +257,10 @@ static inline pud_t *__pud_alloc_one_noprof(struct mm_struct *mm, unsigned long 
  *
  * Return: pointer to the allocated memory or %NULL on error
  */
-static inline pud_t *pud_alloc_one_noprof(struct mm_struct *mm, unsigned long addr)
+static inline pud_t *pud_alloc_one_noprof(struct mm_struct *mm, unsigned long addr,
+					  p4d_t *p4d)
 {
-	return __pud_alloc_one_noprof(mm, addr);
+	return __pud_alloc_one_noprof(mm, addr, p4d);
 }
 #define pud_alloc_one(...)	alloc_hooks(pud_alloc_one_noprof(__VA_ARGS__))
 #endif
@@ -256,19 +289,29 @@ static inline void pud_free(struct mm_struct *mm, pud_t *pud)
 
 #if CONFIG_PGTABLE_LEVELS > 4
 
-static inline p4d_t *__p4d_alloc_one_noprof(struct mm_struct *mm, unsigned long addr)
+static inline p4d_t *__p4d_alloc_one_noprof(struct mm_struct *mm, unsigned long addr,
+					    pgd_t *pgd)
 {
 	struct ptdesc *ptdesc;
 	struct page *page;
+	int node;
 	gfp_t gfp = GFP_PGTABLE_USER;
 
 	if (mm == &init_mm)
 		gfp = GFP_PGTABLE_KERNEL;
 
-	page = hydra_alloc_pt_page(mm, gfp | __GFP_ZERO, 0);
+	if (pgd && virt_addr_valid(pgd))
+		node = page_to_nid(virt_to_page(pgd));
+	else
+		node = numa_node_id();
+
+	page = hydra_cache_pop(node);
+	if (!page)
+		page = alloc_pages_node(node, gfp | __GFP_ZERO | __GFP_THISNODE, 0);
 	if (!page)
 		return NULL;
 
+	page->pt_owner_mm = mm;
 	ptdesc = page_ptdesc(page);
 	pagetable_p4d_ctor(ptdesc);
 
@@ -280,9 +323,10 @@ static inline p4d_t *__p4d_alloc_one_noprof(struct mm_struct *mm, unsigned long 
 #define __p4d_alloc_one(...)	alloc_hooks(__p4d_alloc_one_noprof(__VA_ARGS__))
 
 #ifndef __HAVE_ARCH_P4D_ALLOC_ONE
-static inline p4d_t *p4d_alloc_one_noprof(struct mm_struct *mm, unsigned long addr)
+static inline p4d_t *p4d_alloc_one_noprof(struct mm_struct *mm, unsigned long addr,
+					  pgd_t *pgd)
 {
-	return __p4d_alloc_one_noprof(mm, addr);
+	return __p4d_alloc_one_noprof(mm, addr, pgd);
 }
 #define p4d_alloc_one(...)	alloc_hooks(p4d_alloc_one_noprof(__VA_ARGS__))
 #endif

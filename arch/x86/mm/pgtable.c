@@ -19,9 +19,9 @@ EXPORT_SYMBOL(physical_mask);
 SYM_PIC_ALIAS(physical_mask);
 #endif
 
-pgtable_t pte_alloc_one(struct mm_struct *mm)
+pgtable_t pte_alloc_one(struct mm_struct *mm, pmd_t *pmd)
 {
-	return __pte_alloc_one(mm, GFP_PGTABLE_USER);
+	return __pte_alloc_one(mm, GFP_PGTABLE_USER, pmd);
 }
 
 void ___pte_free_tlb(struct mmu_gather *tlb, struct page *pte)
