@@ -1249,17 +1249,17 @@ extern int ptep_test_and_clear_young(struct vm_area_struct *vma,
 extern int ptep_clear_flush_young(struct vm_area_struct *vma,
 				  unsigned long address, pte_t *ptep);
 
-pte_t pgtable_repl_ptep_get_and_clear(struct mm_struct *mm, pte_t *ptep);
-void pgtable_repl_ptep_set_wrprotect(struct mm_struct *mm, unsigned long addr, pte_t *ptep);
-pmd_t pgtable_repl_pmdp_huge_get_and_clear(struct mm_struct *mm, pmd_t *pmdp);
-void pgtable_repl_pmdp_set_wrprotect(struct mm_struct *mm, unsigned long addr, pmd_t *pmdp);
+pte_t hydra_ptep_get_and_clear(struct mm_struct *mm, pte_t *ptep);
+void hydra_ptep_set_wrprotect(struct mm_struct *mm, unsigned long addr, pte_t *ptep);
+pmd_t hydra_pmdp_huge_get_and_clear(struct mm_struct *mm, pmd_t *pmdp);
+void hydra_pmdp_set_wrprotect(struct mm_struct *mm, unsigned long addr, pmd_t *pmdp);
 pmd_t hydra_pmdp_establish(pmd_t *pmdp, pmd_t pmd);
 
 #define __HAVE_ARCH_PTEP_GET_AND_CLEAR
 static inline pte_t ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
 				       pte_t *ptep)
 {
-	pte_t pte = pgtable_repl_ptep_get_and_clear(mm, ptep);
+	pte_t pte = hydra_ptep_get_and_clear(mm, ptep);
 	page_table_check_pte_clear(mm, addr, pte);
 	return pte;
 }
@@ -1270,7 +1270,7 @@ static inline pte_t ptep_get_and_clear_full(struct mm_struct *mm,
 					    int full)
 {
 	pte_t pte;
-	pte = pgtable_repl_ptep_get_and_clear(mm, ptep);
+	pte = hydra_ptep_get_and_clear(mm, ptep);
 	page_table_check_pte_clear(mm, addr, pte);
 	return pte;
 }
@@ -1284,7 +1284,7 @@ static inline void ptep_set_wrprotect(struct mm_struct *mm,
 	 * (Write=0,Dirty=1).  Use cmpxchg() to prevent races with
 	 * the hardware setting Dirty=1.
 	 */
-	pgtable_repl_ptep_set_wrprotect(mm, addr, ptep);
+	hydra_ptep_set_wrprotect(mm, addr, ptep);
 }
 
 #define flush_tlb_fix_spurious_fault(vma, address, ptep) do { } while (0)
@@ -1312,7 +1312,7 @@ extern int pmdp_clear_flush_young(struct vm_area_struct *vma,
 static inline pmd_t pmdp_huge_get_and_clear(struct mm_struct *mm, unsigned long addr,
 				       pmd_t *pmdp)
 {
-	pmd_t pmd = pgtable_repl_pmdp_huge_get_and_clear(mm, pmdp);
+	pmd_t pmd = hydra_pmdp_huge_get_and_clear(mm, pmdp);
 
 	page_table_check_pmd_clear(mm, addr, pmd);
 
@@ -1339,7 +1339,7 @@ static inline void pmdp_set_wrprotect(struct mm_struct *mm,
 	 * (Write=0,Dirty=1).  Use cmpxchg() to prevent races with
 	 * the hardware setting Dirty=1.
 	 */
-	pgtable_repl_pmdp_set_wrprotect(mm, addr, pmdp);
+	hydra_pmdp_set_wrprotect(mm, addr, pmdp);
 }
 
 #ifndef pmdp_establish
@@ -1726,20 +1726,20 @@ bool arch_is_platform_page(u64 paddr);
 	set_pgd(pgdp, pgd); \
 })
 
-void pgtable_repl_set_pte(pte_t *ptep, pte_t pteval);
-pte_t pgtable_repl_get_pte(pte_t *ptep);
+void hydra_set_pte(pte_t *ptep, pte_t pteval);
+pte_t hydra_get_pte(pte_t *ptep);
 
-int pgtable_repl_ptep_test_and_clear_young(struct vm_area_struct *vma, unsigned long addr, pte_t *ptep);
-int pgtable_repl_pmdp_test_and_clear_young(struct vm_area_struct *vma, unsigned long addr, pmd_t *pmdp);
+int hydra_ptep_test_and_clear_young(struct vm_area_struct *vma, unsigned long addr, pte_t *ptep);
+int hydra_pmdp_test_and_clear_young(struct vm_area_struct *vma, unsigned long addr, pmd_t *pmdp);
 
 pmd_t hydra_get_pmd(pmd_t *pmdp);
 
 void pgd_dtor(pgd_t *pgd);
 
-void pgtable_track_set_pmd(pmd_t *pmdp, pmd_t pmd);
-void pgtable_track_set_pud(pud_t *pudp, pud_t pud);
-void pgtable_track_set_p4d(p4d_t *p4dp, p4d_t p4d);
-void pgtable_track_set_pgd(pgd_t *pgdp, pgd_t pgd);
+void hydra_set_pmd(pmd_t *pmdp, pmd_t pmd);
+void hydra_set_pud(pud_t *pudp, pud_t pud);
+void hydra_set_p4d(p4d_t *p4dp, p4d_t p4d);
+void hydra_set_pgd(pgd_t *pgdp, pgd_t pgd);
 
 #endif	/* __ASSEMBLER__ */
 

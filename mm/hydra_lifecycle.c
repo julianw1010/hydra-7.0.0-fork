@@ -48,7 +48,7 @@ int hydra_enable_replication(struct mm_struct *mm)
 		if (i == primary_node) {
 			mm->repl_pgd[i] = mm->pgd;
 		} else {
-			mm->repl_pgd[i] = repl_pgd_alloc(mm, i);
+			mm->repl_pgd[i] = hydra_repl_pgd_alloc(mm, i);
 			if (!mm->repl_pgd[i])
 				mm->repl_pgd[i] = mm->pgd;
 		}
@@ -67,7 +67,7 @@ int hydra_enable_replication(struct mm_struct *mm)
 				count++;
 		}
 		count++;
-		printk(KERN_INFO "HYDRA: Enabled page table replication for mm %px on %d nodes\n", mm, count);
+		printk(KERN_INFO "HYDRA: enabled page table replication for mm %px on %d nodes\n", mm, count);
 	}
 
 	mmap_write_unlock(mm);
@@ -75,37 +75,35 @@ int hydra_enable_replication(struct mm_struct *mm)
 	return 0;
 }
 
-static long kernel_set_pgtlbreplpolicy(int mode, const unsigned long __user *nmask,
+static long kernel_set_pgtblreplpolicy(int mode, const unsigned long __user *nmask,
 				       unsigned long maxnode)
 {
 	if (!mode) {
-		printk("[HYDRA]: Disabling page table replication is not supported.\n");
+		printk(KERN_INFO "HYDRA: disabling page table replication is not supported\n");
 		return -EOPNOTSUPP;
 	}
 
 	return hydra_enable_replication(current->mm);
 }
 
-static int kernel_get_pgtlbreplpolicy(int __user *policy,
+static int kernel_get_pgtblreplpolicy(int __user *policy,
 				      unsigned long __user *nmask,
 				      unsigned long maxnode,
 				      unsigned long addr,
 				      unsigned long flags)
 {
-	int err = 0;
-	printk("get info from numactl");
-	return err;
+	return 0;
 }
 
 SYSCALL_DEFINE3(set_pgtblreplpolicy, int, mode, const unsigned long __user *, nmask,
 		unsigned long, maxnode)
 {
-	return kernel_set_pgtlbreplpolicy(mode, nmask, maxnode);
+	return kernel_set_pgtblreplpolicy(mode, nmask, maxnode);
 }
 
 SYSCALL_DEFINE5(get_pgtblreplpolicy, int __user *, policy,
 		unsigned long __user *, nmask, unsigned long, maxnode,
 		unsigned long, addr, unsigned long, flags)
 {
-	return kernel_get_pgtlbreplpolicy(policy, nmask, maxnode, addr, flags);
+	return kernel_get_pgtblreplpolicy(policy, nmask, maxnode, addr, flags);
 }

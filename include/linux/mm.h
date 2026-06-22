@@ -3253,7 +3253,7 @@ static inline void mm_dec_nr_pmds(struct mm_struct *mm) {}
 
 #else
 int __pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address);
-int __repl_pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address, size_t owner_node);
+int hydra_alloc_replica_pmd(struct mm_struct *mm, pud_t *pud, unsigned long address, size_t owner_node);
 
 static inline void mm_inc_nr_pmds(struct mm_struct *mm)
 {
@@ -3327,9 +3327,9 @@ static inline pmd_t *pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long a
 		NULL: pmd_offset(pud, address);
 }
 
-static inline pmd_t *repl_pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address, size_t owner_node)
+static inline pmd_t *hydra_repl_pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address, size_t owner_node)
 {
-	return (unlikely(pud_none(*pud)) && __repl_pmd_alloc(mm, pud, address, owner_node))?
+	return (unlikely(pud_none(*pud)) && hydra_alloc_replica_pmd(mm, pud, address, owner_node))?
 		NULL: pmd_offset(pud, address);
 }
 

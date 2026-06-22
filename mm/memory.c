@@ -92,9 +92,6 @@
 
 #include <linux/hydra_util.h>
 
-int __repl_pte_alloc(struct mm_struct *mm, pmd_t *pmd, unsigned long address,
-		     pte_t *master_pte);
-
 #if defined(LAST_CPUPID_NOT_IN_PAGE_FLAGS) && !defined(CONFIG_COMPILE_TEST)
 #warning Unfortunate NUMA and NUMA Balancing config, growing page-frame for last_cpupid.
 #endif
@@ -102,8 +99,6 @@ int __repl_pte_alloc(struct mm_struct *mm, pmd_t *pmd, unsigned long address,
 static vm_fault_t do_fault(struct vm_fault *vmf);
 static vm_fault_t do_anonymous_page(struct vm_fault *vmf);
 static bool vmf_pte_changed(struct vm_fault *vmf);
-static int find_pte_in_master(struct mm_struct *mm, unsigned long address, int master_node,
-			    pte_t **ptepp, pte_t *pte_origp);
 
 #if defined(CONFIG_X86) && defined(CONFIG_SYSCTL)
 int sysctl_hydra_repl_order __read_mostly = 9;
@@ -508,45 +503,6 @@ int __pte_alloc(struct mm_struct *mm, pmd_t *pmd)
 	if (new)
 		pte_free(mm, new);
 	return 0;
-}
-
-int __repl_pte_alloc(struct mm_struct *mm, pmd_t *pmd, unsigned long address,
-                     pte_t *master_ptep)
-{
-	spinlock_t *ptl;
-	pgtable_t new = pte_alloc_one(mm, pmd);
-	struct page *master_pte_page, *repl_pte_page;
-	int allocated = 0;
-
-	if (!new)
-		return -ENOMEM;
-
-	smp_wmb();
-
-	ptl = pmd_lock(mm, pmd);
-	if (likely(pmd_none(*pmd))) {
-		mm_inc_nr_ptes(mm);
-
-		master_pte_page = virt_to_page((long)master_ptep);
-		repl_pte_page = virt_to_page(page_address(new));
-
-		hydra_link_page_to_replica_chain(master_pte_page, repl_pte_page);
-
-		paravirt_alloc_pte(mm, page_to_pfn(new));
-		native_set_pmd(pmd, __pmd(((pteval_t)page_to_pfn(new) << PAGE_SHIFT) | _PAGE_TABLE));
-		new = NULL;
-		allocated = 1;
-	}
-	spin_unlock(ptl);
-
-	if (new) {
-		pagetable_dtor(page_ptdesc(new));
-
-		if (!hydra_try_return_page(new))
-			__free_page(new);
-	}
-
-	return allocated;
 }
 
 int __pte_alloc_kernel(pmd_t *pmd)
@@ -6336,207 +6292,143 @@ static void fix_spurious_fault(struct vm_fault *vmf,
 	}
 }
 
-static int find_pte_in_master(struct mm_struct *mm, unsigned long address, int master_node,
-			    pte_t **ptepp, pte_t *pte_origp)
+static int hydra_find_master_pmd(struct mm_struct *mm, unsigned long address,
+				 int master_node, pmd_t **pmdpp,
+				 pmd_t *pmd_valp)
 {
-	pgd_t *pgd;
-	p4d_t *p4d;
-	pud_t *pud;
+	pmd_t *pmd;
+
+	pmd = hydra_walk_to_pmd(mm, address, master_node);
+	if (HYDRA_WALK_BAD(pmd))
+		return -EFAULT;
+
+	*pmdpp = pmd;
+	*pmd_valp = *pmd;
+	return 0;
+}
+
+static int hydra_find_master_pte(struct mm_struct *mm, unsigned long address,
+				 int master_node, pte_t **ptepp,
+				 pte_t *pte_valp)
+{
 	pmd_t *pmd;
 	pte_t *ptep;
 	spinlock_t *ptl;
-	bool is_pte_present = true;
 
-	pgd = pgd_offset_node(mm, address, master_node);
-	if (pgd_none(*pgd) || unlikely(pgd_bad(*pgd)))
-		return 1;
+	pmd = hydra_walk_to_pmd(mm, address, master_node);
+	if (HYDRA_WALK_BAD(pmd))
+		return -EFAULT;
 
-	p4d = p4d_offset(pgd, address);
-	if (p4d_none(*p4d) || unlikely(p4d_bad(*p4d)))
-		return 2;
-
-	pud = pud_offset(p4d, address);
-	if (pud_none(*pud) || unlikely(pud_bad(*pud)))
-		return 3;
-
-	pmd = pmd_offset(pud, address);
 	VM_BUG_ON(pmd_trans_huge(*pmd));
 
 	if (pmd_none(*pmd) || unlikely(pmd_bad(*pmd)))
-		return 4;
+		return -EFAULT;
 
 	ptep = pte_offset_map_lock(mm, pmd, address, &ptl);
 	if (!ptep)
-		return 6;
-	if (!pte_present(*ptep))
-		is_pte_present = false;
-	*pte_origp = *ptep;
+		return -EFAULT;
+
+	*pte_valp = *ptep;
 	*ptepp = ptep;
 	pte_unmap_unlock(ptep, ptl);
 
-	if (is_pte_present)
-		return 0;
-	return 5;
-}
-
-static int hydra_replicate_partial_pte(struct mm_struct *mm,
-				       struct vm_area_struct *vma,
-				       unsigned long pmd_addr,
-				       unsigned long start_idx,
-				       unsigned long count,
-				       size_t current_node,
-				       size_t master_node,
-				       unsigned int fault_flags,
-				       pte_t **master_pte_out,
-				       pte_t **repl_pte_out,
-				       unsigned long *copied_out)
-{
-	pgd_t *master_pgd, *repl_pgd;
-	p4d_t *master_p4d, *repl_p4d;
-	pud_t *master_pud, *repl_pud;
-	pmd_t *master_pmd, *repl_pmd;
-	pte_t *master_pte_base, *repl_pte_base;
-	pte_t *master_pte, *repl_pte;
-	spinlock_t *master_ptl, *repl_ptl;
-	unsigned long addr = pmd_addr;
-	unsigned long fault_va;
-	int ret, master_ret;
-	int need_fault = 0;
-
-	*master_pte_out = NULL;
-	*repl_pte_out = NULL;
-	*copied_out = 0;
-
-	master_pgd = pgd_offset_node(mm, addr, master_node);
-	if (pgd_none(*master_pgd) || pgd_bad(*master_pgd))
-		need_fault = 1;
-
-	if (!need_fault) {
-		master_p4d = p4d_offset(master_pgd, addr);
-		if (p4d_none(*master_p4d) || p4d_bad(*master_p4d))
-			need_fault = 1;
-	}
-
-	if (!need_fault) {
-		master_pud = pud_offset(master_p4d, addr);
-		if (pud_none(*master_pud) || pud_bad(*master_pud))
-			need_fault = 1;
-	}
-
-	if (!need_fault) {
-		master_pmd = pmd_offset(master_pud, addr);
-		if (pmd_none(*master_pmd) || pmd_bad(*master_pmd) || pmd_trans_huge(*master_pmd))
-			need_fault = 1;
-	}
-
-	if (need_fault) {
-		fault_va = pmd_addr + (start_idx << PAGE_SHIFT);
-		master_ret = __handle_mm_fault(vma, fault_va, fault_flags, 1);
-		if (master_ret & (VM_FAULT_ERROR | VM_FAULT_NOPAGE | VM_FAULT_RETRY | VM_FAULT_COMPLETED))
-			return (master_ret & VM_FAULT_RETRY) ? VM_FAULT_RETRY : -EAGAIN;
-
-		master_pgd = pgd_offset_node(mm, addr, master_node);
-		if (pgd_none(*master_pgd) || pgd_bad(*master_pgd))
-			return -EAGAIN;
-
-		master_p4d = p4d_offset(master_pgd, addr);
-		if (p4d_none(*master_p4d) || p4d_bad(*master_p4d))
-			return -EAGAIN;
-
-		master_pud = pud_offset(master_p4d, addr);
-		if (pud_none(*master_pud) || pud_bad(*master_pud))
-			return -EAGAIN;
-
-		master_pmd = pmd_offset(master_pud, addr);
-		if (pmd_none(*master_pmd) || pmd_bad(*master_pmd) || pmd_trans_huge(*master_pmd))
-			return -EAGAIN;
-	}
-
-	if (pmd_trans_huge(*master_pmd))
-		return -EAGAIN;
-
-	master_pte = pte_offset_kernel(master_pmd, addr);
-	master_pte_base = (pte_t *)((unsigned long)master_pte & PAGE_MASK);
-
-	repl_pgd = pgd_offset_node(mm, addr, current_node);
-	repl_p4d = p4d_alloc(mm, repl_pgd, addr);
-	if (!repl_p4d)
-		return -ENOMEM;
-
-	repl_pud = pud_alloc(mm, repl_p4d, addr);
-	if (!repl_pud)
-		return -ENOMEM;
-
-	repl_pmd = repl_pmd_alloc(mm, repl_pud, addr, master_node);
-	if (!repl_pmd)
-		return -ENOMEM;
-
-	if (pmd_none(*repl_pmd)) {
-		ret = __repl_pte_alloc(mm, repl_pmd, addr, master_pte);
-		if (ret < 0)
-			return ret;
-	}
-
-	repl_pte = pte_offset_kernel(repl_pmd, addr);
-	repl_pte_base = (pte_t *)((unsigned long)repl_pte & PAGE_MASK);
-
-	{
-		struct page *m_pg = virt_to_page((long)master_pte);
-		struct page *r_pg = virt_to_page((long)repl_pte);
-
-		if (m_pg != r_pg)
-			hydra_link_page_to_replica_chain(m_pg, r_pg);
-	}
-
-	master_ptl = pte_lockptr(mm, master_pmd);
-	repl_ptl = pte_lockptr(mm, repl_pmd);
-
-	if (master_ptl < repl_ptl) {
-		spin_lock(master_ptl);
-		spin_lock_nested(repl_ptl, SINGLE_DEPTH_NESTING);
-	} else if (master_ptl > repl_ptl) {
-		spin_lock(repl_ptl);
-		spin_lock_nested(master_ptl, SINGLE_DEPTH_NESTING);
-	} else {
-		spin_lock(master_ptl);
-		repl_ptl = NULL;
-	}
-
-	{
-		unsigned long i;
-		for (i = start_idx; i < start_idx + count; i++) {
-			pte_t val = master_pte_base[i];
-			if (!pte_present(val) || pte_protnone(val))
-				val = __pte(0);
-			repl_pte_base[i] = val;
-		}
-	}
-	*copied_out = count;
-
-	if (repl_ptl && repl_ptl != master_ptl) {
-		if (master_ptl < repl_ptl) {
-			spin_unlock(repl_ptl);
-			spin_unlock(master_ptl);
-		} else {
-			spin_unlock(master_ptl);
-			spin_unlock(repl_ptl);
-		}
-	} else {
-		spin_unlock(master_ptl);
-	}
-
-	*master_pte_out = master_pte;
-	*repl_pte_out = repl_pte;
+	if (!pte_present(*pte_valp))
+		return -ENOENT;
 
 	return 0;
 }
 
-static int hydra_replicate_huge_pmd_range(struct mm_struct *mm,
-					  struct vm_area_struct *vma,
-					  unsigned long address,
-					  size_t current_node,
-					  size_t master_node,
-					  unsigned long *prefetched_out)
+static int hydra_alloc_replica_pte(struct mm_struct *mm, pmd_t *pmd,
+				   unsigned long address, pte_t *master_ptep)
+{
+	spinlock_t *ptl;
+	pgtable_t new = pte_alloc_one(mm, pmd);
+	struct page *master_pte_page, *repl_pte_page;
+	int allocated = 0;
+
+	if (!new)
+		return -ENOMEM;
+
+	smp_wmb();
+
+	ptl = pmd_lock(mm, pmd);
+	if (likely(pmd_none(*pmd))) {
+		mm_inc_nr_ptes(mm);
+
+		master_pte_page = virt_to_page((long)master_ptep);
+		repl_pte_page = virt_to_page(page_address(new));
+
+		hydra_link_page_to_replica_chain(master_pte_page, repl_pte_page);
+
+		paravirt_alloc_pte(mm, page_to_pfn(new));
+		native_set_pmd(pmd, __pmd(((pteval_t)page_to_pfn(new) << PAGE_SHIFT) | _PAGE_TABLE));
+		new = NULL;
+		allocated = 1;
+	}
+	spin_unlock(ptl);
+
+	if (new) {
+		pagetable_dtor(page_ptdesc(new));
+
+		if (!hydra_try_return_page(new))
+			__free_page(new);
+	}
+
+	return allocated;
+}
+
+int hydra_alloc_replica_pmd(struct mm_struct *mm, pud_t *pud,
+			    unsigned long address, size_t owner_node)
+{
+	spinlock_t *ptl;
+	pmd_t *new = pmd_alloc_one(mm, address, pud);
+	struct page *new_page, *master_pmd_page = NULL;
+	pgd_t *m_pgd;
+	p4d_t *m_p4d;
+	pud_t *m_pud;
+	pmd_t *m_pmd;
+
+	if (!new)
+		return -ENOMEM;
+
+	new_page = virt_to_page(new);
+	smp_wmb();
+
+	ptl = pud_lock(mm, pud);
+	if (!pud_present(*pud)) {
+		mm_inc_nr_pmds(mm);
+		pud_populate(mm, pud, new);
+
+		m_pgd = pgd_offset_pgd(mm->repl_pgd[owner_node], address);
+		if (!pgd_none(*m_pgd) && !pgd_bad(*m_pgd)) {
+			m_p4d = p4d_offset(m_pgd, address);
+			if (!p4d_none(*m_p4d) && !p4d_bad(*m_p4d)) {
+				m_pud = pud_offset(m_p4d, address);
+				if (!pud_none(*m_pud) && !pud_bad(*m_pud)) {
+					m_pmd = pmd_offset(m_pud, address);
+					if (virt_addr_valid(m_pmd))
+						master_pmd_page = virt_to_page(m_pmd);
+				}
+			}
+		}
+		if (master_pmd_page && master_pmd_page != new_page)
+			hydra_link_page_to_replica_chain(master_pmd_page, new_page);
+	} else {
+		pagetable_dtor(virt_to_ptdesc(new));
+
+		if (!hydra_try_return_page(new_page))
+			__free_page(new_page);
+	}
+	spin_unlock(ptl);
+	return 0;
+}
+
+static int hydra_repl_huge_pmd_range(struct mm_struct *mm,
+				     struct vm_area_struct *vma,
+				     unsigned long address,
+				     size_t repl_node,
+				     size_t master_node,
+				     unsigned long *prefetched_out)
 {
 	pgd_t *master_pgd, *repl_pgd;
 	p4d_t *master_p4d, *repl_p4d;
@@ -6583,7 +6475,7 @@ static int hydra_replicate_huge_pmd_range(struct mm_struct *mm,
 	if (pud_none(*master_pud) || pud_bad(*master_pud))
 		return -EAGAIN;
 
-	repl_pgd = pgd_offset_node(mm, haddr, current_node);
+	repl_pgd = pgd_offset_node(mm, haddr, repl_node);
 	repl_p4d = p4d_alloc(mm, repl_pgd, haddr);
 	if (!repl_p4d)
 		return -ENOMEM;
@@ -6592,7 +6484,7 @@ static int hydra_replicate_huge_pmd_range(struct mm_struct *mm,
 	if (!repl_pud)
 		return -ENOMEM;
 
-	repl_pmd = repl_pmd_alloc(mm, repl_pud, haddr, master_node);
+	repl_pmd = hydra_repl_pmd_alloc(mm, repl_pud, haddr, master_node);
 	if (!repl_pmd)
 		return -ENOMEM;
 
@@ -6683,37 +6575,21 @@ unlock:
 	return copied > 0 ? 0 : -EAGAIN;
 }
 
-
-
-static int hydra_try_replicate_thp(struct mm_struct *mm,
+static int hydra_repl_try_huge_pmd(struct mm_struct *mm,
 				   struct vm_area_struct *vma,
 				   unsigned long address,
 				   unsigned int flags,
-				   size_t current_node,
+				   size_t repl_node,
 				   size_t master_node)
 {
-	pgd_t *m_pgd;
-	p4d_t *m_p4d;
-	pud_t *m_pud;
 	pmd_t *m_pmd;
 	pmd_t m_pmdval;
 	unsigned long prefetched = 0;
 	int ret;
 
-	m_pgd = pgd_offset_node(mm, address, master_node);
-	if (pgd_none(*m_pgd) || pgd_bad(*m_pgd))
+	ret = hydra_find_master_pmd(mm, address, master_node, &m_pmd, &m_pmdval);
+	if (ret)
 		return -EAGAIN;
-
-	m_p4d = p4d_offset(m_pgd, address);
-	if (p4d_none(*m_p4d) || p4d_bad(*m_p4d))
-		return -EAGAIN;
-
-	m_pud = pud_offset(m_p4d, address);
-	if (pud_none(*m_pud) || pud_bad(*m_pud))
-		return -EAGAIN;
-
-	m_pmd = pmd_offset(m_pud, address);
-	m_pmdval = *m_pmd;
 
 	if (!pmd_present(m_pmdval) || !pmd_trans_huge(m_pmdval))
 		return -EAGAIN;
@@ -6742,58 +6618,155 @@ static int hydra_try_replicate_thp(struct mm_struct *mm,
 	    pmd_protnone(m_pmdval))
 		return -EAGAIN;
 
-	ret = hydra_replicate_huge_pmd_range(mm, vma, address,
-					     current_node, master_node,
-					     &prefetched);
+	ret = hydra_repl_huge_pmd_range(mm, vma, address,
+					repl_node, master_node,
+					&prefetched);
 	if (ret == -ENOMEM)
 		return VM_FAULT_OOM;
-
 
 	return ret == 0 ? 0 : -EAGAIN;
 }
 
-static int try_lazy_repl(struct vm_fault *vmf, int fault_node)
+static int hydra_repl_pte_range(struct mm_struct *mm,
+				struct vm_area_struct *vma,
+				unsigned long pmd_addr,
+				unsigned long start_idx,
+				unsigned long count,
+				size_t repl_node,
+				size_t master_node,
+				unsigned int fault_flags)
+{
+	pmd_t *master_pmd, *repl_pmd;
+	pmd_t master_pmdval;
+	pte_t *master_pte, *repl_pte;
+	pte_t *master_pte_base, *repl_pte_base;
+	pgd_t *repl_pgd;
+	p4d_t *repl_p4d;
+	pud_t *repl_pud;
+	spinlock_t *master_ptl, *repl_ptl;
+	unsigned long addr = pmd_addr;
+	int ret;
+
+	if (hydra_find_master_pmd(mm, addr, master_node, &master_pmd, &master_pmdval) ||
+	    pmd_none(master_pmdval) || pmd_bad(master_pmdval) ||
+	    pmd_trans_huge(master_pmdval)) {
+		unsigned long fault_va = pmd_addr + (start_idx << PAGE_SHIFT);
+
+		ret = __handle_mm_fault(vma, fault_va, fault_flags, 1);
+		if (ret & (VM_FAULT_ERROR | VM_FAULT_NOPAGE | VM_FAULT_RETRY | VM_FAULT_COMPLETED))
+			return (ret & VM_FAULT_RETRY) ? VM_FAULT_RETRY : -EAGAIN;
+
+		if (hydra_find_master_pmd(mm, addr, master_node, &master_pmd, &master_pmdval))
+			return -EAGAIN;
+
+		if (pmd_none(master_pmdval) || pmd_bad(master_pmdval) ||
+		    pmd_trans_huge(master_pmdval))
+			return -EAGAIN;
+	}
+
+	master_pte = pte_offset_kernel(master_pmd, addr);
+	master_pte_base = (pte_t *)((unsigned long)master_pte & PAGE_MASK);
+
+	repl_pgd = pgd_offset_node(mm, addr, repl_node);
+	repl_p4d = p4d_alloc(mm, repl_pgd, addr);
+	if (!repl_p4d)
+		return -ENOMEM;
+
+	repl_pud = pud_alloc(mm, repl_p4d, addr);
+	if (!repl_pud)
+		return -ENOMEM;
+
+	repl_pmd = hydra_repl_pmd_alloc(mm, repl_pud, addr, master_node);
+	if (!repl_pmd)
+		return -ENOMEM;
+
+	if (pmd_none(*repl_pmd)) {
+		ret = hydra_alloc_replica_pte(mm, repl_pmd, addr, master_pte);
+		if (ret < 0)
+			return ret;
+	}
+
+	repl_pte = pte_offset_kernel(repl_pmd, addr);
+	repl_pte_base = (pte_t *)((unsigned long)repl_pte & PAGE_MASK);
+
+	{
+		struct page *m_pg = virt_to_page((long)master_pte);
+		struct page *r_pg = virt_to_page((long)repl_pte);
+
+		if (m_pg != r_pg)
+			hydra_link_page_to_replica_chain(m_pg, r_pg);
+	}
+
+	master_ptl = pte_lockptr(mm, master_pmd);
+	repl_ptl = pte_lockptr(mm, repl_pmd);
+
+	if (master_ptl < repl_ptl) {
+		spin_lock(master_ptl);
+		spin_lock_nested(repl_ptl, SINGLE_DEPTH_NESTING);
+	} else if (master_ptl > repl_ptl) {
+		spin_lock(repl_ptl);
+		spin_lock_nested(master_ptl, SINGLE_DEPTH_NESTING);
+	} else {
+		spin_lock(master_ptl);
+		repl_ptl = NULL;
+	}
+
+	{
+		unsigned long i;
+		for (i = start_idx; i < start_idx + count; i++) {
+			pte_t val = master_pte_base[i];
+			if (!pte_present(val) || pte_protnone(val))
+				val = __pte(0);
+			repl_pte_base[i] = val;
+		}
+	}
+
+	if (repl_ptl && repl_ptl != master_ptl) {
+		if (master_ptl < repl_ptl) {
+			spin_unlock(repl_ptl);
+			spin_unlock(master_ptl);
+		} else {
+			spin_unlock(master_ptl);
+			spin_unlock(repl_ptl);
+		}
+	} else {
+		spin_unlock(master_ptl);
+	}
+
+	return 0;
+}
+
+static int hydra_repl_try_pte(struct vm_fault *vmf, size_t repl_node,
+			      size_t master_node)
 {
 	struct mm_struct *mm = vmf->vma->vm_mm;
 	struct vm_area_struct *vma = vmf->vma;
-	size_t current_node = fault_node;
-	size_t master_node = vma->master_pgd_node;
 	unsigned long address = vmf->address;
 	unsigned long repl_count, range_start, range_end;
 	unsigned long pmd_addr, start_idx, count;
-	pte_t *ptep, mpte_orig;
-	pte_t *master_pte = NULL, *repl_pte = NULL;
+	pte_t *ptep, pte_val;
 	int ret;
-	unsigned long total_copied = 0;
 
-	BUG_ON(!mm->lazy_repl_enabled);
-	BUG_ON(current_node == master_node);
-
-	ret = hydra_try_replicate_thp(mm, vma, address, vmf->flags,
-				      current_node, master_node);
-	if (ret != -EAGAIN)
-		return ret;
-
-	ret = find_pte_in_master(mm, address, master_node, &ptep, &mpte_orig);
-	if (ret || ((vmf->flags & FAULT_FLAG_WRITE) && !pte_write(mpte_orig)) ||
-	    pte_protnone(mpte_orig)) {
+	ret = hydra_find_master_pte(mm, address, master_node, &ptep, &pte_val);
+	if (ret || ((vmf->flags & FAULT_FLAG_WRITE) && !pte_write(pte_val)) ||
+	    pte_protnone(pte_val)) {
 		ret = __handle_mm_fault(vma, address, vmf->flags, 1);
 		if (ret & (VM_FAULT_ERROR | VM_FAULT_NOPAGE | VM_FAULT_RETRY | VM_FAULT_COMPLETED))
 			return ret;
 
-		ret = hydra_try_replicate_thp(mm, vma, address, vmf->flags,
-					      current_node, master_node);
+		ret = hydra_repl_try_huge_pmd(mm, vma, address, vmf->flags,
+					      repl_node, master_node);
 		if (ret != -EAGAIN)
 			return ret;
 
-		ret = find_pte_in_master(mm, address, master_node, &ptep, &mpte_orig);
+		ret = hydra_find_master_pte(mm, address, master_node, &ptep, &pte_val);
 		if (ret)
 			return 0;
 
-		if (pte_protnone(mpte_orig))
+		if (pte_protnone(pte_val))
 			return 0;
 
-		if ((vmf->flags & FAULT_FLAG_WRITE) && !pte_write(mpte_orig))
+		if ((vmf->flags & FAULT_FLAG_WRITE) && !pte_write(pte_val))
 			return 0;
 	}
 
@@ -6816,11 +6789,8 @@ static int try_lazy_repl(struct vm_fault *vmf, int fault_node)
 	start_idx = (range_start - pmd_addr) >> PAGE_SHIFT;
 	count = (range_end - range_start) >> PAGE_SHIFT;
 
-	ret = hydra_replicate_partial_pte(mm, vma, pmd_addr, start_idx, count,
-					  current_node, master_node,
-					  vmf->flags,
-					  &master_pte, &repl_pte,
-					  &total_copied);
+	ret = hydra_repl_pte_range(mm, vma, pmd_addr, start_idx, count,
+				   repl_node, master_node, vmf->flags);
 
 	if (ret == VM_FAULT_RETRY)
 		return VM_FAULT_RETRY;
@@ -6831,8 +6801,25 @@ static int try_lazy_repl(struct vm_fault *vmf, int fault_node)
 	if (ret == -EAGAIN)
 		return 0;
 
-
 	return 0;
+}
+
+static int hydra_repl_fault(struct vm_fault *vmf, int fault_node)
+{
+	struct mm_struct *mm = vmf->vma->vm_mm;
+	size_t repl_node = fault_node;
+	size_t master_node = vmf->vma->master_pgd_node;
+	int ret;
+
+	BUG_ON(!mm->lazy_repl_enabled);
+	BUG_ON(repl_node == master_node);
+
+	ret = hydra_repl_try_huge_pmd(mm, vmf->vma, vmf->address, vmf->flags,
+				      repl_node, master_node);
+	if (ret != -EAGAIN)
+		return ret;
+
+	return hydra_repl_try_pte(vmf, repl_node, master_node);
 }
 
 /*
@@ -6864,7 +6851,7 @@ static int handle_pte_fault(struct vm_fault *vmf, int has_recursed)
 	if (unlikely(pmd_none(*vmf->pmd))) {
 		if (vmf->vma->vm_mm->lazy_repl_enabled && !has_recursed &&
 		    fault_node != vmf->vma->master_pgd_node) {
-			return try_lazy_repl(vmf, fault_node);
+			return hydra_repl_fault(vmf, fault_node);
 		}
 		/*
 		 * Leave __pte_alloc() until later: because vm_ops->fault may
@@ -6908,16 +6895,16 @@ static int handle_pte_fault(struct vm_fault *vmf, int has_recursed)
 	    fault_node != vmf->vma->master_pgd_node) {
 		if (vmf->pte && pte_protnone(vmf->orig_pte)) {
 			pte_unmap(vmf->pte);
-			return try_lazy_repl(vmf, fault_node);
+			return hydra_repl_fault(vmf, fault_node);
 		}
 		if (!vmf->pte || !pte_present(vmf->orig_pte)) {
 			if (vmf->pte)
 				pte_unmap(vmf->pte);
-			return try_lazy_repl(vmf, fault_node);
+			return hydra_repl_fault(vmf, fault_node);
 		}
 		if ((vmf->flags & FAULT_FLAG_WRITE) && !pte_write(vmf->orig_pte)) {
 			pte_unmap(vmf->pte);
-			return try_lazy_repl(vmf, fault_node);
+			return hydra_repl_fault(vmf, fault_node);
 		}
 	}
 
@@ -7053,7 +7040,7 @@ retry_pud:
 	}
 
 	if (mm->lazy_repl_enabled) {
-		vmf.pmd = repl_pmd_alloc(mm, vmf.pud, address, owner_node);
+		vmf.pmd = hydra_repl_pmd_alloc(mm, vmf.pud, address, owner_node);
 	} else {
 		vmf.pmd = pmd_alloc(mm, vmf.pud, address);
 	}
@@ -8200,52 +8187,6 @@ void vma_pgtable_walk_end(struct vm_area_struct *vma)
 {
 	if (is_vm_hugetlb_page(vma))
 		hugetlb_vma_unlock_read(vma);
-}
-
-int __repl_pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address,
-                     size_t owner_node)
-{
-	spinlock_t *ptl;
-	pmd_t *new = pmd_alloc_one(mm, address, pud);
-	struct page *new_page, *master_pmd_page = NULL;
-	pgd_t *m_pgd;
-	p4d_t *m_p4d;
-	pud_t *m_pud;
-	pmd_t *m_pmd;
-
-	if (!new)
-		return -ENOMEM;
-
-	new_page = virt_to_page(new);
-	smp_wmb();
-
-	ptl = pud_lock(mm, pud);
-	if (!pud_present(*pud)) {
-		mm_inc_nr_pmds(mm);
-		pud_populate(mm, pud, new);
-
-		m_pgd = pgd_offset_pgd(mm->repl_pgd[owner_node], address);
-		if (!pgd_none(*m_pgd) && !pgd_bad(*m_pgd)) {
-			m_p4d = p4d_offset(m_pgd, address);
-			if (!p4d_none(*m_p4d) && !p4d_bad(*m_p4d)) {
-				m_pud = pud_offset(m_p4d, address);
-				if (!pud_none(*m_pud) && !pud_bad(*m_pud)) {
-					m_pmd = pmd_offset(m_pud, address);
-					if (virt_addr_valid(m_pmd))
-						master_pmd_page = virt_to_page(m_pmd);
-				}
-			}
-		}
-		if (master_pmd_page && master_pmd_page != new_page)
-			hydra_link_page_to_replica_chain(master_pmd_page, new_page);
-	} else {
-		pagetable_dtor(virt_to_ptdesc(new));
-
-		if (!hydra_try_return_page(new_page))
-			__free_page(new_page);
-	}
-	spin_unlock(ptl);
-	return 0;
 }
 
 static int __init hydra_stats_proc_init(void)

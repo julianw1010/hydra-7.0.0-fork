@@ -6,104 +6,7 @@
 #include <asm/pgalloc.h>
 #include <asm/page.h>
 
-void pgtable_track_set_pgd(pgd_t *pgdp, pgd_t pgd)
-{
-	native_set_pgd(pgdp, pgd);
-}
-
-void pgtable_track_set_p4d(p4d_t *p4dp, p4d_t p4d)
-{
-	native_set_p4d(p4dp, p4d);
-}
-
-void pgtable_track_set_pud(pud_t *pudp, pud_t pud)
-{
-	native_set_pud(pudp, pud);
-}
-
-void pgtable_track_set_pmd(pmd_t *pmdp, pmd_t pmd)
-{
-	struct page *page;
-	struct page *cur_page;
-	struct page *start_page;
-	unsigned long offset;
-	pmd_t repl_val;
-
-	if (!virt_addr_valid(pmdp)) {
-		native_set_pmd(pmdp, pmd);
-		return;
-	}
-
-	page = virt_to_page(pmdp);
-
-	if (!READ_ONCE(page->next_replica)) {
-		native_set_pmd(pmdp, pmd);
-		return;
-	}
-
-	offset = ((unsigned long)pmdp) & ~PAGE_MASK;
-
-	if (pmd_present(pmd) && (pmd_trans_huge(pmd) || pmd_leaf(pmd)))
-		repl_val = pmd;
-	else
-		repl_val = __pmd(0);
-
-	start_page = page;
-	cur_page = page;
-
-	do {
-		pmd_t *replica_entry = (pmd_t *)(page_address(cur_page) + offset);
-
-		if (cur_page == start_page)
-			native_set_pmd(replica_entry, pmd);
-		else
-			native_set_pmd(replica_entry, repl_val);
-
-		cur_page = cur_page->next_replica;
-	} while (cur_page && cur_page != start_page);
-}
-
-void pgtable_repl_set_pte(pte_t *ptep, pte_t pteval)
-{
-	struct page *pte_page;
-	struct page *cur_page;
-	struct page *start_page;
-	unsigned long offset;
-
-	if (!virt_addr_valid(ptep))
-		goto native_only;
-
-	pte_page = virt_to_page(ptep);
-
-	if (!READ_ONCE(pte_page->next_replica)) {
-		native_set_pte(ptep, pteval);
-		return;
-	}
-
-	offset = ((unsigned long)ptep) & ~PAGE_MASK;
-	start_page = pte_page;
-	cur_page = pte_page;
-
-	do {
-		pte_t *rp = (pte_t *)(page_address(cur_page) + offset);
-
-		if (cur_page == start_page) {
-			native_set_pte(rp, pteval);
-		} else if (!pte_present(pteval)) {
-			native_set_pte(rp, __pte(0));
-		} else {
-			native_set_pte(rp, pteval);
-		}
-
-		cur_page = cur_page->next_replica;
-	} while (cur_page && cur_page != start_page);
-	return;
-
-native_only:
-	native_set_pte(ptep, pteval);
-}
-
-static unsigned long repl_get_entry(void *entryp)
+static unsigned long hydra_get_entry(void *entryp)
 {
 	struct page *page;
 	struct page *cur_page;
@@ -146,7 +49,7 @@ static unsigned long repl_get_entry(void *entryp)
 	return val;
 }
 
-static unsigned long repl_get_and_clear_entry(void *entryp)
+static unsigned long hydra_get_and_clear_entry(void *entryp)
 {
 	struct page *page;
 	struct page *cur_page;
@@ -186,7 +89,7 @@ static unsigned long repl_get_and_clear_entry(void *entryp)
 	return val;
 }
 
-static void repl_set_wrprotect_entry(void *entryp)
+static void hydra_set_wrprotect_entry(void *entryp)
 {
 	struct page *page;
 	struct page *cur_page;
@@ -225,7 +128,7 @@ static void repl_set_wrprotect_entry(void *entryp)
 	} while (cur_page && cur_page != start_page);
 }
 
-static int repl_test_and_clear_young_entry(void *entryp)
+static int hydra_test_and_clear_young_entry(void *entryp)
 {
 	struct page *page;
 	struct page *cur_page;
@@ -276,43 +179,130 @@ static int repl_test_and_clear_young_entry(void *entryp)
 	return young;
 }
 
-pte_t pgtable_repl_get_pte(pte_t *ptep)
+void hydra_set_pte(pte_t *ptep, pte_t pteval)
 {
-	return __pte(repl_get_entry(ptep));
+	struct page *pte_page;
+	struct page *cur_page;
+	struct page *start_page;
+	unsigned long offset;
+
+	if (!virt_addr_valid(ptep))
+		goto native_only;
+
+	pte_page = virt_to_page(ptep);
+
+	if (!READ_ONCE(pte_page->next_replica)) {
+		native_set_pte(ptep, pteval);
+		return;
+	}
+
+	offset = ((unsigned long)ptep) & ~PAGE_MASK;
+	start_page = pte_page;
+	cur_page = pte_page;
+
+	do {
+		pte_t *rp = (pte_t *)(page_address(cur_page) + offset);
+
+		if (cur_page == start_page) {
+			native_set_pte(rp, pteval);
+		} else if (!pte_present(pteval)) {
+			native_set_pte(rp, __pte(0));
+		} else {
+			native_set_pte(rp, pteval);
+		}
+
+		cur_page = cur_page->next_replica;
+	} while (cur_page && cur_page != start_page);
+	return;
+
+native_only:
+	native_set_pte(ptep, pteval);
 }
 
-pte_t pgtable_repl_ptep_get_and_clear(struct mm_struct *mm, pte_t *ptep)
+pte_t hydra_get_pte(pte_t *ptep)
 {
-	return __pte(repl_get_and_clear_entry(ptep));
+	return __pte(hydra_get_entry(ptep));
 }
 
-void pgtable_repl_ptep_set_wrprotect(struct mm_struct *mm,
-				     unsigned long addr, pte_t *ptep)
+pte_t hydra_ptep_get_and_clear(struct mm_struct *mm, pte_t *ptep)
 {
-	repl_set_wrprotect_entry(ptep);
+	return __pte(hydra_get_and_clear_entry(ptep));
 }
 
-int pgtable_repl_ptep_test_and_clear_young(struct vm_area_struct *vma,
-					   unsigned long addr, pte_t *ptep)
+void hydra_ptep_set_wrprotect(struct mm_struct *mm,
+			      unsigned long addr, pte_t *ptep)
 {
-	return repl_test_and_clear_young_entry(ptep);
+	hydra_set_wrprotect_entry(ptep);
 }
 
-int pgtable_repl_pmdp_test_and_clear_young(struct vm_area_struct *vma,
-					   unsigned long addr, pmd_t *pmdp)
+int hydra_ptep_test_and_clear_young(struct vm_area_struct *vma,
+				    unsigned long addr, pte_t *ptep)
 {
-	return repl_test_and_clear_young_entry(pmdp);
+	return hydra_test_and_clear_young_entry(ptep);
 }
 
-pmd_t pgtable_repl_pmdp_huge_get_and_clear(struct mm_struct *mm, pmd_t *pmdp)
+void hydra_set_pmd(pmd_t *pmdp, pmd_t pmd)
 {
-	return __pmd(repl_get_and_clear_entry(pmdp));
+	struct page *page;
+	struct page *cur_page;
+	struct page *start_page;
+	unsigned long offset;
+	pmd_t repl_val;
+
+	if (!virt_addr_valid(pmdp)) {
+		native_set_pmd(pmdp, pmd);
+		return;
+	}
+
+	page = virt_to_page(pmdp);
+
+	if (!READ_ONCE(page->next_replica)) {
+		native_set_pmd(pmdp, pmd);
+		return;
+	}
+
+	offset = ((unsigned long)pmdp) & ~PAGE_MASK;
+
+	if (pmd_present(pmd) && (pmd_trans_huge(pmd) || pmd_leaf(pmd)))
+		repl_val = pmd;
+	else
+		repl_val = __pmd(0);
+
+	start_page = page;
+	cur_page = page;
+
+	do {
+		pmd_t *replica_entry = (pmd_t *)(page_address(cur_page) + offset);
+
+		if (cur_page == start_page)
+			native_set_pmd(replica_entry, pmd);
+		else
+			native_set_pmd(replica_entry, repl_val);
+
+		cur_page = cur_page->next_replica;
+	} while (cur_page && cur_page != start_page);
 }
 
-void pgtable_repl_pmdp_set_wrprotect(struct mm_struct *mm,
-				     unsigned long addr, pmd_t *pmdp)
+pmd_t hydra_get_pmd(pmd_t *pmdp)
 {
-	repl_set_wrprotect_entry(pmdp);
+	return __pmd(hydra_get_entry(pmdp));
+}
+
+pmd_t hydra_pmdp_huge_get_and_clear(struct mm_struct *mm, pmd_t *pmdp)
+{
+	return __pmd(hydra_get_and_clear_entry(pmdp));
+}
+
+void hydra_pmdp_set_wrprotect(struct mm_struct *mm,
+			      unsigned long addr, pmd_t *pmdp)
+{
+	hydra_set_wrprotect_entry(pmdp);
+}
+
+int hydra_pmdp_test_and_clear_young(struct vm_area_struct *vma,
+				    unsigned long addr, pmd_t *pmdp)
+{
+	return hydra_test_and_clear_young_entry(pmdp);
 }
 
 pmd_t hydra_pmdp_establish(pmd_t *pmdp, pmd_t pmd)
@@ -383,8 +373,17 @@ native_only:
 	}
 }
 
-pmd_t hydra_get_pmd(pmd_t *pmdp)
+void hydra_set_pud(pud_t *pudp, pud_t pud)
 {
-	return __pmd(repl_get_entry(pmdp));
+	native_set_pud(pudp, pud);
 }
 
+void hydra_set_p4d(p4d_t *p4dp, p4d_t p4d)
+{
+	native_set_p4d(p4dp, p4d);
+}
+
+void hydra_set_pgd(pgd_t *pgdp, pgd_t pgd)
+{
+	native_set_pgd(pgdp, pgd);
+}

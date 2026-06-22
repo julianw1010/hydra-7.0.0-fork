@@ -227,7 +227,6 @@ struct page {
 #endif
 	struct page *next_replica;
 	struct mm_struct *pt_owner_mm;
-	struct mitosis_pte_tracking *mitosis_tracking;
 } _struct_page_alignment;
 
 /*

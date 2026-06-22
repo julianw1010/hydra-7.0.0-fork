@@ -5288,7 +5288,6 @@ struct page *__alloc_pages_noprof(gfp_t gfp, unsigned int order,
 	if (page) {
 		page->next_replica = NULL;
 		page->pt_owner_mm = NULL;
-		page->mitosis_tracking = NULL;
 	}
 
 	return page;
@@ -5336,10 +5335,6 @@ static void ___free_pages(struct page *page, unsigned int order,
 
 	page->next_replica = NULL;
 	page->pt_owner_mm = NULL;
-	if (page->mitosis_tracking) {
-		kfree(page->mitosis_tracking);
-		page->mitosis_tracking = NULL;
-	}
 
 	if (put_page_testzero(page))
 		__free_frozen_pages(page, order, fpi_flags);

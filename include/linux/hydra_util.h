@@ -18,12 +18,12 @@
 void hydra_reload_cr3(void *info);
 int hydra_enable_replication(struct mm_struct *mm);
 
-#define HYDRA_FIND_PGD_NONE ((void *)0x1)
-#define HYDRA_FIND_P4D_NONE ((void *)0x11)
-#define HYDRA_FIND_PUD_NONE ((void *)0x21)
-#define HYDRA_FIND_PMD_NONE ((void *)0x31)
+#define HYDRA_WALK_PGD_NONE ((void *)0x1)
+#define HYDRA_WALK_P4D_NONE ((void *)0x11)
+#define HYDRA_WALK_PUD_NONE ((void *)0x21)
+#define HYDRA_WALK_PMD_NONE ((void *)0x31)
 
-#define HYDRA_FIND_BAD(r) (((unsigned long)(r) & 1) == 1)
+#define HYDRA_WALK_BAD(r) (((unsigned long)(r) & 1) == 1)
 
 static inline pgd_t *hydra_pgd_offset(struct mm_struct *mm,
 				       unsigned long address,
@@ -54,12 +54,43 @@ static inline pgd_t *hydra_pgd_offset_search(struct mm_struct *mm,
 	return pgd_offset(mm, address);
 }
 
-struct mitosis_pte_tracking {
-    DECLARE_BITMAP(propagated, PTRS_PER_PTE);
-    DECLARE_BITMAP(ever_accessed, PTRS_PER_PTE);
-    atomic_long_t propagation_count;
-    atomic_long_t access_count;
-};
+static inline pmd_t *hydra_walk_to_pmd(struct mm_struct *mm,
+				       unsigned long address, int node)
+{
+	pgd_t *pgd;
+	p4d_t *p4d;
+	pud_t *pud;
+
+	pgd = pgd_offset_node(mm, address, node);
+	if (pgd_none(*pgd) || unlikely(pgd_bad(*pgd)))
+		return (pmd_t *)HYDRA_WALK_PGD_NONE;
+
+	p4d = p4d_offset(pgd, address);
+	if (p4d_none(*p4d) || unlikely(p4d_bad(*p4d)))
+		return (pmd_t *)HYDRA_WALK_P4D_NONE;
+
+	pud = pud_offset(p4d, address);
+	if (pud_none(*pud) || unlikely(pud_bad(*pud)))
+		return (pmd_t *)HYDRA_WALK_PUD_NONE;
+
+	return pmd_offset(pud, address);
+}
+
+static inline pte_t *hydra_walk_to_pte(struct mm_struct *mm,
+				       unsigned long address, int node)
+{
+	pmd_t *pmd;
+
+	pmd = hydra_walk_to_pmd(mm, address, node);
+	if (HYDRA_WALK_BAD(pmd))
+		return (pte_t *)pmd;
+
+	if (pmd_none(*pmd) || unlikely(pmd_bad(*pmd)) ||
+	    unlikely(pmd_trans_huge(*pmd)))
+		return (pte_t *)HYDRA_WALK_PMD_NONE;
+
+	return pte_offset_kernel(pmd, address);
+}
 
 struct hydra_cache_head {
 	spinlock_t lock;
@@ -78,33 +109,8 @@ extern struct page *hydra_cache_pop(int node);
 extern int hydra_cache_drain_node(int node);
 extern int hydra_cache_drain_all(void);
 
-static inline pte_t *hydra_find_pte(struct mm_struct *mm, unsigned long address, int node) {
-	pgd_t *pgd;
-	p4d_t *p4d;
-	pud_t *pud;
-	pmd_t *pmd;
-
-	pgd = pgd_offset_node(mm, address, node);
-	if (pgd_none(*pgd) || unlikely(pgd_bad(*pgd)))
-		return HYDRA_FIND_PGD_NONE;
-
-	p4d = p4d_offset(pgd, address);
-	if (p4d_none(*p4d) || unlikely(p4d_bad(*p4d)))
-		return HYDRA_FIND_P4D_NONE;
-
-	pud = pud_offset(p4d, address);
-	if (pud_none(*pud) || unlikely(pud_bad(*pud)))
-		return HYDRA_FIND_PUD_NONE;
-
-	pmd = pmd_offset(pud, address);
-	if (pmd_none(*pmd) || unlikely(pmd_bad(*pmd)) ||
-	    unlikely(pmd_trans_huge(*pmd)))
-		return HYDRA_FIND_PMD_NONE;
-
-	return pte_offset_kernel(pmd, address);
-}
-
-static inline int hydra_collect_repl_nodes(struct page *const ptpage, nodemask_t *nodemask)
+static inline int hydra_collect_repl_nodes(struct page *const ptpage,
+					   nodemask_t *nodemask)
 {
 	struct page *cur_page;
 	struct page *start_page;

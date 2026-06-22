@@ -478,14 +478,14 @@ int pudp_set_access_flags(struct vm_area_struct *vma, unsigned long address,
 int ptep_test_and_clear_young(struct vm_area_struct *vma,
 			      unsigned long addr, pte_t *ptep)
 {
-	return pgtable_repl_ptep_test_and_clear_young(vma, addr, ptep);
+	return hydra_ptep_test_and_clear_young(vma, addr, ptep);
 }
 
 #if defined(CONFIG_TRANSPARENT_HUGEPAGE) || defined(CONFIG_ARCH_HAS_NONLEAF_PMD_YOUNG)
 int pmdp_test_and_clear_young(struct vm_area_struct *vma,
 			      unsigned long addr, pmd_t *pmdp)
 {
-	return pgtable_repl_pmdp_test_and_clear_young(vma, addr, pmdp);
+	return hydra_pmdp_test_and_clear_young(vma, addr, pmdp);
 }
 #endif
 
@@ -865,7 +865,7 @@ void arch_check_zapped_pud(struct vm_area_struct *vma, pud_t pud)
 	VM_WARN_ON_ONCE(!(vma->vm_flags & VM_SHADOW_STACK) && pud_shstk(pud));
 }
 
-pgd_t *repl_pgd_alloc(struct mm_struct *mm, size_t nid)
+pgd_t *hydra_repl_pgd_alloc(struct mm_struct *mm, size_t nid)
 {
 	pgd_t *pgd;
 	pmd_t *pmds[PREALLOCATED_PMDS];

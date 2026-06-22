@@ -48,12 +48,12 @@ static inline unsigned int pgd_allocation_order(void)
  * Allocate and free page tables.
  */
 extern pgd_t *pgd_alloc(struct mm_struct *);
-extern pgd_t *repl_pgd_alloc(struct mm_struct *, size_t node_id);
+extern pgd_t *hydra_repl_pgd_alloc(struct mm_struct *, size_t node_id);
 extern void pgd_free(struct mm_struct *mm, pgd_t *pgd);
 
 extern pgtable_t pte_alloc_one(struct mm_struct *, pmd_t *);
 
-extern struct page *repl_alloc_page_on_node(size_t nid, unsigned int order);
+extern struct page *hydra_alloc_page_on_node(size_t nid, unsigned int order);
 
 extern void ___pte_free_tlb(struct mmu_gather *tlb, struct page *pte);
 
