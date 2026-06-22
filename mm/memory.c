@@ -6519,9 +6519,7 @@ static int hydra_replicate_partial_pte(struct mm_struct *mm,
 		unsigned long i;
 		for (i = start_idx; i < start_idx + count; i++) {
 			pte_t val = master_pte_base[i];
-			if (pte_present(val) && !pte_protnone(val))
-				val = pte_mkold(val);
-			else
+			if (!pte_present(val) || pte_protnone(val))
 				val = __pte(0);
 			repl_pte_base[i] = val;
 		}
@@ -6675,7 +6673,7 @@ static int hydra_replicate_huge_pmd_range(struct mm_struct *mm,
 				__free_page(pte_page);
 		}
 
-		native_set_pmd(&repl_pmd_base[i], pmd_mkold(master_val));
+		native_set_pmd(&repl_pmd_base[i], master_val);
 
 		copied++;
 	}

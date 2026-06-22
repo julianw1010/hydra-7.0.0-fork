@@ -1250,25 +1250,36 @@ extern int ptep_clear_flush_young(struct vm_area_struct *vma,
 				  unsigned long address, pte_t *ptep);
 
 #define __HAVE_ARCH_PTEP_GET_AND_CLEAR
-pte_t ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
-				       pte_t *ptep);
+static inline pte_t ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
+				       pte_t *ptep)
+{
+	pte_t pte = pgtable_repl_ptep_get_and_clear(mm, ptep);
+	page_table_check_pte_clear(mm, addr, pte);
+	return pte;
+}
 
 #define __HAVE_ARCH_PTEP_GET_AND_CLEAR_FULL
 static inline pte_t ptep_get_and_clear_full(struct mm_struct *mm,
 					    unsigned long addr, pte_t *ptep,
 					    int full)
 {
-	if (full && (!mm || !mm->lazy_repl_enabled)) {
-		pte_t pte = native_ptep_get_and_clear(ptep);
-		page_table_check_pte_clear(mm, addr, pte);
-		return pte;
-	}
-	return ptep_get_and_clear(mm, addr, ptep);
+	pte_t pte;
+	pte = pgtable_repl_ptep_get_and_clear(mm, ptep);
+	page_table_check_pte_clear(mm, addr, pte);
+	return pte;
 }
 
 #define __HAVE_ARCH_PTEP_SET_WRPROTECT
-void ptep_set_wrprotect(struct mm_struct *mm,
-				      unsigned long addr, pte_t *ptep);
+static inline void ptep_set_wrprotect(struct mm_struct *mm,
+				      unsigned long addr, pte_t *ptep)
+{
+	/*
+	 * Avoid accidentally creating shadow stack PTEs
+	 * (Write=0,Dirty=1).  Use cmpxchg() to prevent races with
+	 * the hardware setting Dirty=1.
+	 */
+	pgtable_repl_ptep_set_wrprotect(mm, addr, ptep);
+}
 
 #define flush_tlb_fix_spurious_fault(vma, address, ptep) do { } while (0)
 
@@ -1292,8 +1303,15 @@ extern int pmdp_clear_flush_young(struct vm_area_struct *vma,
 
 
 #define __HAVE_ARCH_PMDP_HUGE_GET_AND_CLEAR
-pmd_t pmdp_huge_get_and_clear(struct mm_struct *mm, unsigned long addr,
-			      pmd_t *pmdp);
+static inline pmd_t pmdp_huge_get_and_clear(struct mm_struct *mm, unsigned long addr,
+				       pmd_t *pmdp)
+{
+	pmd_t pmd = pgtable_repl_pmdp_huge_get_and_clear(mm, pmdp);
+
+	page_table_check_pmd_clear(mm, addr, pmd);
+
+	return pmd;
+}
 
 #define __HAVE_ARCH_PUDP_HUGE_GET_AND_CLEAR
 static inline pud_t pudp_huge_get_and_clear(struct mm_struct *mm,
@@ -1307,12 +1325,19 @@ static inline pud_t pudp_huge_get_and_clear(struct mm_struct *mm,
 }
 
 #define __HAVE_ARCH_PMDP_SET_WRPROTECT
-void pmdp_set_wrprotect(struct mm_struct *mm,
-			unsigned long addr, pmd_t *pmdp);
+static inline void pmdp_set_wrprotect(struct mm_struct *mm,
+				      unsigned long addr, pmd_t *pmdp)
+{
+	/*
+	 * Avoid accidentally creating shadow stack PTEs
+	 * (Write=0,Dirty=1).  Use cmpxchg() to prevent races with
+	 * the hardware setting Dirty=1.
+	 */
+	pgtable_repl_pmdp_set_wrprotect(mm, addr, pmdp);
+}
 
 #ifndef pmdp_establish
 #define pmdp_establish pmdp_establish
-pmd_t hydra_pmdp_establish(pmd_t *pmdp, pmd_t pmd);
 static inline pmd_t pmdp_establish(struct vm_area_struct *vma,
 		unsigned long address, pmd_t *pmdp, pmd_t pmd)
 {
@@ -1699,7 +1724,15 @@ void pgtable_repl_set_pte(pte_t *ptep, pte_t pteval);
 pte_t pgtable_repl_get_pte(pte_t *ptep);
 void pgtable_repl_set_pte_at(struct mm_struct *mm, unsigned long addr, pte_t *ptep, pte_t pteval);
 
+pte_t pgtable_repl_ptep_get_and_clear(struct mm_struct *mm, pte_t *ptep);
+void pgtable_repl_ptep_set_wrprotect(struct mm_struct *mm, unsigned long addr, pte_t *ptep);
+pmd_t pgtable_repl_pmdp_huge_get_and_clear(struct mm_struct *mm, pmd_t *pmdp);
+void pgtable_repl_pmdp_set_wrprotect(struct mm_struct *mm, unsigned long addr, pmd_t *pmdp);
+int pgtable_repl_ptep_test_and_clear_young(struct vm_area_struct *vma, unsigned long addr, pte_t *ptep);
+int pgtable_repl_pmdp_test_and_clear_young(struct vm_area_struct *vma, unsigned long addr, pmd_t *pmdp);
+
 pmd_t hydra_get_pmd(pmd_t *pmdp);
+pmd_t hydra_pmdp_establish(pmd_t *pmdp, pmd_t pmd);
 
 void pgd_dtor(pgd_t *pgd);
 

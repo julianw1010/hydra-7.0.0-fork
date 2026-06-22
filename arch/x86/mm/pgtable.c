@@ -475,6 +475,20 @@ int pudp_set_access_flags(struct vm_area_struct *vma, unsigned long address,
 }
 #endif
 
+int ptep_test_and_clear_young(struct vm_area_struct *vma,
+			      unsigned long addr, pte_t *ptep)
+{
+	return pgtable_repl_ptep_test_and_clear_young(vma, addr, ptep);
+}
+
+#if defined(CONFIG_TRANSPARENT_HUGEPAGE) || defined(CONFIG_ARCH_HAS_NONLEAF_PMD_YOUNG)
+int pmdp_test_and_clear_young(struct vm_area_struct *vma,
+			      unsigned long addr, pmd_t *pmdp)
+{
+	return pgtable_repl_pmdp_test_and_clear_young(vma, addr, pmdp);
+}
+#endif
+
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
 int pudp_test_and_clear_young(struct vm_area_struct *vma,
 			      unsigned long addr, pud_t *pudp)
