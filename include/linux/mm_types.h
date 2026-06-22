@@ -1159,11 +1159,8 @@ struct mm_struct {
 		unsigned long mmap_compat_legacy_base;
 #endif
 		unsigned long task_size;	/* size of task vm space */
-
 		bool          lazy_repl_enabled;
-
 		pgd_t * repl_pgd[NUMA_NODE_COUNT];
-
 		pgd_t * pgd;
 
 #ifdef CONFIG_MEMBARRIER
