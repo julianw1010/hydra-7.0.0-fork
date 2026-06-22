@@ -1158,14 +1158,14 @@ struct mm_struct {
 		unsigned long mmap_compat_base;
 		unsigned long mmap_compat_legacy_base;
 #endif
-	unsigned long task_size;		/* size of task vm space */
-	unsigned long highest_vm_end;		/* highest vma end address */
+		unsigned long task_size;		/* size of task vm space */
+		unsigned long highest_vm_end;		/* highest vma end address */
 
-	bool          lazy_repl_enabled;
+		bool          lazy_repl_enabled;
 
-	pgd_t * repl_pgd[NUMA_NODE_COUNT];
+		pgd_t * repl_pgd[NUMA_NODE_COUNT];
 
-	pgd_t * pgd;
+		pgd_t * pgd;
 
 #ifdef CONFIG_MEMBARRIER
 		/**
