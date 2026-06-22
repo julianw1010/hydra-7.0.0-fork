@@ -909,8 +909,3 @@ out_free_page:
 out:
 	return NULL;
 }
-
-void pgtable_repl_set_pte_at(struct mm_struct *mm, unsigned long addr, pte_t *ptep, pte_t pteval)
-{
-	pgtable_repl_set_pte(ptep, pteval);
-}

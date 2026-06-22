@@ -1728,7 +1728,6 @@ bool arch_is_platform_page(u64 paddr);
 
 void pgtable_repl_set_pte(pte_t *ptep, pte_t pteval);
 pte_t pgtable_repl_get_pte(pte_t *ptep);
-void pgtable_repl_set_pte_at(struct mm_struct *mm, unsigned long addr, pte_t *ptep, pte_t pteval);
 
 int pgtable_repl_ptep_test_and_clear_young(struct vm_area_struct *vma, unsigned long addr, pte_t *ptep);
 int pgtable_repl_pmdp_test_and_clear_young(struct vm_area_struct *vma, unsigned long addr, pmd_t *pmdp);
