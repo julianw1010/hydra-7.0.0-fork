@@ -1734,8 +1734,6 @@ int hydra_pmdp_test_and_clear_young(struct vm_area_struct *vma, unsigned long ad
 
 pmd_t hydra_get_pmd(pmd_t *pmdp);
 
-void pgd_dtor(pgd_t *pgd);
-
 void hydra_set_pmd(pmd_t *pmdp, pmd_t pmd);
 
 #endif	/* __ASSEMBLER__ */

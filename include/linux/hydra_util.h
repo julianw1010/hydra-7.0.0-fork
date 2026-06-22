@@ -213,6 +213,41 @@ static inline void hydra_break_chain(struct page *page)
 	}
 }
 
+static inline void hydra_unlink_single(struct page *anchor,
+				       struct page *target)
+{
+	struct page *cur;
+
+	if (!anchor || !target || anchor == target)
+		return;
+
+	hydra_chain_lock(anchor);
+
+	if (!anchor->next_replica)
+		goto out;
+
+	if (anchor->next_replica == target) {
+		anchor->next_replica = target->next_replica;
+		target->next_replica = NULL;
+		if (anchor->next_replica == anchor)
+			anchor->next_replica = NULL;
+		goto out;
+	}
+
+	cur = anchor->next_replica;
+	while (cur && cur != anchor) {
+		if (cur->next_replica == target) {
+			cur->next_replica = target->next_replica;
+			target->next_replica = NULL;
+			break;
+		}
+		cur = cur->next_replica;
+	}
+
+out:
+	hydra_chain_unlock(anchor);
+}
+
 extern void hydra_free_replica_chain(struct page *primary, int level);
 
 static inline bool hydra_try_return_page(struct page *page)

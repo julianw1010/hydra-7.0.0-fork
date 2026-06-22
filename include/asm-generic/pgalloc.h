@@ -123,6 +123,7 @@ static inline void pte_free(struct mm_struct *mm, struct page *pte_page)
 	hydra_dtor_free_page(pte_page);
 }
 
+
 #if CONFIG_PGTABLE_LEVELS > 2
 
 #ifndef __HAVE_ARCH_PMD_ALLOC_ONE
@@ -169,7 +170,7 @@ static inline void pmd_free(struct mm_struct *mm, pmd_t *pmd)
 {
 	struct page *page = virt_to_page(pmd);
 
-	BUG_ON((unsigned long)pmd & (PAGE_SIZE - 1));
+	BUG_ON((unsigned long)pmd & (PAGE_SIZE-1));
 	hydra_free_replica_chain(page, HYDRA_LEVEL_PMD);
 	hydra_dtor_free_page(page);
 }
@@ -221,7 +222,7 @@ static inline pud_t *pud_alloc_one_noprof(struct mm_struct *mm, unsigned long ad
 
 static inline void __pud_free(struct mm_struct *mm, pud_t *pud)
 {
-	BUG_ON((unsigned long)pud & (PAGE_SIZE - 1));
+	BUG_ON((unsigned long)pud & (PAGE_SIZE-1));
 	hydra_dtor_free_page(virt_to_page(pud));
 }
 
@@ -269,7 +270,7 @@ static inline p4d_t *p4d_alloc_one_noprof(struct mm_struct *mm, unsigned long ad
 
 static inline void __p4d_free(struct mm_struct *mm, p4d_t *p4d)
 {
-	BUG_ON((unsigned long)p4d & (PAGE_SIZE - 1));
+	BUG_ON((unsigned long)p4d & (PAGE_SIZE-1));
 	hydra_dtor_free_page(virt_to_page(p4d));
 }
 

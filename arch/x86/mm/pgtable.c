@@ -116,7 +116,7 @@ static void pgd_ctor(struct mm_struct *mm, pgd_t *pgd)
 	pgd_list_add(pgd);
 }
 
-void pgd_dtor(pgd_t *pgd)
+static void pgd_dtor(pgd_t *pgd)
 {
 	spin_lock(&pgd_lock);
 	pgd_list_del(pgd);

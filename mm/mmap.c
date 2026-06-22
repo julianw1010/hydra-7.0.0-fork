@@ -1415,7 +1415,6 @@ void exit_mmap(struct mm_struct *mm)
 	mt_clear_in_rcu(&mm->mm_mt);
 	unmap_pgtable_init(&unmap, &vmi);
 	free_pgtables(&tlb, &unmap);
-
 	tlb_finish_mmu(&tlb);
 
 	/*

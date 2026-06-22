@@ -6338,45 +6338,6 @@ static int hydra_find_master_pte(struct mm_struct *mm, unsigned long address,
 	return 0;
 }
 
-static int hydra_alloc_replica_pte(struct mm_struct *mm, pmd_t *pmd,
-				   unsigned long address, pte_t *master_ptep)
-{
-	spinlock_t *ptl;
-	pgtable_t new = pte_alloc_one(mm, pmd);
-	struct page *master_pte_page, *repl_pte_page;
-	int allocated = 0;
-
-	if (!new)
-		return -ENOMEM;
-
-	smp_wmb();
-
-	ptl = pmd_lock(mm, pmd);
-	if (likely(pmd_none(*pmd))) {
-		mm_inc_nr_ptes(mm);
-
-		master_pte_page = virt_to_page((long)master_ptep);
-		repl_pte_page = virt_to_page(page_address(new));
-
-		hydra_link_page_to_replica_chain(master_pte_page, repl_pte_page);
-
-		paravirt_alloc_pte(mm, page_to_pfn(new));
-		native_set_pmd(pmd, __pmd(((pteval_t)page_to_pfn(new) << PAGE_SHIFT) | _PAGE_TABLE));
-		new = NULL;
-		allocated = 1;
-	}
-	spin_unlock(ptl);
-
-	if (new) {
-		pagetable_dtor(page_ptdesc(new));
-
-		if (!hydra_try_return_page(new))
-			__free_page(new);
-	}
-
-	return allocated;
-}
-
 int hydra_alloc_replica_pmd(struct mm_struct *mm, pud_t *pud,
 			    unsigned long address, size_t owner_node)
 {
@@ -6433,7 +6394,6 @@ static int hydra_repl_huge_pmd_range(struct mm_struct *mm,
 	pgd_t *master_pgd, *repl_pgd;
 	p4d_t *master_p4d, *repl_p4d;
 	pud_t *master_pud, *repl_pud;
-	pmd_t *repl_pmd;
 	pmd_t *master_pmd_base, *repl_pmd_base;
 	spinlock_t *master_ptl, *repl_ptl;
 	unsigned long haddr = address & HPAGE_PMD_MASK;
@@ -6475,6 +6435,8 @@ static int hydra_repl_huge_pmd_range(struct mm_struct *mm,
 	if (pud_none(*master_pud) || pud_bad(*master_pud))
 		return -EAGAIN;
 
+	master_pmd_base = pmd_offset(master_pud, pud_base);
+
 	repl_pgd = pgd_offset_node(mm, haddr, repl_node);
 	repl_p4d = p4d_alloc(mm, repl_pgd, haddr);
 	if (!repl_p4d)
@@ -6484,11 +6446,103 @@ static int hydra_repl_huge_pmd_range(struct mm_struct *mm,
 	if (!repl_pud)
 		return -ENOMEM;
 
-	repl_pmd = hydra_repl_pmd_alloc(mm, repl_pud, haddr, master_node);
-	if (!repl_pmd)
-		return -ENOMEM;
+	if (pud_none(*repl_pud)) {
+		pmd_t *new_pmd = pmd_alloc_one(mm, haddr, repl_pud);
+		struct page *new_pmd_page, *master_pmd_page;
+		spinlock_t *pud_ptl;
+		int linked = 0;
 
-	master_pmd_base = pmd_offset(master_pud, pud_base);
+		if (!new_pmd)
+			return -ENOMEM;
+
+		new_pmd_page = virt_to_page(new_pmd);
+		master_pmd_page = virt_to_page(master_pmd_base);
+		repl_pmd_base = new_pmd;
+
+		master_ptl = pmd_lockptr(mm, pmd_offset(master_pud, haddr));
+		repl_ptl = ptlock_ptr(virt_to_ptdesc(new_pmd));
+
+		if (master_ptl < repl_ptl) {
+			spin_lock(master_ptl);
+			spin_lock_nested(repl_ptl, SINGLE_DEPTH_NESTING);
+		} else if (master_ptl > repl_ptl) {
+			spin_lock(repl_ptl);
+			spin_lock_nested(master_ptl, SINGLE_DEPTH_NESTING);
+		} else {
+			spin_lock(master_ptl);
+			repl_ptl = NULL;
+		}
+
+		fault_idx = (haddr - pud_base) >> HPAGE_PMD_SHIFT;
+		{
+			pmd_t faulting_val = master_pmd_base[fault_idx];
+
+			if (!pmd_present(faulting_val) || !pmd_trans_huge(faulting_val))
+				goto unlock_new;
+		}
+
+		start_idx = (range_start - pud_base) >> HPAGE_PMD_SHIFT;
+		end_idx = (range_end - pud_base) >> HPAGE_PMD_SHIFT;
+
+		for (i = start_idx; i < end_idx; i++) {
+			pmd_t master_val = master_pmd_base[i];
+
+			if (!pmd_present(master_val) || !pmd_trans_huge(master_val))
+				continue;
+
+			if (pmd_protnone(master_val))
+				continue;
+
+			native_set_pmd(&repl_pmd_base[i], master_val);
+
+			copied++;
+		}
+
+		hydra_link_page_to_replica_chain(master_pmd_page, new_pmd_page);
+		linked = 1;
+
+unlock_new:
+		if (repl_ptl && repl_ptl != master_ptl) {
+			if (master_ptl < repl_ptl) {
+				spin_unlock(repl_ptl);
+				spin_unlock(master_ptl);
+			} else {
+				spin_unlock(master_ptl);
+				spin_unlock(repl_ptl);
+			}
+		} else {
+			spin_unlock(master_ptl);
+		}
+
+		if (!linked) {
+			pagetable_dtor(virt_to_ptdesc(new_pmd));
+			if (!hydra_try_return_page(new_pmd_page))
+				__free_page(new_pmd_page);
+			return -EAGAIN;
+		}
+
+		smp_wmb();
+
+		pud_ptl = pud_lock(mm, repl_pud);
+		if (!pud_present(*repl_pud)) {
+			mm_inc_nr_pmds(mm);
+			pud_populate(mm, repl_pud, new_pmd);
+			new_pmd = NULL;
+		}
+		spin_unlock(pud_ptl);
+
+		if (unlikely(new_pmd)) {
+			hydra_unlink_single(master_pmd_page, new_pmd_page);
+			pagetable_dtor(virt_to_ptdesc(new_pmd));
+			if (!hydra_try_return_page(new_pmd_page))
+				__free_page(new_pmd_page);
+			copied = 0;
+		} else {
+			*prefetched_out = copied;
+			return copied > 0 ? 0 : -EAGAIN;
+		}
+	}
+
 	repl_pmd_base = pmd_offset(repl_pud, pud_base);
 
 	{
@@ -6681,9 +6735,75 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 		return -ENOMEM;
 
 	if (pmd_none(*repl_pmd)) {
-		ret = hydra_alloc_replica_pte(mm, repl_pmd, addr, master_pte);
-		if (ret < 0)
-			return ret;
+		pgtable_t new_page = pte_alloc_one(mm, repl_pmd);
+		struct page *master_pte_page;
+		spinlock_t *pmd_ptl;
+
+		if (!new_page)
+			return -ENOMEM;
+
+		repl_pte_base = (pte_t *)page_address(new_page);
+		master_pte_page = virt_to_page(master_pte_base);
+
+		master_ptl = pte_lockptr(mm, master_pmd);
+		repl_ptl = ptlock_ptr(page_ptdesc(new_page));
+
+		if (master_ptl < repl_ptl) {
+			spin_lock(master_ptl);
+			spin_lock_nested(repl_ptl, SINGLE_DEPTH_NESTING);
+		} else if (master_ptl > repl_ptl) {
+			spin_lock(repl_ptl);
+			spin_lock_nested(master_ptl, SINGLE_DEPTH_NESTING);
+		} else {
+			spin_lock(master_ptl);
+			repl_ptl = NULL;
+		}
+
+		{
+			unsigned long i;
+			for (i = start_idx; i < start_idx + count; i++) {
+				pte_t val = master_pte_base[i];
+				if (!pte_present(val) || pte_protnone(val))
+					val = __pte(0);
+				repl_pte_base[i] = val;
+			}
+		}
+
+		hydra_link_page_to_replica_chain(master_pte_page, new_page);
+
+		if (repl_ptl && repl_ptl != master_ptl) {
+			if (master_ptl < repl_ptl) {
+				spin_unlock(repl_ptl);
+				spin_unlock(master_ptl);
+			} else {
+				spin_unlock(master_ptl);
+				spin_unlock(repl_ptl);
+			}
+		} else {
+			spin_unlock(master_ptl);
+		}
+
+		smp_wmb();
+
+		pmd_ptl = pmd_lock(mm, repl_pmd);
+		if (likely(pmd_none(*repl_pmd))) {
+			mm_inc_nr_ptes(mm);
+			paravirt_alloc_pte(mm, page_to_pfn(new_page));
+			native_set_pmd(repl_pmd,
+				__pmd(((pteval_t)page_to_pfn(new_page) << PAGE_SHIFT)
+				      | _PAGE_TABLE));
+			new_page = NULL;
+		}
+		spin_unlock(pmd_ptl);
+
+		if (unlikely(new_page)) {
+			hydra_unlink_single(master_pte_page, new_page);
+			pagetable_dtor(page_ptdesc(new_page));
+			if (!hydra_try_return_page(new_page))
+				__free_page(new_page);
+		} else {
+			return 0;
+		}
 	}
 
 	repl_pte = pte_offset_kernel(repl_pmd, addr);
@@ -7130,12 +7250,10 @@ retry_pud:
 				goto out_restore;
 		} else {
 			vmf.ptl = pmd_lock(mm, vmf.pmd);
-			vmf.orig_pmd = *vmf.pmd;
 			if (!huge_pmd_set_accessed(&vmf))
 				fix_spurious_fault(&vmf, PGTABLE_LEVEL_PMD);
 			spin_unlock(vmf.ptl);
-			ret = 0;
-			goto out_restore;
+			return 0;
 		}
 	}
 
@@ -7355,18 +7473,16 @@ int __p4d_alloc(struct mm_struct *mm, pgd_t *pgd, unsigned long address)
 	if (!new)
 		return -ENOMEM;
 
-	smp_wmb(); /* See comment in pmd_install() */
-
 	spin_lock(&mm->page_table_lock);
-	if (pgd_present(*pgd)) {
+	if (pgd_present(*pgd)) {	/* Another has populated it */
 		p4d_free(mm, new);
 	} else {
+		smp_wmb(); /* See comment in pmd_install() */
 		pgd_populate(mm, pgd, new);
 	}
 	spin_unlock(&mm->page_table_lock);
 	return 0;
 }
-
 #endif /* __PAGETABLE_P4D_FOLDED */
 
 #ifndef __PAGETABLE_PUD_FOLDED
@@ -7380,19 +7496,16 @@ int __pud_alloc(struct mm_struct *mm, p4d_t *p4d, unsigned long address)
 	if (!new)
 		return -ENOMEM;
 
-	smp_wmb(); /* See comment in pmd_install() */
-
 	spin_lock(&mm->page_table_lock);
 	if (!p4d_present(*p4d)) {
 		mm_inc_nr_puds(mm);
+		smp_wmb(); /* See comment in pmd_install() */
 		p4d_populate(mm, p4d, new);
-	} else {
+	} else	/* Another has populated it */
 		pud_free(mm, new);
-	}
 	spin_unlock(&mm->page_table_lock);
 	return 0;
 }
-
 #endif /* __PAGETABLE_PUD_FOLDED */
 
 #ifndef __PAGETABLE_PMD_FOLDED
@@ -7407,13 +7520,12 @@ int __pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address)
 	if (!new)
 		return -ENOMEM;
 
-	smp_wmb(); /* See comment in pmd_install() */
-
 	ptl = pud_lock(mm, pud);
 	if (!pud_present(*pud)) {
 		mm_inc_nr_pmds(mm);
+		smp_wmb(); /* See comment in pmd_install() */
 		pud_populate(mm, pud, new);
-	} else { /* Another has populated it */
+	} else {	/* Another has populated it */
 		pmd_free(mm, new);
 	}
 	spin_unlock(ptl);
@@ -8193,9 +8305,4 @@ pmd_t *pmd_off(struct mm_struct *mm, unsigned long va)
 {
 	BUG_ON(mm->lazy_repl_enabled);
 	return pmd_offset(pud_offset(p4d_offset(pgd_offset(mm, va), va), va), va);
-}
-
-pmd_t *pmd_off_k(unsigned long va)
-{
-	return pmd_offset(pud_offset(p4d_offset(pgd_offset_k(va), va), va), va);
 }

@@ -329,6 +329,7 @@ map_ldt_struct(struct mm_struct *mm, struct ldt_struct *ldt, int slot)
 	sanity_check_ldt_mapping(mm);
 
 	is_vmalloc = is_vmalloc_addr(ldt->entries);
+
 	nr_pages = DIV_ROUND_UP(ldt->nr_entries * LDT_ENTRY_SIZE, PAGE_SIZE);
 
 	for (i = 0; i < nr_pages; i++) {

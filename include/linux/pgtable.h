@@ -164,7 +164,10 @@ static inline pgd_t *pgd_offset_pgd(pgd_t *pgd, unsigned long address)
  */
 extern pmd_t *pmd_off(struct mm_struct *mm, unsigned long va);
 
-extern pmd_t *pmd_off_k(unsigned long va);
+static inline pmd_t *pmd_off_k(unsigned long va)
+{
+	return pmd_offset(pud_offset(p4d_offset(pgd_offset_k(va), va), va), va);
+}
 
 static inline pte_t *virt_to_kpte(unsigned long vaddr)
 {

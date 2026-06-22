@@ -1904,7 +1904,6 @@ int copy_huge_pmd(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 		pte_free(dst_mm, pgtable);
 		goto out_unlock;
 	}
-
 	/*
 	 * When page table lock is held, the huge zero pmd should not be
 	 * under splitting since we don't split the page itself, only pmd to
@@ -1934,7 +1933,6 @@ int copy_huge_pmd(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 		__split_huge_pmd(src_vma, src_pmd, addr, false);
 		return -EAGAIN;
 	}
-
 	add_mm_counter(dst_mm, MM_ANONPAGES, HPAGE_PMD_NR);
 out_zero_page:
 	mm_inc_nr_ptes(dst_mm);
@@ -2594,13 +2592,14 @@ int change_huge_pmd(struct mmu_gather *tlb, struct vm_area_struct *vma,
 		 */
 		if (is_huge_zero_pmd(*pmd))
 			goto unlock;
+
 		if (pmd_protnone(*pmd))
 			goto unlock;
+
 		if (!folio_can_map_prot_numa(pmd_folio(*pmd), vma,
 					     vma_is_single_threaded_private(vma)))
 			goto unlock;
 	}
-
 	/*
 	 * In case prot_numa, we are under mmap_read_lock(mm). It's critical
 	 * to not clear pmd intermittently to avoid race with MADV_DONTNEED
@@ -2623,6 +2622,7 @@ int change_huge_pmd(struct mmu_gather *tlb, struct vm_area_struct *vma,
 	 * dirty/young flags set by hardware.
 	 */
 	oldpmd = pmdp_invalidate_ad(vma, addr, pmd);
+
 	entry = pmd_modify(oldpmd, newprot);
 	if (uffd_wp)
 		entry = pmd_mkuffd_wp(entry);
@@ -3173,7 +3173,6 @@ static void __split_huge_pmd_locked(struct vm_area_struct *vma, pmd_t *pmd,
 	 * This's critical for some architectures (Power).
 	 */
 	pgtable = pgtable_trans_huge_withdraw(mm, pmd);
-
 	pmd_populate(mm, &_pmd, pgtable);
 
 	pte = pte_offset_map(&_pmd, haddr);
@@ -3308,10 +3307,7 @@ void __split_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
 				haddr + HPAGE_PMD_SIZE);
 	mmu_notifier_invalidate_range_start(&range);
 	ptl = pmd_lock(mm, pmd);
-
-
 	split_huge_pmd_locked(vma, range.start, pmd, freeze);
-
 	spin_unlock(ptl);
 	mmu_notifier_invalidate_range_end(&range);
 }
@@ -4947,21 +4943,19 @@ void remove_migration_pmd(struct page_vma_mapped_walk *pvmw, struct page *new)
 	unsigned long haddr = address & HPAGE_PMD_MASK;
 	pmd_t pmde;
 	softleaf_t entry;
-	pmd_t pmdval;
 
 	if (!(pvmw->pmd && !pvmw->pte))
 		return;
 
-	pmdval = *pvmw->pmd;
-	entry = softleaf_from_pmd(pmdval);
+	entry = softleaf_from_pmd(*pvmw->pmd);
 	folio_get(folio);
 	pmde = folio_mk_pmd(folio, READ_ONCE(vma->vm_page_prot));
 
-	if (pmd_swp_soft_dirty(pmdval))
+	if (pmd_swp_soft_dirty(*pvmw->pmd))
 		pmde = pmd_mksoft_dirty(pmde);
 	if (softleaf_is_migration_write(entry))
 		pmde = pmd_mkwrite(pmde, vma);
-	if (pmd_swp_uffd_wp(pmdval))
+	if (pmd_swp_uffd_wp(*pvmw->pmd))
 		pmde = pmd_mkuffd_wp(pmde);
 	if (!softleaf_is_migration_young(entry))
 		pmde = pmd_mkold(pmde);
@@ -4980,9 +4974,9 @@ void remove_migration_pmd(struct page_vma_mapped_walk *pvmw, struct page *new)
 							page_to_pfn(new));
 		pmde = swp_entry_to_pmd(entry);
 
-		if (pmd_swp_soft_dirty(pmdval))
+		if (pmd_swp_soft_dirty(*pvmw->pmd))
 			pmde = pmd_swp_mksoft_dirty(pmde);
-		if (pmd_swp_uffd_wp(pmdval))
+		if (pmd_swp_uffd_wp(*pvmw->pmd))
 			pmde = pmd_swp_mkuffd_wp(pmde);
 	}
 
