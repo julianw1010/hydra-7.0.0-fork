@@ -3319,7 +3319,7 @@ void __split_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
 void split_huge_pmd_address(struct vm_area_struct *vma, unsigned long address,
 		bool freeze)
 {
-	pmd_t *pmd = mm_find_pmd(vma->vm_mm, vma, address);
+	pmd_t *pmd = mm_find_pmd(vma->vm_mm, address);
 
 	if (!pmd)
 		return;

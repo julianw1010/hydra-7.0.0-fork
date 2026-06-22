@@ -59,6 +59,8 @@
 #include <linux/unwind_deferred.h>
 #include <linux/kvm_types.h>
 
+#include <linux/hydra_util.h>
+
 #include "internal.h"
 
 #include <asm/irq_regs.h>
@@ -8419,7 +8421,7 @@ static u64 perf_get_pgtable_size(struct mm_struct *mm, unsigned long addr)
 	pmd_t *pmdp, pmd;
 	pte_t *ptep, pte;
 
-	pgdp = pgd_offset(mm, addr);
+	pgdp = hydra_pgd_offset_search(mm, addr);
 	pgd = READ_ONCE(*pgdp);
 	if (pgd_none(pgd))
 		return 0;

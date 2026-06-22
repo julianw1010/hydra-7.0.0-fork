@@ -943,10 +943,9 @@ static inline enum scan_result check_pmd_state(pmd_t *pmd)
 }
 
 static enum scan_result find_pmd_or_thp_or_none(struct mm_struct *mm,
-		struct vm_area_struct *vma,
 		unsigned long address, pmd_t **pmd)
 {
-	*pmd = mm_find_pmd(mm, vma, address);
+	*pmd = mm_find_pmd(mm, address);
 	if (!*pmd)
 		return SCAN_NO_PTE_TABLE;
 
@@ -954,11 +953,10 @@ static enum scan_result find_pmd_or_thp_or_none(struct mm_struct *mm,
 }
 
 static enum scan_result check_pmd_still_valid(struct mm_struct *mm,
-		struct vm_area_struct *vma,
 		unsigned long address, pmd_t *pmd)
 {
 	pmd_t *new_pmd;
-	enum scan_result result = find_pmd_or_thp_or_none(mm, vma, address, &new_pmd);
+	enum scan_result result = find_pmd_or_thp_or_none(mm, address, &new_pmd);
 
 	if (result != SCAN_SUCCEED)
 		return result;
@@ -1112,7 +1110,7 @@ static enum scan_result collapse_huge_page(struct mm_struct *mm, unsigned long a
 		goto out_nolock;
 	}
 
-	result = find_pmd_or_thp_or_none(mm, vma, address, &pmd);
+	result = find_pmd_or_thp_or_none(mm, address, &pmd);
 	if (result != SCAN_SUCCEED) {
 		mmap_read_unlock(mm);
 		goto out_nolock;
@@ -1145,7 +1143,7 @@ static enum scan_result collapse_huge_page(struct mm_struct *mm, unsigned long a
 		goto out_up_write;
 	/* check if the pmd is still valid */
 	vma_start_write(vma);
-	result = check_pmd_still_valid(mm, vma, address, pmd);
+	result = check_pmd_still_valid(mm, address, pmd);
 	if (result != SCAN_SUCCEED)
 		goto out_up_write;
 
@@ -1249,7 +1247,7 @@ static enum scan_result hpage_collapse_scan_pmd(struct mm_struct *mm,
 
 	VM_BUG_ON(start_addr & ~HPAGE_PMD_MASK);
 
-	result = find_pmd_or_thp_or_none(mm, vma, start_addr, &pmd);
+	result = find_pmd_or_thp_or_none(mm, start_addr, &pmd);
 	if (result != SCAN_SUCCEED)
 		goto out;
 
@@ -1488,7 +1486,7 @@ static enum scan_result try_collapse_pte_mapped_thp(struct mm_struct *mm, unsign
 		return SCAN_VMA_CHECK;
 
 	/* Fast check before locking page if already PMD-mapped */
-	result = find_pmd_or_thp_or_none(mm, vma, haddr, &pmd);
+	result = find_pmd_or_thp_or_none(mm, haddr, &pmd);
 	if (result == SCAN_PMD_MAPPED)
 		return result;
 
@@ -1516,7 +1514,7 @@ static enum scan_result try_collapse_pte_mapped_thp(struct mm_struct *mm, unsign
 		goto drop_folio;
 	}
 
-	result = find_pmd_or_thp_or_none(mm, vma, haddr, &pmd);
+	result = find_pmd_or_thp_or_none(mm, haddr, &pmd);
 	switch (result) {
 	case SCAN_SUCCEED:
 		break;
@@ -1761,7 +1759,7 @@ static void retract_page_tables(struct address_space *mapping, pgoff_t pgoff)
 			continue;
 
 		mm = vma->vm_mm;
-		if (find_pmd_or_thp_or_none(mm, vma, addr, &pmd) != SCAN_SUCCEED)
+		if (find_pmd_or_thp_or_none(mm, addr, &pmd) != SCAN_SUCCEED)
 			continue;
 
 		if (hpage_collapse_test_exit(mm))

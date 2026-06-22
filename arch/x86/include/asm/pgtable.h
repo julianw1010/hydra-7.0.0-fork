@@ -1249,6 +1249,12 @@ extern int ptep_test_and_clear_young(struct vm_area_struct *vma,
 extern int ptep_clear_flush_young(struct vm_area_struct *vma,
 				  unsigned long address, pte_t *ptep);
 
+pte_t pgtable_repl_ptep_get_and_clear(struct mm_struct *mm, pte_t *ptep);
+void pgtable_repl_ptep_set_wrprotect(struct mm_struct *mm, unsigned long addr, pte_t *ptep);
+pmd_t pgtable_repl_pmdp_huge_get_and_clear(struct mm_struct *mm, pmd_t *pmdp);
+void pgtable_repl_pmdp_set_wrprotect(struct mm_struct *mm, unsigned long addr, pmd_t *pmdp);
+pmd_t hydra_pmdp_establish(pmd_t *pmdp, pmd_t pmd);
+
 #define __HAVE_ARCH_PTEP_GET_AND_CLEAR
 static inline pte_t ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
 				       pte_t *ptep)
@@ -1724,15 +1730,10 @@ void pgtable_repl_set_pte(pte_t *ptep, pte_t pteval);
 pte_t pgtable_repl_get_pte(pte_t *ptep);
 void pgtable_repl_set_pte_at(struct mm_struct *mm, unsigned long addr, pte_t *ptep, pte_t pteval);
 
-pte_t pgtable_repl_ptep_get_and_clear(struct mm_struct *mm, pte_t *ptep);
-void pgtable_repl_ptep_set_wrprotect(struct mm_struct *mm, unsigned long addr, pte_t *ptep);
-pmd_t pgtable_repl_pmdp_huge_get_and_clear(struct mm_struct *mm, pmd_t *pmdp);
-void pgtable_repl_pmdp_set_wrprotect(struct mm_struct *mm, unsigned long addr, pmd_t *pmdp);
 int pgtable_repl_ptep_test_and_clear_young(struct vm_area_struct *vma, unsigned long addr, pte_t *ptep);
 int pgtable_repl_pmdp_test_and_clear_young(struct vm_area_struct *vma, unsigned long addr, pmd_t *pmdp);
 
 pmd_t hydra_get_pmd(pmd_t *pmdp);
-pmd_t hydra_pmdp_establish(pmd_t *pmdp, pmd_t pmd);
 
 void pgd_dtor(pgd_t *pgd);
 

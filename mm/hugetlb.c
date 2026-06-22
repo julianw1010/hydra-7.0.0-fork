@@ -7057,18 +7057,14 @@ pte_t *huge_pte_alloc(struct mm_struct *mm, struct vm_area_struct *vma,
  * table.
  */
 pte_t *huge_pte_offset(struct mm_struct *mm,
-		       unsigned long addr, unsigned long sz,
-		       struct vm_area_struct *vma)
+		       unsigned long addr, unsigned long sz)
 {
 	pgd_t *pgd;
 	p4d_t *p4d;
 	pud_t *pud;
 	pmd_t *pmd;
 
-	if (mm->lazy_repl_enabled && !vma)
-		BUG();
-	pgd = vma ? hydra_pgd_offset(mm, addr, vma->master_pgd_node)
-		  : pgd_offset(mm, addr);
+	pgd = hydra_pgd_offset_search(mm, addr);
 	if (!pgd_present(*pgd))
 		return NULL;
 	p4d = p4d_offset(pgd, addr);

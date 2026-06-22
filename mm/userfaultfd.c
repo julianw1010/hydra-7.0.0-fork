@@ -1826,7 +1826,7 @@ ssize_t move_pages(struct userfaultfd_ctx *ctx, unsigned long dst_start,
 		 * transparent huge PUD. If file-backed support is added,
 		 * that case would need to be handled here.
 		 */
-		src_pmd = mm_find_pmd(mm, src_vma, src_addr);
+		src_pmd = mm_find_pmd(mm, src_addr);
 		if (unlikely(!src_pmd)) {
 			if (!(mode & UFFDIO_MOVE_MODE_ALLOW_SRC_HOLES)) {
 				err = -ENOENT;
