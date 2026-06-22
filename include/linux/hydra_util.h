@@ -99,7 +99,6 @@ struct hydra_cache_head {
 	atomic64_t hits;
 	atomic64_t misses;
 	atomic64_t returns;
-	atomic64_t evictions;
 } ____cacheline_aligned_in_smp;
 
 extern struct hydra_cache_head hydra_cache[NUMA_NODE_COUNT];

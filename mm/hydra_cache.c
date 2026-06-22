@@ -12,7 +12,6 @@ struct hydra_cache_head hydra_cache[NUMA_NODE_COUNT] = {
 		.hits		= ATOMIC64_INIT(0),
 		.misses		= ATOMIC64_INIT(0),
 		.returns	= ATOMIC64_INIT(0),
-		.evictions	= ATOMIC64_INIT(0),
 	}
 };
 

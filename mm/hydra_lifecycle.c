@@ -86,24 +86,8 @@ static long kernel_set_pgtblreplpolicy(int mode, const unsigned long __user *nma
 	return hydra_enable_replication(current->mm);
 }
 
-static int kernel_get_pgtblreplpolicy(int __user *policy,
-				      unsigned long __user *nmask,
-				      unsigned long maxnode,
-				      unsigned long addr,
-				      unsigned long flags)
-{
-	return 0;
-}
-
 SYSCALL_DEFINE3(set_pgtblreplpolicy, int, mode, const unsigned long __user *, nmask,
 		unsigned long, maxnode)
 {
 	return kernel_set_pgtblreplpolicy(mode, nmask, maxnode);
-}
-
-SYSCALL_DEFINE5(get_pgtblreplpolicy, int __user *, policy,
-		unsigned long __user *, nmask, unsigned long, maxnode,
-		unsigned long, addr, unsigned long, flags)
-{
-	return kernel_get_pgtblreplpolicy(policy, nmask, maxnode, addr, flags);
 }

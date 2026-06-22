@@ -372,18 +372,3 @@ native_only:
 		return old;
 	}
 }
-
-void hydra_set_pud(pud_t *pudp, pud_t pud)
-{
-	native_set_pud(pudp, pud);
-}
-
-void hydra_set_p4d(p4d_t *p4dp, p4d_t p4d)
-{
-	native_set_p4d(p4dp, p4d);
-}
-
-void hydra_set_pgd(pgd_t *pgdp, pgd_t pgd)
-{
-	native_set_pgd(pgdp, pgd);
-}

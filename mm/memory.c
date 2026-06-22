@@ -8189,12 +8189,6 @@ void vma_pgtable_walk_end(struct vm_area_struct *vma)
 		hugetlb_vma_unlock_read(vma);
 }
 
-static int __init hydra_stats_proc_init(void)
-{
-	return 0;
-}
-late_initcall(hydra_stats_proc_init);
-
 pmd_t *pmd_off(struct mm_struct *mm, unsigned long va)
 {
 	BUG_ON(mm->lazy_repl_enabled);

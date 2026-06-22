@@ -1737,9 +1737,6 @@ pmd_t hydra_get_pmd(pmd_t *pmdp);
 void pgd_dtor(pgd_t *pgd);
 
 void hydra_set_pmd(pmd_t *pmdp, pmd_t pmd);
-void hydra_set_pud(pud_t *pudp, pud_t pud);
-void hydra_set_p4d(p4d_t *p4dp, p4d_t p4d);
-void hydra_set_pgd(pgd_t *pgdp, pgd_t pgd);
 
 #endif	/* __ASSEMBLER__ */
 
