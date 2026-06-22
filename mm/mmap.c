@@ -560,43 +560,6 @@ unsigned long do_mmap(struct file *file, unsigned long addr,
 	}
 
 	addr = mmap_region(file, addr, len, vm_flags, pgoff, uf);
-	if (!IS_ERR_VALUE(addr) && mm->lazy_repl_enabled) {
-		unsigned long vma_end = addr + len;
-		unsigned long pud_addr;
-
-		for (pud_addr = addr & ~(PUD_SIZE - 1);
-		     pud_addr < vma_end;
-		     pud_addr += PUD_SIZE) {
-
-			unsigned long pud_end = pud_addr + PUD_SIZE;
-			long needed = -1;
-			struct vm_area_struct *near, *piece;
-
-			near = find_vma(mm, pud_addr);
-			while (near && near->vm_start < pud_end) {
-				if (near->vm_end <= addr || near->vm_start >= vma_end) {
-					needed = near->master_pgd_node;
-					break;
-				}
-				near = find_vma(mm, near->vm_end);
-			}
-
-			if (needed < 0)
-				continue;
-
-			piece = find_vma(mm, max(pud_addr, addr));
-			if (!piece || piece->vm_start > max(pud_addr, addr))
-				continue;
-
-			if (piece->vm_end > pud_end && pud_end < vma_end) {
-				VMA_ITERATOR(vmi, mm, pud_end);
-				if (__split_vma(&vmi, piece, pud_end, 0))
-					break;
-			}
-
-			piece->master_pgd_node = needed;
-		}
-	}
 	if (!IS_ERR_VALUE(addr) &&
 	    ((vm_flags & VM_LOCKED) ||
 	     (flags & (MAP_POPULATE | MAP_NONBLOCK)) == MAP_POPULATE))
