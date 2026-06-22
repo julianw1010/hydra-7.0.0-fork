@@ -15,7 +15,6 @@ struct hydra_cache_head hydra_cache[NUMA_NODE_COUNT] = {
 		.evictions	= ATOMIC64_INIT(0),
 	}
 };
-EXPORT_SYMBOL(hydra_cache);
 
 bool hydra_cache_push(struct page *page, int node)
 {
@@ -39,7 +38,6 @@ bool hydra_cache_push(struct page *page, int node)
 
 	return true;
 }
-EXPORT_SYMBOL(hydra_cache_push);
 
 struct page *hydra_cache_pop(int node)
 {
@@ -72,7 +70,6 @@ struct page *hydra_cache_pop(int node)
 
 	return page;
 }
-EXPORT_SYMBOL(hydra_cache_pop);
 
 int hydra_cache_drain_node(int node)
 {
@@ -107,7 +104,6 @@ int hydra_cache_drain_node(int node)
 
 	return freed;
 }
-EXPORT_SYMBOL(hydra_cache_drain_node);
 
 int hydra_cache_drain_all(void)
 {
@@ -119,7 +115,6 @@ int hydra_cache_drain_all(void)
 
 	return total;
 }
-EXPORT_SYMBOL(hydra_cache_drain_all);
 
 void hydra_free_replica_chain(struct page *primary, int level)
 {

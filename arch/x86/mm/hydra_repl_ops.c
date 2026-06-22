@@ -388,4 +388,3 @@ pmd_t hydra_get_pmd(pmd_t *pmdp)
 	return __pmd(repl_get_entry(pmdp));
 }
 
-EXPORT_SYMBOL(hydra_get_pmd);

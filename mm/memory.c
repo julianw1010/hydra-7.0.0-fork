@@ -108,7 +108,6 @@ static int find_pte_in_master(struct mm_struct *mm, unsigned long address, int m
 #if defined(CONFIG_X86) && defined(CONFIG_SYSCTL)
 int sysctl_hydra_repl_order __read_mostly = 9;
 int sysctl_hydra_auto_enable __read_mostly = 0;
-EXPORT_SYMBOL(sysctl_hydra_auto_enable);
 #endif
 
 static int __init hydra_auto_enable_setup(char *str)
