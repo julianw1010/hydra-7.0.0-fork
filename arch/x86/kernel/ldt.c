@@ -329,7 +329,6 @@ map_ldt_struct(struct mm_struct *mm, struct ldt_struct *ldt, int slot)
 	sanity_check_ldt_mapping(mm);
 
 	is_vmalloc = is_vmalloc_addr(ldt->entries);
-
 	nr_pages = DIV_ROUND_UP(ldt->nr_entries * LDT_ENTRY_SIZE, PAGE_SIZE);
 
 	for (i = 0; i < nr_pages; i++) {
@@ -338,18 +337,11 @@ map_ldt_struct(struct mm_struct *mm, struct ldt_struct *ldt, int slot)
 		unsigned long pfn;
 		pgprot_t pte_prot;
 		pte_t pte, *ptep;
+		int n, end_n;
 
 		va = (unsigned long)ldt_slot_va(slot) + offset;
 		pfn = is_vmalloc ? vmalloc_to_pfn(src) :
 			page_to_pfn(virt_to_page(src));
-		/*
-		 * Treat the PTI LDT range as a *userspace* range.
-		 * get_locked_pte() will allocate all needed pagetables
-		 * and account for them in this mm.
-		 */
-		ptep = get_locked_pte(mm, va, &ptl, NULL);
-		if (!ptep)
-			return -ENOMEM;
 		/*
 		 * Map it RO so the easy to find address is not a primary
 		 * target via some kernel interface which misses a
@@ -359,8 +351,23 @@ map_ldt_struct(struct mm_struct *mm, struct ldt_struct *ldt, int slot)
 		/* Filter out unsuppored __PAGE_KERNEL* bits: */
 		pgprot_val(pte_prot) &= __supported_pte_mask;
 		pte = pfn_pte(pfn, pte_prot);
-		set_pte_at(mm, va, ptep, pte);
-		pte_unmap_unlock(ptep, ptl);
+
+		end_n = mm->lazy_repl_enabled ? NUMA_NODE_COUNT : 1;
+		for (n = 0; n < end_n; n++) {
+			if (mm->lazy_repl_enabled && !mm->repl_pgd[n])
+				continue;
+			/*
+			 * Treat the PTI LDT range as a *userspace* range.
+			 * get_locked_pte() will allocate all needed pagetables
+			 * and account for them in this mm.
+			 */
+			ptep = get_locked_pte(mm, va, &ptl, n);
+			if (!ptep)
+				return -ENOMEM;
+
+			set_pte_at(mm, va, ptep, pte);
+			pte_unmap_unlock(ptep, ptl);
+		}
 	}
 
 	/* Propagate LDT mapping to the user page-table */
@@ -387,13 +394,22 @@ static void unmap_ldt_struct(struct mm_struct *mm, struct ldt_struct *ldt)
 	for (i = 0; i < nr_pages; i++) {
 		unsigned long offset = i << PAGE_SHIFT;
 		spinlock_t *ptl;
-		pte_t *ptep;
+		int n, end_n;
 
 		va = (unsigned long)ldt_slot_va(ldt->slot) + offset;
-		ptep = get_locked_pte(mm, va, &ptl, NULL);
-		if (!WARN_ON_ONCE(!ptep)) {
-			pte_clear(mm, va, ptep);
-			pte_unmap_unlock(ptep, ptl);
+
+		end_n = mm->lazy_repl_enabled ? NUMA_NODE_COUNT : 1;
+		for (n = 0; n < end_n; n++) {
+			pte_t *ptep;
+
+			if (mm->lazy_repl_enabled && !mm->repl_pgd[n])
+				continue;
+
+			ptep = get_locked_pte(mm, va, &ptl, n);
+			if (!WARN_ON_ONCE(!ptep)) {
+				pte_clear(mm, va, ptep);
+				pte_unmap_unlock(ptep, ptl);
+			}
 		}
 	}
 
