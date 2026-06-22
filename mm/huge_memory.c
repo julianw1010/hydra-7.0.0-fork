@@ -3174,24 +3174,6 @@ static void __split_huge_pmd_locked(struct vm_area_struct *vma, pmd_t *pmd,
 	 */
 	pgtable = pgtable_trans_huge_withdraw(mm, pmd);
 
-	if (mm->lazy_repl_enabled && virt_addr_valid(pmd)) {
-		int pmd_node = page_to_nid(virt_to_page(pmd));
-		int pte_node = page_to_nid(pgtable);
-		if (pmd_node != pte_node) {
-			struct page *new_pte = repl_alloc_page_on_node(pmd_node, 0);
-			if (new_pte) {
-				if (pagetable_pte_ctor(mm, page_ptdesc(new_pte))) {
-					new_pte->pt_owner_mm = mm;
-					pagetable_dtor(page_ptdesc(pgtable));
-					__free_page(pgtable);
-					pgtable = new_pte;
-				} else {
-					__free_page(new_pte);
-				}
-			}
-		}
-	}
-
 	pmd_populate(mm, &_pmd, pgtable);
 
 	pte = pte_offset_map(&_pmd, haddr);
