@@ -469,7 +469,6 @@ static pmd_t *mm_alloc_pmd(struct mm_struct *mm, struct vm_area_struct *vma, uns
 	pgd_t *pgd;
 	p4d_t *p4d;
 	pud_t *pud;
-	pmd_t *ret;
 
 	pgd = hydra_pgd_offset(mm, address, vma->master_pgd_node);
 	p4d = p4d_alloc(mm, pgd, address);

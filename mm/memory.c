@@ -2112,11 +2112,10 @@ void unmap_page_range(struct mmu_gather *tlb,
 {
 	pgd_t *pgd;
 	unsigned long next;
-	struct mm_struct *mm = vma->vm_mm;
 
 	BUG_ON(addr >= end);
 	tlb_start_vma(tlb, vma);
-	pgd = hydra_pgd_offset(mm, addr, vma->master_pgd_node);
+	pgd = hydra_pgd_offset(vma->vm_mm, addr, vma->master_pgd_node);
 	do {
 		next = pgd_addr_end(addr, end);
 		if (pgd_none_or_clear_bad(pgd))
@@ -6957,7 +6956,7 @@ static int hydra_repl_fault(struct vm_fault *vmf, int fault_node)
  * The mmap_lock may have been released depending on flags and our return value.
  * See filemap_fault() and __folio_lock_or_retry().
  */
-static int handle_pte_fault(struct vm_fault *vmf, int has_recursed)
+static vm_fault_t handle_pte_fault(struct vm_fault *vmf, int has_recursed)
 {
 	pte_t entry;
 	int fault_node;
@@ -7089,7 +7088,7 @@ unlock:
  * the result, the mmap_lock is not held on exit.  See filemap_fault()
  * and __folio_lock_or_retry().
  */
-int __handle_mm_fault(struct vm_area_struct *vma,
+vm_fault_t __handle_mm_fault(struct vm_area_struct *vma,
 		unsigned long address, unsigned int flags, int use_master)
 {
 	struct vm_fault vmf = {
@@ -7106,7 +7105,7 @@ int __handle_mm_fault(struct vm_area_struct *vma,
 	p4d_t *p4d;
 	size_t node_to_use;
 	size_t owner_node = vma->master_pgd_node;
-	int ret;
+	vm_fault_t ret;
 	bool on_replica;
 
 	if (use_master) {
@@ -7120,29 +7119,23 @@ int __handle_mm_fault(struct vm_area_struct *vma,
 	pgd = hydra_pgd_offset(mm, address, node_to_use);
 
 	p4d = p4d_alloc(mm, pgd, address);
-	if (!p4d) {
-		ret = VM_FAULT_OOM;
-		goto out_restore;
-	}
+	if (!p4d)
+		return VM_FAULT_OOM;
 
 	vmf.pud = pud_alloc(mm, p4d, address);
-	if (!vmf.pud) {
-		ret = VM_FAULT_OOM;
-		goto out_restore;
-	}
-
+	if (!vmf.pud)
+		return VM_FAULT_OOM;
 retry_pud:
 	if (pud_none(*vmf.pud) &&
 	    thp_vma_allowable_order(vma, vm_flags, TVA_PAGEFAULT, PUD_ORDER)) {
 		ret = create_huge_pud(&vmf);
 		if (!(ret & VM_FAULT_FALLBACK))
-			goto out_restore;
+			return ret;
 	} else {
 		pud_t orig_pud = *vmf.pud;
 
 		barrier();
 		if (pud_trans_huge(orig_pud)) {
-
 			/*
 			 * TODO once we support anonymous PUDs: NUMA case and
 			 * FAULT_FLAG_UNSHARE handling.
@@ -7150,11 +7143,10 @@ retry_pud:
 			if ((flags & FAULT_FLAG_WRITE) && !pud_write(orig_pud)) {
 				ret = wp_huge_pud(&vmf, orig_pud);
 				if (!(ret & VM_FAULT_FALLBACK))
-					goto out_restore;
+					return ret;
 			} else {
 				huge_pud_set_accessed(&vmf, orig_pud);
-				ret = 0;
-				goto out_restore;
+				return 0;
 			}
 		}
 	}
@@ -7165,10 +7157,8 @@ retry_pud:
 		vmf.pmd = pmd_alloc(mm, vmf.pud, address);
 	}
 
-	if (!vmf.pmd) {
-		ret = VM_FAULT_OOM;
-		goto out_restore;
-	}
+	if (!vmf.pmd)
+		return VM_FAULT_OOM;
 
 	/* Huge pud page fault raced with pmd_alloc? */
 	if (pud_trans_unstable(vmf.pud))
@@ -7180,25 +7170,21 @@ retry_pud:
 		if (ret & VM_FAULT_FALLBACK)
 			goto fallback;
 		else
-			goto out_restore;
+			return ret;
 	}
 
 	vmf.orig_pmd = pmdp_get_lockless(vmf.pmd);
-
 	if (pmd_none(vmf.orig_pmd))
 		goto fallback;
 
 	if (unlikely(!pmd_present(vmf.orig_pmd))) {
-		if (pmd_is_device_private_entry(vmf.orig_pmd)) {
-			ret = do_huge_pmd_device_private(&vmf);
-			goto out_restore;
-		}
+		if (pmd_is_device_private_entry(vmf.orig_pmd))
+			return do_huge_pmd_device_private(&vmf);
+
 		if (pmd_is_migration_entry(vmf.orig_pmd))
 			pmd_migration_entry_wait(mm, vmf.pmd);
-		ret = 0;
-		goto out_restore;
+		return 0;
 	}
-
 	if (pmd_trans_huge(vmf.orig_pmd)) {
 		if (on_replica) {
 			bool needs_master;
@@ -7208,19 +7194,18 @@ retry_pud:
 
 			if (!pmd_trans_huge(vmf.orig_pmd)) {
 				spin_unlock(vmf.ptl);
-				ret = 0;
-				goto out_restore;
+				return 0;
 			}
 
 			needs_master = false;
 			if (pmd_protnone(vmf.orig_pmd) && vma_is_accessible(vma))
 				needs_master = true;
-			if ((flags & (FAULT_FLAG_WRITE | FAULT_FLAG_UNSHARE)) &&
+			if ((flags & (FAULT_FLAG_WRITE|FAULT_FLAG_UNSHARE)) &&
 			    !pmd_write(vmf.orig_pmd))
 				needs_master = true;
 
 			if (needs_master) {
-				int master_ret;
+				vm_fault_t master_ret;
 
 				spin_unlock(vmf.ptl);
 				master_ret = __handle_mm_fault(vma, address, flags, 1);
@@ -7233,21 +7218,17 @@ retry_pud:
 			if (!huge_pmd_set_accessed(&vmf))
 				fix_spurious_fault(&vmf, PGTABLE_LEVEL_PMD);
 			spin_unlock(vmf.ptl);
-			ret = 0;
-			goto out_restore;
+			return 0;
 		}
 
+		if (pmd_protnone(vmf.orig_pmd) && vma_is_accessible(vma))
+			return do_huge_pmd_numa_page(&vmf);
 
-		if (pmd_protnone(vmf.orig_pmd) && vma_is_accessible(vma)) {
-			ret = do_huge_pmd_numa_page(&vmf);
-			goto out_restore;
-		}
-
-		if ((flags & (FAULT_FLAG_WRITE | FAULT_FLAG_UNSHARE)) &&
+		if ((flags & (FAULT_FLAG_WRITE|FAULT_FLAG_UNSHARE)) &&
 		    !pmd_write(vmf.orig_pmd)) {
 			ret = wp_huge_pmd(&vmf);
 			if (!(ret & VM_FAULT_FALLBACK))
-				goto out_restore;
+				return ret;
 		} else {
 			vmf.ptl = pmd_lock(mm, vmf.pmd);
 			if (!huge_pmd_set_accessed(&vmf))
@@ -7258,10 +7239,7 @@ retry_pud:
 	}
 
 fallback:
-	ret = handle_pte_fault(&vmf, use_master);
-
-out_restore:
-	return ret;
+	return handle_pte_fault(&vmf, use_master);
 }
 
 /**

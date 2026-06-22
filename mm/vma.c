@@ -504,7 +504,7 @@ void unmap_region(struct unmap_desc *unmap)
  * has already been checked or doesn't make sense to fail.
  * VMA Iterator will point to the original VMA.
  */
-__must_check int
+static __must_check int
 __split_vma(struct vma_iterator *vmi, struct vm_area_struct *vma,
 	    unsigned long addr, int new_below)
 {

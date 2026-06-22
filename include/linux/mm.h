@@ -2898,7 +2898,7 @@ struct vm_area_struct *lock_mm_and_find_vma(struct mm_struct *mm,
 		unsigned long address, struct pt_regs *regs);
 
 #ifdef CONFIG_MMU
-int __handle_mm_fault(struct vm_area_struct *vma, unsigned long address,
+vm_fault_t __handle_mm_fault(struct vm_area_struct *vma, unsigned long address,
 		unsigned int flags, int use_master);
 extern vm_fault_t handle_mm_fault(struct vm_area_struct *vma,
 				  unsigned long address, unsigned int flags,
@@ -3204,6 +3204,7 @@ static inline pud_t pud_mkspecial(pud_t pud)
 
 extern pte_t *get_locked_pte(struct mm_struct *mm, unsigned long addr,
 			     spinlock_t **ptl, int node);
+
 #ifdef __PAGETABLE_P4D_FOLDED
 static inline int __p4d_alloc(struct mm_struct *mm, pgd_t *pgd,
 						unsigned long address)

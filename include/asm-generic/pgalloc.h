@@ -222,8 +222,10 @@ static inline pud_t *pud_alloc_one_noprof(struct mm_struct *mm, unsigned long ad
 
 static inline void __pud_free(struct mm_struct *mm, pud_t *pud)
 {
+	struct page *page = virt_to_page(pud);
+
 	BUG_ON((unsigned long)pud & (PAGE_SIZE-1));
-	hydra_dtor_free_page(virt_to_page(pud));
+	hydra_dtor_free_page(page);
 }
 
 #ifndef __HAVE_ARCH_PUD_FREE
@@ -270,8 +272,10 @@ static inline p4d_t *p4d_alloc_one_noprof(struct mm_struct *mm, unsigned long ad
 
 static inline void __p4d_free(struct mm_struct *mm, p4d_t *p4d)
 {
+	struct page *page = virt_to_page(p4d);
+
 	BUG_ON((unsigned long)p4d & (PAGE_SIZE-1));
-	hydra_dtor_free_page(virt_to_page(p4d));
+	hydra_dtor_free_page(page);
 }
 
 #ifndef __HAVE_ARCH_P4D_FREE

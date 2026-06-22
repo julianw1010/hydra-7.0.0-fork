@@ -297,8 +297,10 @@ static void sanity_check_ldt_mapping(struct mm_struct *mm)
 		}
 	} else {
 		pgd = pgd_offset(mm, LDT_BASE_ADDR);
-		do_sanity_check(mm, pgd->pgd != 0,
-				kernel_to_user_pgdp(pgd)->pgd != 0);
+		bool had_kernel = (pgd->pgd != 0);
+		bool had_user   = (kernel_to_user_pgdp(pgd)->pgd != 0);
+
+		do_sanity_check(mm, had_kernel, had_user);
 	}
 }
 

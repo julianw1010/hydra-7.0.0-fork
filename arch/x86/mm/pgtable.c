@@ -332,6 +332,12 @@ static inline pgd_t *_pgd_alloc(struct mm_struct *mm)
 	struct page *page;
 	int order = pgd_allocation_order();
 
+	/*
+	 * PTI and Xen need a whole page for the PAE PGD
+	 * even though the hardware only needs 32 bytes.
+	 *
+	 * For simplicity, allocate a page for all users.
+	 */
 	page = hydra_alloc_pt_page(mm, GFP_PGTABLE_USER, order);
 	if (!page)
 		return NULL;
