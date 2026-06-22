@@ -3280,27 +3280,6 @@ void __split_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
 {
 	spinlock_t *ptl;
 	struct mmu_notifier_range range;
-	struct mm_struct *mm = vma->vm_mm;
-	unsigned long haddr = address & HPAGE_PMD_MASK;
-
-	if (mm->lazy_repl_enabled) {
-		pgd_t *pgd;
-		p4d_t *p4d;
-		pud_t *pud;
-		pmd_t *master_pmd;
-
-		pgd = pgd_offset_node(mm, haddr, vma->master_pgd_node);
-		if (pgd_none(*pgd) || pgd_bad(*pgd))
-			return;
-		p4d = p4d_offset(pgd, haddr);
-		if (p4d_none(*p4d) || p4d_bad(*p4d))
-			return;
-		pud = pud_offset(p4d, haddr);
-		if (pud_none(*pud) || pud_bad(*pud))
-			return;
-		master_pmd = pmd_offset(pud, haddr);
-		pmd = master_pmd;
-	}
 
 	mmu_notifier_range_init(&range, MMU_NOTIFY_CLEAR, 0, vma->vm_mm,
 				address & HPAGE_PMD_MASK,
@@ -3315,7 +3294,7 @@ void __split_huge_pmd(struct vm_area_struct *vma, pmd_t *pmd,
 void split_huge_pmd_address(struct vm_area_struct *vma, unsigned long address,
 		bool freeze)
 {
-	pmd_t *pmd = mm_find_pmd(vma->vm_mm, address);
+	pmd_t *pmd = mm_find_pmd(vma->vm_mm, address, vma->master_pgd_node);
 
 	if (!pmd)
 		return;

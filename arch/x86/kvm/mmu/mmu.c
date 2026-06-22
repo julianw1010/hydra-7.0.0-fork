@@ -3265,7 +3265,8 @@ static int host_pfn_mapping_level(struct kvm *kvm, gfn_t gfn,
 	 * value) and then p*d_offset() walks into the target huge page instead
 	 * of the old page table (sees the new value).
 	 */
-	pgd = READ_ONCE(*hydra_pgd_offset_search(kvm->mm, hva));
+	BUG_ON(kvm->mm->lazy_repl_enabled);
+	pgd = READ_ONCE(*pgd_offset(kvm->mm, hva));
 	if (pgd_none(pgd))
 		goto out;
 

@@ -882,14 +882,15 @@ unsigned long page_address_in_vma(const struct folio *folio,
  * NULL if it doesn't exist.  No guarantees / checks on what the pmd_t*
  * represents.
  */
-pmd_t *mm_find_pmd(struct mm_struct *mm, unsigned long address)
+pmd_t *mm_find_pmd(struct mm_struct *mm, unsigned long address,
+		   unsigned long master_node)
 {
 	pgd_t *pgd;
 	p4d_t *p4d;
 	pud_t *pud;
 	pmd_t *pmd = NULL;
 
-	pgd = hydra_pgd_offset_search(mm, address);
+	pgd = hydra_pgd_offset(mm, address, master_node);
 	if (!pgd_present(*pgd))
 		goto out;
 

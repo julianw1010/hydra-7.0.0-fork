@@ -564,7 +564,8 @@ static bool is_bad_page_map_ratelimited(void)
 	return false;
 }
 
-static void __print_bad_page_map_pgtable(struct mm_struct *mm, unsigned long addr)
+static void __print_bad_page_map_pgtable(struct mm_struct *mm, unsigned long addr,
+					 unsigned long master_node)
 {
 	unsigned long long pgdv, p4dv, pudv, pmdv;
 	p4d_t p4d, *p4dp;
@@ -576,7 +577,7 @@ static void __print_bad_page_map_pgtable(struct mm_struct *mm, unsigned long add
 	 * Although this looks like a fully lockless pgtable walk, it is not:
 	 * see locking requirements for print_bad_page_map().
 	 */
-	pgdp = hydra_pgd_offset_search(mm, addr);
+	pgdp = hydra_pgd_offset(mm, addr, master_node);
 	pgdv = pgd_val(*pgdp);
 
 	if (!pgd_present(*pgdp) || pgd_leaf(*pgdp)) {
@@ -643,7 +644,7 @@ static void print_bad_page_map(struct vm_area_struct *vma,
 
 	pr_alert("BUG: Bad page map in process %s  %s:%08llx", current->comm,
 		 pgtable_level_to_str(level), entry);
-	__print_bad_page_map_pgtable(vma->vm_mm, addr);
+	__print_bad_page_map_pgtable(vma->vm_mm, addr, vma->master_pgd_node);
 	if (page)
 		dump_page(page, "bad page map");
 	pr_alert("addr:%px vm_flags:%08lx anon_vma:%px mapping:%px index:%lx\n",

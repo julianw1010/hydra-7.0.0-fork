@@ -1043,6 +1043,7 @@ static int get_gate_page(struct mm_struct *mm, unsigned long address,
 	/* user gate pages are read-only */
 	if (gup_flags & FOLL_WRITE)
 		return -EFAULT;
+	BUG_ON(mm->lazy_repl_enabled);
 	pgd = pgd_offset(mm, address);
 	if (pgd_none(*pgd))
 		return -EFAULT;

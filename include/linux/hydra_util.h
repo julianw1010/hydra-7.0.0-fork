@@ -34,26 +34,6 @@ static inline pgd_t *hydra_pgd_offset(struct mm_struct *mm,
 	return pgd_offset(mm, address);
 }
 
-static inline pgd_t *hydra_pgd_offset_search(struct mm_struct *mm,
-					      unsigned long address)
-{
-	int n;
-
-	if (!mm->lazy_repl_enabled)
-		return pgd_offset(mm, address);
-
-	for (n = 0; n < NUMA_NODE_COUNT; n++) {
-		pgd_t *pgd;
-
-		if (!mm->repl_pgd[n])
-			continue;
-		pgd = pgd_offset_pgd(mm->repl_pgd[n], address);
-		if (!pgd_none(*pgd))
-			return pgd;
-	}
-	return pgd_offset(mm, address);
-}
-
 static inline pmd_t *hydra_walk_to_pmd(struct mm_struct *mm,
 				       unsigned long address, int node)
 {
