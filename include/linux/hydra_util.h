@@ -15,7 +15,6 @@
 #define HYDRA_LEVEL_PTE 0
 #define HYDRA_LEVEL_PMD 1
 
-void migrate_pgtables_to_node(struct mm_struct *mm, pgd_t *pgd, int target_node);
 void hydra_reload_cr3(void *info);
 int hydra_enable_replication(struct mm_struct *mm);
 
