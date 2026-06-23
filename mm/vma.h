@@ -267,6 +267,9 @@ static inline pgoff_t vma_pgoff_offset(struct vm_area_struct *vma,
 		.master_pgd_node = vma_->master_pgd_node,	\
 	}
 
+void hydra_fixup_pud_nodes(struct mm_struct *mm,
+			   struct vm_area_struct *vma);
+
 #ifdef CONFIG_DEBUG_VM_MAPLE_TREE
 void validate_mm(struct mm_struct *mm);
 #else
