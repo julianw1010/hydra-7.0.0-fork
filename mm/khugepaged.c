@@ -1218,6 +1218,8 @@ static enum scan_result collapse_huge_page(struct mm_struct *mm, unsigned long a
 	__folio_mark_uptodate(folio);
 	pgtable = pmd_pgtable(_pmd);
 
+	hydra_free_replica_chain(pgtable, HYDRA_LEVEL_PTE);
+
 	spin_lock(pmd_ptl);
 	BUG_ON(!pmd_none(*pmd));
 	pgtable_trans_huge_deposit(mm, pmd, pgtable);
@@ -1665,6 +1667,7 @@ static enum scan_result try_collapse_pte_mapped_thp(struct mm_struct *mm, unsign
 
 	mm_dec_nr_ptes(mm);
 	page_table_check_pte_clear_range(mm, haddr, pgt_pmd);
+	hydra_free_replica_chain(pmd_pgtable(pgt_pmd), HYDRA_LEVEL_PTE);
 	pte_free_defer(mm, pmd_pgtable(pgt_pmd));
 
 maybe_install_pmd:
@@ -1825,6 +1828,7 @@ drop_pml:
 		if (success) {
 			mm_dec_nr_ptes(mm);
 			page_table_check_pte_clear_range(mm, addr, pgt_pmd);
+			hydra_free_replica_chain(pmd_pgtable(pgt_pmd), HYDRA_LEVEL_PTE);
 			pte_free_defer(mm, pmd_pgtable(pgt_pmd));
 		}
 	}

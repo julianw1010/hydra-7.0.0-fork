@@ -6657,21 +6657,6 @@ unlock_new:
 		if (pmd_present(repl_val) && pmd_trans_huge(repl_val))
 			continue;
 
-		if (pmd_present(repl_val) && !pmd_trans_huge(repl_val) && !pmd_bad(repl_val)) {
-			pte_t *pte_base = (pte_t *)pmd_page_vaddr(repl_val);
-			struct page *pte_page = virt_to_page(pte_base);
-			struct mm_struct *owner_mm = pte_page->pt_owner_mm;
-
-			native_set_pmd(&repl_pmd_base[i], __pmd(0));
-
-			if (owner_mm)
-				mm_dec_nr_ptes(owner_mm);
-			hydra_break_chain(pte_page);
-			pagetable_dtor(page_ptdesc(pte_page));
-			if (!hydra_try_return_page(pte_page))
-				__free_page(pte_page);
-		}
-
 		native_set_pmd(&repl_pmd_base[i], master_val);
 
 		copied++;

@@ -36,7 +36,6 @@ static void hydra_free_tlb_page(struct mmu_gather *tlb, struct page *page)
 
 void ___pte_free_tlb(struct mmu_gather *tlb, struct page *pte)
 {
-	hydra_free_replica_chain(pte, HYDRA_LEVEL_PTE);
 	paravirt_release_pte(page_to_pfn(pte));
 	hydra_free_tlb_page(tlb, pte);
 }
@@ -46,7 +45,6 @@ void ___pmd_free_tlb(struct mmu_gather *tlb, pmd_t *pmd)
 {
 	struct page *page = virt_to_page(pmd);
 
-	hydra_free_replica_chain(page, HYDRA_LEVEL_PMD);
 	paravirt_release_pmd(__pa(pmd) >> PAGE_SHIFT);
 	/*
 	 * NOTE! For PAE, any changes to the top page-directory-pointer-table

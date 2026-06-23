@@ -119,7 +119,6 @@ static inline pgtable_t pte_alloc_one_noprof(struct mm_struct *mm, pmd_t *pmd)
  */
 static inline void pte_free(struct mm_struct *mm, struct page *pte_page)
 {
-	hydra_free_replica_chain(pte_page, HYDRA_LEVEL_PTE);
 	hydra_dtor_free_page(pte_page);
 }
 
@@ -171,7 +170,6 @@ static inline void pmd_free(struct mm_struct *mm, pmd_t *pmd)
 	struct page *page = virt_to_page(pmd);
 
 	BUG_ON((unsigned long)pmd & (PAGE_SIZE-1));
-	hydra_free_replica_chain(page, HYDRA_LEVEL_PMD);
 	hydra_dtor_free_page(page);
 }
 #endif

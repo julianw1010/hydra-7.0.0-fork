@@ -1274,66 +1274,6 @@ unsigned long tear_down_vmas(struct mm_struct *mm, struct vma_iterator *vmi,
 	return nr_accounted;
 }
 
-static void hydra_unlink_all_replica_chains(struct mm_struct *mm)
-{
-	unsigned long addr, next_pgd, next_p4d, next_pud, next_pmd;
-	pgd_t *pgd;
-	p4d_t *p4d;
-	pud_t *pud;
-	pmd_t *pmd;
-	pte_t *pte;
-	int node;
-
-	for (node = 0; node < NUMA_NODE_COUNT; node++) {
-		if (!mm->repl_pgd[node])
-			continue;
-
-		addr = 0;
-		pgd = mm->repl_pgd[node];
-
-		do {
-			next_pgd = pgd_addr_end(addr, TASK_SIZE);
-			if (pgd_none(*pgd) || pgd_bad(*pgd))
-				goto next_pgd;
-
-			p4d = p4d_offset(pgd, addr);
-			do {
-				next_p4d = p4d_addr_end(addr, next_pgd);
-				if (p4d_none(*p4d) || p4d_bad(*p4d))
-					goto next_p4d;
-
-				pud = pud_offset(p4d, addr);
-				do {
-					next_pud = pud_addr_end(addr, next_p4d);
-					if (pud_none(*pud) || pud_bad(*pud))
-						goto next_pud;
-
-					pmd = pmd_offset(pud, addr);
-					hydra_break_chain(virt_to_page(pmd));
-
-					do {
-						next_pmd = pmd_addr_end(addr, next_pud);
-						if (pmd_none(*pmd) || pmd_trans_huge(*pmd) || pmd_bad(*pmd))
-							goto next_pmd;
-
-						pte = pte_offset_kernel(pmd, addr);
-						hydra_break_chain(virt_to_page(pte));
-
-next_pmd:
-						addr = next_pmd;
-					} while (pmd++, addr != next_pud);
-next_pud:
-					addr = next_pud;
-				} while (pud++, addr != next_p4d);
-next_p4d:
-				addr = next_p4d;
-			} while (p4d++, addr != next_pgd);
-next_pgd:
-			addr = next_pgd;
-		} while (pgd++, addr != TASK_SIZE);
-	}
-}
-
 /* Release all mmaps. */
 void exit_mmap(struct mm_struct *mm)
 {
@@ -1363,9 +1303,6 @@ void exit_mmap(struct mm_struct *mm)
 	/* update_hiwater_rss(mm) here? but nobody should be looking */
 	/* Use ULONG_MAX here to ensure all VMAs in the mm are unmapped */
 	unmap_vmas(&tlb, &unmap);
-	if (mm->lazy_repl_enabled) {
-		hydra_unlink_all_replica_chains(mm);
-	}
 	mmap_read_unlock(mm);
 
 	/*
