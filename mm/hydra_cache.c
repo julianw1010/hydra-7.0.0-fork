@@ -115,19 +115,6 @@ int hydra_cache_drain_all(void)
 	return total;
 }
 
-/*
- * This function is ONLY called from the three pmdp_collapse_flush sites in
- * mm/khugepaged.c. THP collapse is the only operation that creates orphan
- * replica pages — pages unreachable from any top-down PGD walk but still
- * linked in the master PTE page's replica chain. pmdp_collapse_flush clears
- * all PMD entries (master + replicas) atomically, leaving replica PTE pages
- * findable only through the chain. We free them here immediately, so orphans
- * never persist. All other teardown (munmap, exit) uses hydra_break_chain_range
- * followed by per-PGD top-down walks, which works because no orphans exist.
- *
- * If you add a new pmdp_collapse_flush call site, you must call this function
- * on the old PTE page before freeing it, or replica pages will leak.
- */
 void hydra_free_replica_chain(struct page *primary, int level)
 {
 	struct page *cur_page, *next_page;
