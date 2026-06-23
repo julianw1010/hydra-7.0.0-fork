@@ -1945,6 +1945,12 @@ static unsigned long do_mremap(struct vma_remap_struct *vrm)
 out:
 	failed = IS_ERR_VALUE(res);
 
+	if (!failed && mm->lazy_repl_enabled) {
+		struct vm_area_struct *new_vma = find_vma(mm, res);
+		if (new_vma)
+			hydra_fixup_pud_nodes(mm, new_vma);
+	}
+
 	if (vrm->mmap_locked)
 		mmap_write_unlock(mm);
 

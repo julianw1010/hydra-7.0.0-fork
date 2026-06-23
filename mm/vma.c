@@ -2986,6 +2986,7 @@ out:
 		mm->locked_vm += (len >> PAGE_SHIFT);
 	if (pgtable_supports_soft_dirty())
 		vm_flags_set(vma, VM_SOFTDIRTY);
+	hydra_fixup_pud_nodes(mm, vma);
 	return 0;
 
 mas_store_fail:
@@ -3167,6 +3168,10 @@ int expand_upwards(struct vm_area_struct *vma, unsigned long address)
 		return -ENOMEM;
 	address += PAGE_SIZE;
 
+	if (mm->lazy_repl_enabled &&
+	    ((address - 1) & PUD_MASK) != ((vma->vm_end - 1) & PUD_MASK))
+		return -ENOMEM;
+
 	/* Enforce stack_guard_gap */
 	gap_addr = address + stack_guard_gap;
 
@@ -3249,6 +3254,10 @@ int expand_downwards(struct vm_area_struct *vma, unsigned long address)
 	address &= PAGE_MASK;
 	if (address < mmap_min_addr || address < FIRST_USER_ADDRESS)
 		return -EPERM;
+
+	if (mm->lazy_repl_enabled &&
+	    (address & PUD_MASK) != (vma->vm_start & PUD_MASK))
+		return -ENOMEM;
 
 	/* Enforce stack_guard_gap */
 	prev = vma_prev(&vmi);
