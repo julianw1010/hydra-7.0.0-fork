@@ -392,6 +392,69 @@ void free_pgd_range(struct mmu_gather *tlb,
 	free_pgd_range_base(tlb, addr, end, floor, ceiling, tlb->mm->pgd);
 }
 
+static void hydra_break_chain_range(struct mm_struct *mm,
+				    unsigned long start, unsigned long end)
+{
+	unsigned long addr, next_pgd, next_p4d, next_pud, next_pmd;
+	pgd_t *pgd;
+	p4d_t *p4d;
+	pud_t *pud;
+	pmd_t *pmd;
+	pte_t *pte;
+	int node;
+
+	for (node = 0; node < NUMA_NODE_COUNT; node++) {
+		if (!mm->repl_pgd[node])
+			continue;
+
+		addr = start;
+		pgd = pgd_offset_pgd(mm->repl_pgd[node], addr);
+
+		do {
+			next_pgd = pgd_addr_end(addr, end);
+			if (pgd_none(*pgd) || pgd_bad(*pgd))
+				goto next_pgd_bc;
+
+			p4d = p4d_offset(pgd, addr);
+			do {
+				next_p4d = p4d_addr_end(addr, next_pgd);
+				if (p4d_none(*p4d) || p4d_bad(*p4d))
+					goto next_p4d_bc;
+
+				pud = pud_offset(p4d, addr);
+				do {
+					next_pud = pud_addr_end(addr, next_p4d);
+					if (pud_none(*pud) || pud_bad(*pud))
+						goto next_pud_bc;
+
+					pmd = pmd_offset(pud, addr);
+					hydra_break_chain(virt_to_page(pmd));
+
+					do {
+						next_pmd = pmd_addr_end(addr, next_pud);
+						if (pmd_none(*pmd) ||
+						    pmd_trans_huge(*pmd) ||
+						    pmd_bad(*pmd))
+							goto next_pmd_bc;
+
+						pte = pte_offset_kernel(pmd, addr);
+						hydra_break_chain(virt_to_page(pte));
+
+next_pmd_bc:
+						addr = next_pmd;
+					} while (pmd++, addr != next_pud);
+next_pud_bc:
+					addr = next_pud;
+				} while (pud++, addr != next_p4d);
+next_p4d_bc:
+				addr = next_p4d;
+			} while (p4d++, addr != next_pgd);
+next_pgd_bc:
+			addr = next_pgd;
+		} while (pgd++, addr != end);
+	}
+}
+
 /**
  * free_pgtables() - Free a range of page tables
  * @tlb: The mmu gather
@@ -453,7 +516,10 @@ void free_pgtables(struct mmu_gather *tlb, struct unmap_desc *unmap)
 
 		if (tlb->mm->lazy_repl_enabled) {
 			int i;
+			hydra_break_chain_range(tlb->mm, addr, vma->vm_end);
 			for (i = 0; i < NUMA_NODE_COUNT; i++) {
+				if (!tlb->mm->repl_pgd[i])
+					continue;
 				free_pgd_range_base(tlb, addr, vma->vm_end,
 					unmap->pg_start,
 					next ? next->vm_start : unmap->pg_end,
