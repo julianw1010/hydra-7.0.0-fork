@@ -160,10 +160,12 @@ arch_get_unmapped_area(struct file *filp, unsigned long addr, unsigned long len,
 		info.align_offset += get_align_bits();
 	}
 
-	if (mm->lazy_repl_enabled && info.align_mask < ((1UL << 30) - 1))
+	if (mm->lazy_repl_enabled && info.align_mask < ((1UL << 30) - 1)) {
 		info.align_mask = (1UL << 30) - 1;
+		info.align_offset = 0;
+	}
 
-	return vm_unmapped_area(&info);
+	return vm_unmapped_area(&info);	
 }
 
 unsigned long
@@ -228,10 +230,13 @@ get_unmapped_area:
 		info.align_offset += get_align_bits();
 	}
 
-	if (mm->lazy_repl_enabled && info.align_mask < ((1UL << 30) - 1))
+	if (mm->lazy_repl_enabled && info.align_mask < ((1UL << 30) - 1)) {
 		info.align_mask = (1UL << 30) - 1;
+		info.align_offset = 0;
+	}
 
 	addr = vm_unmapped_area(&info);
+
 	if (!(addr & ~PAGE_MASK))
 		return addr;
 	VM_BUG_ON(addr != -ENOMEM);

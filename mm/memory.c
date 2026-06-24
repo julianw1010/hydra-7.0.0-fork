@@ -330,6 +330,8 @@ static void free_pgd_range_base(struct mmu_gather *tlb,
 	pgd_t *pgd;
 	unsigned long next;
 
+	HYDRA_STAT_INC(free_pgd_range_base_calls);
+
 	/*
 	 * The next few lines have given us lots of grief...
 	 *
@@ -403,6 +405,8 @@ static void hydra_break_chain_range(struct mm_struct *mm,
 	pte_t *pte;
 	int node;
 
+	HYDRA_STAT_INC(break_chain_range_calls);
+
 	for (node = 0; node < NUMA_NODE_COUNT; node++) {
 		if (!mm->repl_pgd[node])
 			continue;
@@ -429,15 +433,13 @@ static void hydra_break_chain_range(struct mm_struct *mm,
 
 					pmd = pmd_offset(pud, addr);
 					{
-						/*
-						 * Only break chains when the full PUD is
-						 * being torn down. Partial teardowns share
-						 * the PMD page with other live VMAs whose
-						 * chains must survive.
-						 */
 						unsigned long pud_base = addr & PUD_MASK;
-						if (start <= pud_base && end >= pud_base + PUD_SIZE)
+						if (start <= pud_base && end >= pud_base + PUD_SIZE) {
 							hydra_break_chain(virt_to_page(pmd));
+							HYDRA_STAT_INC(break_chain_range_pmd_breaks);
+						} else {
+							HYDRA_STAT_INC(break_chain_range_skipped_partial);
+						}
 					}
 
 					do {
@@ -449,10 +451,13 @@ static void hydra_break_chain_range(struct mm_struct *mm,
 
 						pte = pte_offset_kernel(pmd, addr);
 						{
-							/* Same rationale as PMD-level above. */
 							unsigned long pud_base = addr & PUD_MASK;
-							if (start <= pud_base && end >= pud_base + PUD_SIZE)
+							if (start <= pud_base && end >= pud_base + PUD_SIZE) {
 								hydra_break_chain(virt_to_page(pte));
+								HYDRA_STAT_INC(break_chain_range_pte_breaks);
+							} else {
+								HYDRA_STAT_INC(break_chain_range_skipped_partial);
+							}
 						}
 next_pmd_bc:
 						addr = next_pmd;
@@ -530,6 +535,7 @@ void free_pgtables(struct mmu_gather *tlb, struct unmap_desc *unmap)
 
 		if (tlb->mm->lazy_repl_enabled) {
 			int i;
+			HYDRA_STAT_INC(free_pgtables_repl_calls);
 			hydra_break_chain_range(tlb->mm, addr, vma->vm_end);
 			for (i = 0; i < NUMA_NODE_COUNT; i++) {
 				if (!tlb->mm->repl_pgd[i])
@@ -540,6 +546,7 @@ void free_pgtables(struct mmu_gather *tlb, struct unmap_desc *unmap)
 					tlb->mm->repl_pgd[i]);
 			}
 		} else {
+			HYDRA_STAT_INC(free_pgtables_non_repl_calls);
 			free_pgd_range(tlb, addr, vma->vm_end, unmap->pg_start,
 				       next ? next->vm_start : unmap->pg_end);
 		}
@@ -6433,6 +6440,9 @@ int hydra_alloc_replica_pmd(struct mm_struct *mm, pud_t *pud,
 		return -ENOMEM;
 
 	new_page = virt_to_page(new);
+
+	HYDRA_STAT_INC(alloc_replica_pmd_calls);
+
 	smp_wmb();
 
 	ptl = pud_lock(mm, pud);
@@ -6452,9 +6462,12 @@ int hydra_alloc_replica_pmd(struct mm_struct *mm, pud_t *pud,
 				}
 			}
 		}
-		if (master_pmd_page && master_pmd_page != new_page)
+		if (master_pmd_page && master_pmd_page != new_page) {
 			hydra_link_page_to_replica_chain(master_pmd_page, new_page);
+			HYDRA_STAT_INC(alloc_replica_pmd_linked);
+		}
 	} else {
+		HYDRA_STAT_INC(alloc_replica_pmd_raced);
 		pagetable_dtor(virt_to_ptdesc(new));
 
 		if (!hydra_try_return_page(new_page))
@@ -6743,6 +6756,9 @@ static int hydra_repl_try_huge_pmd(struct mm_struct *mm,
 	if (ret == -ENOMEM)
 		return VM_FAULT_OOM;
 
+	if (ret == 0)
+		HYDRA_STAT_INC(repl_fault_huge_pmd);
+
 	return ret == 0 ? 0 : -EAGAIN;
 }
 
@@ -6999,10 +7015,14 @@ static int hydra_repl_fault(struct vm_fault *vmf, int fault_node)
 	BUG_ON(!mm->lazy_repl_enabled);
 	BUG_ON(repl_node == master_node);
 
+	HYDRA_STAT_INC(repl_fault_calls);
+
 	ret = hydra_repl_try_huge_pmd(mm, vmf->vma, vmf->address, vmf->flags,
 				      repl_node, master_node);
 	if (ret != -EAGAIN)
 		return ret;
+
+	HYDRA_STAT_INC(repl_fault_pte);
 
 	return hydra_repl_try_pte(vmf, repl_node, master_node);
 }
