@@ -588,6 +588,8 @@ static inline void mm_free_pgd(struct mm_struct *mm)
 {
 	int i;
 
+	BUG_ON(atomic_long_read(&mm->pgtables_bytes) != 0);
+
 	for (i = 0; i < NUMA_NODE_COUNT; i++) {
 		if (mm->repl_pgd[i] && mm->repl_pgd[i] != mm->pgd) {
 			pgd_free(mm, mm->repl_pgd[i]);

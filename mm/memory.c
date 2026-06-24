@@ -428,7 +428,17 @@ static void hydra_break_chain_range(struct mm_struct *mm,
 						goto next_pud_bc;
 
 					pmd = pmd_offset(pud, addr);
-					hydra_break_chain(virt_to_page(pmd));
+					{
+						/*
+						 * Only break chains when the full PUD is
+						 * being torn down. Partial teardowns share
+						 * the PMD page with other live VMAs whose
+						 * chains must survive.
+						 */
+						unsigned long pud_base = addr & PUD_MASK;
+						if (start <= pud_base && end >= pud_base + PUD_SIZE)
+							hydra_break_chain(virt_to_page(pmd));
+					}
 
 					do {
 						next_pmd = pmd_addr_end(addr, next_pud);
@@ -438,8 +448,12 @@ static void hydra_break_chain_range(struct mm_struct *mm,
 							goto next_pmd_bc;
 
 						pte = pte_offset_kernel(pmd, addr);
-						hydra_break_chain(virt_to_page(pte));
-
+						{
+							/* Same rationale as PMD-level above. */
+							unsigned long pud_base = addr & PUD_MASK;
+							if (start <= pud_base && end >= pud_base + PUD_SIZE)
+								hydra_break_chain(virt_to_page(pte));
+						}
 next_pmd_bc:
 						addr = next_pmd;
 					} while (pmd++, addr != next_pud);
@@ -7203,7 +7217,17 @@ retry_pud:
 		}
 	}
 
-	if (mm->lazy_repl_enabled) {
+	/*
+	 * On a replica node, defer to the master-first fault path
+	 * unless the master PMD page already exists. This prevents
+	 * hydra_alloc_replica_pmd from self-resolving when the
+	 * master tree hasn't been populated yet.
+	 */
+	if (on_replica &&
+	    HYDRA_WALK_BAD(hydra_walk_to_pmd(mm, address, owner_node)))
+		return hydra_repl_fault(&vmf, node_to_use);
+
+	if (mm->lazy_repl_enabled && on_replica) {
 		vmf.pmd = hydra_repl_pmd_alloc(mm, vmf.pud, address, owner_node);
 	} else {
 		vmf.pmd = pmd_alloc(mm, vmf.pud, address);
@@ -7555,8 +7579,12 @@ int __pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address)
 		mm_inc_nr_pmds(mm);
 		smp_wmb(); /* See comment in pmd_install() */
 		pud_populate(mm, pud, new);
-	} else {	/* Another has populated it */
-		pmd_free(mm, new);
+	} else {
+		/* Return page to Hydra cache if possible before freeing. */
+		pagetable_dtor(virt_to_ptdesc(new));
+
+		if (!hydra_try_return_page(virt_to_page(new)))
+			__free_page(virt_to_page(new));
 	}
 	spin_unlock(ptl);
 	return 0;
