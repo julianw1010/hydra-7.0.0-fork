@@ -7,7 +7,6 @@
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
 #include <asm/tlbflush.h>
-#include "internal.h"
 
 static int hydra_find_master_pmd(struct mm_struct *mm, unsigned long address,
 				 int master_node, pmd_t **pmdpp,
@@ -642,4 +641,80 @@ int hydra_repl_fault(struct vm_fault *vmf, int fault_node)
 		return ret;
 
 	return hydra_repl_try_pte(vmf, repl_node, master_node);
+}
+
+void hydra_break_chain_range(struct mm_struct *mm,
+				    unsigned long start, unsigned long end)
+{
+	unsigned long addr, next_pgd, next_p4d, next_pud, next_pmd;
+	pgd_t *pgd;
+	p4d_t *p4d;
+	pud_t *pud;
+	pmd_t *pmd;
+	pte_t *pte;
+	int node;
+
+	for (node = 0; node < NUMA_NODE_COUNT; node++) {
+		if (!mm->repl_pgd[node])
+			continue;
+
+		addr = start;
+		pgd = pgd_offset_pgd(mm->repl_pgd[node], addr);
+
+		do {
+			next_pgd = pgd_addr_end(addr, end);
+			if (pgd_none(*pgd) || pgd_bad(*pgd))
+				goto next_pgd_bc;
+
+			p4d = p4d_offset(pgd, addr);
+			do {
+				next_p4d = p4d_addr_end(addr, next_pgd);
+				if (p4d_none(*p4d) || p4d_bad(*p4d))
+					goto next_p4d_bc;
+
+				pud = pud_offset(p4d, addr);
+				do {
+					next_pud = pud_addr_end(addr, next_p4d);
+					if (pud_none(*pud) || pud_bad(*pud))
+						goto next_pud_bc;
+
+					pmd = pmd_offset(pud, addr);
+					{
+						/*
+						 * Only break chains when the full PUD is
+						 * being torn down. Partial teardowns share
+						 * the PMD page with other live VMAs whose
+						 * chains must survive.
+						 */
+						unsigned long pud_base = addr & PUD_MASK;
+						if (start <= pud_base && end >= pud_base + PUD_SIZE)
+							hydra_break_chain(virt_to_page(pmd));
+					}
+
+					do {
+						next_pmd = pmd_addr_end(addr, next_pud);
+						if (pmd_none(*pmd) ||
+						    pmd_trans_huge(*pmd) ||
+						    pmd_bad(*pmd))
+							goto next_pmd_bc;
+
+						pte = pte_offset_kernel(pmd, addr);
+						{
+							unsigned long pud_base = addr & PUD_MASK;
+							if (start <= pud_base && end >= pud_base + PUD_SIZE)
+								hydra_break_chain(virt_to_page(pte));
+						}
+next_pmd_bc:
+						addr = next_pmd;
+					} while (pmd++, addr != next_pud);
+next_pud_bc:
+					addr = next_pud;
+				} while (pud++, addr != next_p4d);
+next_p4d_bc:
+				addr = next_p4d;
+			} while (p4d++, addr != next_pgd);
+next_pgd_bc:
+			addr = next_pgd;
+		} while (pgd++, addr != end);
+	}
 }

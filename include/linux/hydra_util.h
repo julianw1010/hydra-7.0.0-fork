@@ -18,6 +18,8 @@
 void hydra_reload_cr3(void *info);
 int hydra_enable_replication(struct mm_struct *mm);
 int hydra_repl_fault(struct vm_fault *vmf, int fault_node);
+void hydra_break_chain_range(struct mm_struct *mm,
+			     unsigned long start, unsigned long end);
 
 #define HYDRA_WALK_PGD_NONE ((void *)0x1)
 #define HYDRA_WALK_P4D_NONE ((void *)0x11)

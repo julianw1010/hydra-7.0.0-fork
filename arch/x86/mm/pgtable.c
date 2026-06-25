@@ -12,6 +12,7 @@
 #include <linux/hydra_util.h>
 #include <linux/mempolicy.h>
 #include <linux/slab.h>
+#include "mm_internal.h"
 
 #ifdef CONFIG_DYNAMIC_PHYSICAL_MASK
 phys_addr_t physical_mask __ro_after_init = (1ULL << __PHYSICAL_MASK_SHIFT) - 1;
@@ -103,7 +104,7 @@ struct mm_struct *pgd_page_get_mm(struct page *page)
 	return page_ptdesc(page)->pt_mm;
 }
 
-static void pgd_ctor(struct mm_struct *mm, pgd_t *pgd)
+void pgd_ctor(struct mm_struct *mm, pgd_t *pgd)
 {
 	/* PAE preallocates all its PMDs.  No cloning needed. */
 	if (!IS_ENABLED(CONFIG_X86_PAE))
@@ -197,7 +198,7 @@ static void free_pmds(struct mm_struct *mm, pmd_t *pmds[], int count)
 		}
 }
 
-static int preallocate_pmds(struct mm_struct *mm, pmd_t *pmds[], int count)
+int preallocate_pmds(struct mm_struct *mm, pmd_t *pmds[], int count)
 {
 	int i;
 	bool failed = false;
@@ -274,7 +275,7 @@ static void pgd_mop_up_pmds(struct mm_struct *mm, pgd_t *pgdp)
 #endif
 }
 
-static void pgd_prepopulate_pmd(struct mm_struct *mm, pgd_t *pgd, pmd_t *pmds[])
+void pgd_prepopulate_pmd(struct mm_struct *mm, pgd_t *pgd, pmd_t *pmds[])
 {
 	p4d_t *p4d;
 	pud_t *pud;
@@ -869,49 +870,4 @@ void arch_check_zapped_pud(struct vm_area_struct *vma, pud_t pud)
 {
 	/* See note in arch_check_zapped_pte() */
 	VM_WARN_ON_ONCE(!(vma->vm_flags & VM_SHADOW_STACK) && pud_shstk(pud));
-}
-
-pgd_t *hydra_repl_pgd_alloc(struct mm_struct *mm, size_t nid)
-{
-	pgd_t *pgd;
-	pmd_t *pmds[PREALLOCATED_PMDS];
-	struct page *page;
-	int order = pgd_allocation_order();
-	nodemask_t nm = NODE_MASK_NONE;
-
-	if (order == 0) {
-		page = hydra_cache_pop(nid);
-		if (page)
-			goto got_page;
-	}
-
-	node_set(nid, nm);
-	page = __alloc_pages(GFP_PGTABLE_USER | __GFP_THISNODE, order, nid, &nm);
-	if (!page)
-		goto out;
-
-	page->next_replica = NULL;
-
-got_page:
-	page->pt_owner_mm = mm;
-	pgd = (pgd_t *)page_address(page);
-
-	if (PREALLOCATED_PMDS > 0) {
-		if (preallocate_pmds(mm, pmds, PREALLOCATED_PMDS) != 0)
-			goto out_free_page;
-	}
-
-	spin_lock(&pgd_lock);
-	pgd_ctor(mm, pgd);
-	pgd_prepopulate_pmd(mm, pgd, pmds);
-	spin_unlock(&pgd_lock);
-
-	return pgd;
-
-out_free_page:
-	page->pt_owner_mm = NULL;
-	if (!hydra_try_return_page(page))
-		free_pages((unsigned long)pgd, order);
-out:
-	return NULL;
 }
