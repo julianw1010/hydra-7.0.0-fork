@@ -875,9 +875,9 @@ static void hdbg_check_deposits(struct hydra_debug_state *st,
 				p4d_t *p4d;
 				pud_t *pud;
 				pmd_t *pmd;
-				struct ptdesc *ptdesc;
+				spinlock_t *ptl;
+				pgtable_t deposit_head;
 				int deposit_count = 0;
-				struct list_head *pos;
 
 				next = (addr + PMD_SIZE) & PMD_MASK;
 				if (next == 0)
@@ -900,22 +900,42 @@ static void hdbg_check_deposits(struct hydra_debug_state *st,
 				if (!virt_addr_valid(pmd))
 					continue;
 
-				ptdesc = page_ptdesc(virt_to_page(pmd));
-				list_for_each(pos, &ptdesc->pt_list)
-					deposit_count++;
+				ptl = pmd_lock(mm, pmd);
+
+				if (!pmd_trans_huge(*pmd)) {
+					spin_unlock(ptl);
+					continue;
+				}
+
+				deposit_head = pmd_huge_pte(mm, pmd);
+				if (deposit_head) {
+					struct page *dep;
+					deposit_count = 1;
+					list_for_each_entry(dep, &deposit_head->lru, lru)
+						deposit_count++;
+				}
 
 				hdbg_printf(st, "DEPOSIT\tVA=0x%lx\tNODE=%d\tPMD_ENTRY=0x%lx\tDEPOSIT_COUNT=%d\tPMD_PFN=0x%lx\tPMD_NID=%d\n",
 					    addr, node, pmd_val(*pmd), deposit_count,
 					    page_pfn_safe(pmd), page_nid_safe(pmd));
 
-				list_for_each(pos, &ptdesc->pt_list) {
-					struct ptdesc *dep = list_entry(pos, struct ptdesc, pt_list);
-					struct page *dep_page = ptdesc_page(dep);
+				if (deposit_head) {
+					struct page *dep;
+
 					hdbg_printf(st, "DEPOSIT_ENTRY\tVA=0x%lx\tNODE=%d\tDEP_PAGE=%px\tDEP_PFN=0x%lx\tDEP_NID=%d\tDEP_FROM_CACHE=%d\n",
-						    addr, node, dep_page, page_to_pfn(dep_page),
-						    page_to_nid(dep_page),
-						    PageHydraFromCache(dep_page) ? 1 : 0);
+						    addr, node, deposit_head, page_to_pfn(deposit_head),
+						    page_to_nid(deposit_head),
+						    PageHydraFromCache(deposit_head) ? 1 : 0);
+
+					list_for_each_entry(dep, &deposit_head->lru, lru) {
+						hdbg_printf(st, "DEPOSIT_ENTRY\tVA=0x%lx\tNODE=%d\tDEP_PAGE=%px\tDEP_PFN=0x%lx\tDEP_NID=%d\tDEP_FROM_CACHE=%d\n",
+							    addr, node, dep, page_to_pfn(dep),
+							    page_to_nid(dep),
+							    PageHydraFromCache(dep) ? 1 : 0);
+					}
 				}
+
+				spin_unlock(ptl);
 			}
 		}
 	}
@@ -1284,6 +1304,7 @@ static void hdbg_check_stale_replicas(struct hydra_debug_state *st,
 
 		for_each_vma(vmi, vma) {
 			unsigned long gap_start, gap_end, addr, next;
+			unsigned long check_start, check_end;
 
 			if (vma->vm_start >= range_end)
 				break;
@@ -1292,7 +1313,10 @@ static void hdbg_check_stale_replicas(struct hydra_debug_state *st,
 			gap_end = min(vma->vm_start, range_end);
 			prev_vma_end = vma->vm_end;
 
-			for (addr = gap_start & PMD_MASK; addr < gap_end; addr = next) {
+			check_start = (gap_start + PMD_SIZE - 1) & PMD_MASK;
+			check_end = gap_end & PMD_MASK;
+
+			for (addr = check_start; addr < check_end; addr = next) {
 				pgd_t *pgd;
 				p4d_t *p4d;
 				pud_t *pud;
