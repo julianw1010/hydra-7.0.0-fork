@@ -357,6 +357,9 @@ static bool move_normal_pmd(struct pagetable_move_control *pmc,
 	bool res = false;
 	pmd_t pmd;
 
+	if (mm->lazy_repl_enabled)
+		return false;
+
 	if (!arch_supports_page_table_move())
 		return false;
 	if (!uffd_supports_page_table_move(pmc))
@@ -397,7 +400,6 @@ static bool move_normal_pmd(struct pagetable_move_control *pmc,
 		spin_lock_nested(new_ptl, SINGLE_DEPTH_NESTING);
 
 	pmd = *old_pmd;
-
 	/* Racing with collapse? */
 	if (unlikely(!pmd_present(pmd) || pmd_leaf(pmd)))
 		goto out_unlock;
@@ -413,7 +415,6 @@ out_unlock:
 	if (new_ptl != old_ptl)
 		spin_unlock(new_ptl);
 	spin_unlock(old_ptl);
-
 	return res;
 }
 #else
@@ -432,6 +433,9 @@ static bool move_normal_pud(struct pagetable_move_control *pmc,
 	struct vm_area_struct *vma = pmc->old;
 	struct mm_struct *mm = vma->vm_mm;
 	pud_t pud;
+
+	if (mm->lazy_repl_enabled)
+		return false;
 
 	if (!arch_supports_page_table_move())
 		return false;
@@ -1928,12 +1932,14 @@ static unsigned long do_mremap(struct vma_remap_struct *vrm)
 
 	if (mmap_write_lock_killable(mm))
 		return -EINTR;
+
 	vrm->mmap_locked = true;
 
 	if (vrm_move_only(vrm)) {
 		res = remap_move(vrm);
 	} else {
 		vrm->vma = vma_lookup(current->mm, vrm->addr);
+
 		res = check_prep_vma(vrm);
 		if (res)
 			goto out;
@@ -1945,7 +1951,7 @@ static unsigned long do_mremap(struct vma_remap_struct *vrm)
 out:
 	failed = IS_ERR_VALUE(res);
 
-	if (!failed && mm->lazy_repl_enabled) {
+	if (!failed && mm->lazy_repl_enabled && vrm->mmap_locked) {
 		struct vm_area_struct *new_vma = find_vma(mm, res);
 		if (new_vma)
 			hydra_fixup_pud_nodes(mm, new_vma);

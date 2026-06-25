@@ -155,8 +155,15 @@ static inline void hydra_link_page_to_replica_chain(struct page *existing_page,
 		chain_len++;
 		if (cur_page == new_page)
 			goto out_unlock;
-		if (WARN_ON(page_to_nid(cur_page) == page_to_nid(new_page)))
-			goto out_unlock;
+		if (page_to_nid(cur_page) == page_to_nid(new_page)) {
+		    pr_info("HYDRA: same-NID race: existing=%px(nid=%d) new=%px(nid=%d) "
+			    "master=%px(nid=%d) chain_len=%d cpu=%d\n",
+			    cur_page, page_to_nid(cur_page),
+			    new_page, page_to_nid(new_page),
+			    existing_page, page_to_nid(existing_page),
+			    chain_len, smp_processor_id());
+		    goto out_unlock;
+		}
 		if (WARN_ON(chain_len >= NUMA_NODE_COUNT))
 			goto out_unlock;
 		cur_page = READ_ONCE(cur_page->next_replica);

@@ -449,7 +449,6 @@ static void hydra_break_chain_range(struct mm_struct *mm,
 
 						pte = pte_offset_kernel(pmd, addr);
 						{
-							/* Same rationale as PMD-level above. */
 							unsigned long pud_base = addr & PUD_MASK;
 							if (start <= pud_base && end >= pud_base + PUD_SIZE)
 								hydra_break_chain(virt_to_page(pte));
