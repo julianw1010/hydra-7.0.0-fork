@@ -28,24 +28,17 @@ static void hydra_free_tlb_page(struct mmu_gather *tlb, struct page *page)
 {
 	pagetable_dtor(page_ptdesc(page));
 
-	if (hydra_try_return_page(page)) {
-		HYDRA_STAT_INC(pte_free_tlb_returned_cache);
+	if (hydra_try_return_page(page))
 		return;
-	}
 
 	tlb_remove_ptdesc(tlb, page_ptdesc(page));
 }
 
 void ___pte_free_tlb(struct mmu_gather *tlb, struct page *pte)
 {
-	HYDRA_STAT_INC(pte_free_tlb_total);
 	paravirt_release_pte(page_to_pfn(pte));
-	if (pte->next_replica) {
-		HYDRA_STAT_INC(pte_free_tlb_had_chain);
+	if (pte->next_replica)
 		hydra_free_replica_chain(pte, HYDRA_LEVEL_PTE);
-	} else {
-		HYDRA_STAT_INC(pte_free_tlb_no_chain);
-	}
 	hydra_free_tlb_page(tlb, pte);
 }
 
@@ -54,7 +47,6 @@ void ___pmd_free_tlb(struct mmu_gather *tlb, pmd_t *pmd)
 {
 	struct page *page = virt_to_page(pmd);
 
-	HYDRA_STAT_INC(pmd_free_tlb_total);
 	paravirt_release_pmd(__pa(pmd) >> PAGE_SHIFT);
 	/*
 	 * NOTE! For PAE, any changes to the top page-directory-pointer-table
@@ -71,7 +63,6 @@ void ___pud_free_tlb(struct mmu_gather *tlb, pud_t *pud)
 {
 	struct page *page = virt_to_page(pud);
 
-	HYDRA_STAT_INC(pud_free_tlb_total);
 	paravirt_release_pud(__pa(pud) >> PAGE_SHIFT);
 	hydra_free_tlb_page(tlb, page);
 }
@@ -81,7 +72,6 @@ void ___p4d_free_tlb(struct mmu_gather *tlb, p4d_t *p4d)
 {
 	struct page *page = virt_to_page(p4d);
 
-	HYDRA_STAT_INC(p4d_free_tlb_total);
 	paravirt_release_p4d(__pa(p4d) >> PAGE_SHIFT);
 	hydra_free_tlb_page(tlb, page);
 }
@@ -359,15 +349,11 @@ static inline void _pgd_free(struct mm_struct *mm, pgd_t *pgd)
 {
 	struct page *page = virt_to_page(pgd);
 
-	HYDRA_STAT_INC(repl_pgd_free_calls);
 	page->pt_owner_mm = NULL;
 
-	if (hydra_try_return_page(page)) {
-		HYDRA_STAT_INC(repl_pgd_free_to_cache);
+	if (hydra_try_return_page(page))
 		return;
-	}
 
-	HYDRA_STAT_INC(repl_pgd_free_to_buddy);
 	__pgd_free(mm, pgd);
 }
 
@@ -893,14 +879,10 @@ pgd_t *hydra_repl_pgd_alloc(struct mm_struct *mm, size_t nid)
 	int order = pgd_allocation_order();
 	nodemask_t nm = NODE_MASK_NONE;
 
-	HYDRA_STAT_INC(repl_pgd_alloc_calls);
-
 	if (order == 0) {
 		page = hydra_cache_pop(nid);
-		if (page) {
-			HYDRA_STAT_INC(repl_pgd_alloc_cache_hit);
+		if (page)
 			goto got_page;
-		}
 	}
 
 	node_set(nid, nm);
@@ -908,7 +890,6 @@ pgd_t *hydra_repl_pgd_alloc(struct mm_struct *mm, size_t nid)
 	if (!page)
 		goto out;
 
-	HYDRA_STAT_INC(repl_pgd_alloc_buddy);
 	page->next_replica = NULL;
 
 got_page:

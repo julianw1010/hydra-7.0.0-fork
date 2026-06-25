@@ -123,12 +123,6 @@ void hydra_free_replica_chain(struct page *primary, int level)
 	if (!primary || !primary->next_replica)
 		return;
 
-	HYDRA_STAT_INC(free_replica_chain_calls);
-	if (level == HYDRA_LEVEL_PTE)
-		HYDRA_STAT_INC(free_replica_chain_pte_calls);
-	else if (level == HYDRA_LEVEL_PMD)
-		HYDRA_STAT_INC(free_replica_chain_pmd_calls);
-
 	start_page = primary;
 
 	hydra_chain_lock(primary);
@@ -152,8 +146,6 @@ void hydra_free_replica_chain(struct page *primary, int level)
 					break;
 				}
 			}
-			if (has_live_entry)
-				HYDRA_STAT_INC(free_replica_chain_live_pte_bug);
 			BUG_ON(has_live_entry);
 		}
 
@@ -167,13 +159,8 @@ void hydra_free_replica_chain(struct page *primary, int level)
 				mm_dec_nr_pmds(owner_mm);
 		}
 
-		HYDRA_STAT_INC(free_replica_chain_pages_freed);
-		if (hydra_try_return_page(cur_page)) {
-			HYDRA_STAT_INC(free_replica_chain_pages_to_cache);
-		} else {
-			HYDRA_STAT_INC(free_replica_chain_pages_to_buddy);
+		if (!hydra_try_return_page(cur_page))
 			__free_page(cur_page);
-		}
 
 		cur_page = next_page;
 	}
