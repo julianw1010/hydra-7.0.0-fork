@@ -21,10 +21,7 @@ int hydra_repl_fault(struct vm_fault *vmf, int fault_node);
 void hydra_break_chain_range(struct mm_struct *mm,
 			     unsigned long start, unsigned long end);
 
-#define HYDRA_WALK_PGD_NONE ((void *)0x1)
-#define HYDRA_WALK_P4D_NONE ((void *)0x11)
-#define HYDRA_WALK_PUD_NONE ((void *)0x21)
-#define HYDRA_WALK_PMD_NONE ((void *)0x31)
+#define HYDRA_WALK_NONE ((void *)0x1)
 
 #define HYDRA_WALK_BAD(r) (((unsigned long)(r) & 1) == 1)
 
@@ -46,15 +43,15 @@ static inline pmd_t *hydra_walk_to_pmd(struct mm_struct *mm,
 
 	pgd = pgd_offset_node(mm, address, node);
 	if (pgd_none(*pgd) || unlikely(pgd_bad(*pgd)))
-		return (pmd_t *)HYDRA_WALK_PGD_NONE;
+		return (pmd_t *)HYDRA_WALK_NONE;
 
 	p4d = p4d_offset(pgd, address);
 	if (p4d_none(*p4d) || unlikely(p4d_bad(*p4d)))
-		return (pmd_t *)HYDRA_WALK_P4D_NONE;
+		return (pmd_t *)HYDRA_WALK_NONE;
 
 	pud = pud_offset(p4d, address);
 	if (pud_none(*pud) || unlikely(pud_bad(*pud)))
-		return (pmd_t *)HYDRA_WALK_PUD_NONE;
+		return (pmd_t *)HYDRA_WALK_NONE;
 
 	return pmd_offset(pud, address);
 }
@@ -70,7 +67,7 @@ static inline pte_t *hydra_walk_to_pte(struct mm_struct *mm,
 
 	if (pmd_none(*pmd) || unlikely(pmd_bad(*pmd)) ||
 	    unlikely(pmd_trans_huge(*pmd)))
-		return (pte_t *)HYDRA_WALK_PMD_NONE;
+		return (pte_t *)HYDRA_WALK_NONE;
 
 	return pte_offset_kernel(pmd, address);
 }
