@@ -39,7 +39,7 @@ void ___pte_free_tlb(struct mmu_gather *tlb, struct page *pte)
 {
 	paravirt_release_pte(page_to_pfn(pte));
 	if (pte->next_replica)
-		hydra_free_replica_chain(pte, HYDRA_LEVEL_PTE);
+		hydra_free_replica_chain(pte);
 	hydra_free_tlb_page(tlb, pte);
 }
 

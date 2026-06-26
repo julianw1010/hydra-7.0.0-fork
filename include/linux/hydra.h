@@ -12,9 +12,6 @@
 #include <asm/pgtable.h>
 #include <asm/tlbflush.h>
 
-#define HYDRA_LEVEL_PTE 0
-#define HYDRA_LEVEL_PMD 1
-
 void hydra_reload_cr3(void *info);
 int hydra_enable_replication(struct mm_struct *mm);
 int hydra_repl_fault(struct vm_fault *vmf, int fault_node);
@@ -120,7 +117,7 @@ void hydra_link_page_to_replica_chain(struct page *existing_page,
 void hydra_break_chain(struct page *page);
 void hydra_unlink_single(struct page *anchor, struct page *target);
 
-extern void hydra_free_replica_chain(struct page *primary, int level);
+extern void hydra_free_replica_chain(struct page *primary);
 
 bool hydra_try_return_page(struct page *page);
 void hydra_dtor_free_page(struct page *page);
