@@ -178,7 +178,7 @@ static ssize_t hydra_tlbflush_opt_write(struct file *file, const char __user *ub
 	if (kstrtol(buf, 10, &val))
 		return -EINVAL;
 
-	if (val < 0 || val > 3)
+	if (val < 0 || val > 1)
 		return -EINVAL;
 
 	sysctl_hydra_tlbflush_opt = (int)val;

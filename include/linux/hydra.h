@@ -108,23 +108,6 @@ static inline int hydra_collect_repl_nodes(struct page *const ptpage,
 	return 0;
 }
 
-static inline int hydra_calculate_tlbflush_nodemask(struct page *const ptpage,
-						    nodemask_t *nodemask)
-{
-	switch (sysctl_hydra_tlbflush_opt) {
-	case 1:
-	case 2:
-		return hydra_collect_repl_nodes(ptpage, nodemask);
-	case 3:
-		if (ptpage->next_replica && ptpage->next_replica != ptpage) {
-			nodes_clear(*nodemask);
-			nodes_or(*nodemask, *nodemask, node_online_map);
-		}
-		return 0;
-	}
-	return 1;
-}
-
 static inline void hydra_chain_lock(struct page *master)
 {
 	bit_spin_lock(PG_hydra_chain_locked, (unsigned long *)&master->flags);

@@ -536,6 +536,8 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 		unsigned long i;
 		for (i = start_idx; i < start_idx + count; i++) {
 			pte_t val = master_pte_base[i];
+			if (pte_present(repl_pte_base[i]))
+				continue;
 			if (!pte_present(val) || pte_protnone(val))
 				val = __pte(0);
 			repl_pte_base[i] = val;
