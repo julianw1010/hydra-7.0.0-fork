@@ -20,7 +20,7 @@
 #include "internal.h"
 #include "swap.h"
 
-#include <linux/hydra_util.h>
+#include <linux/hydra.h>
 
 static __always_inline
 bool validate_dst_vma(struct vm_area_struct *dst_vma, unsigned long dst_end)

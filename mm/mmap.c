@@ -55,7 +55,7 @@
 #include <asm/tlbflush.h>
 #include <asm/mmu_context.h>
 
-#include <linux/hydra_util.h>
+#include <linux/hydra.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/mmap.h>

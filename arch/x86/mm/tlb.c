@@ -28,7 +28,7 @@
 
 #include <linux/signal.h>
 #include <linux/sched/signal.h>
-#include <linux/hydra_util.h>
+#include <linux/hydra.h>
 
 #ifdef CONFIG_PARAVIRT
 # define STATIC_NOPV

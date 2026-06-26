@@ -57,7 +57,7 @@
 #include <asm/spec-ctrl.h>
 #include <asm/vmx.h>
 
-#include <linux/hydra_util.h>
+#include <linux/hydra.h>
 
 #include "trace.h"
 

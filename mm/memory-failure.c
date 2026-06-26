@@ -61,7 +61,7 @@
 #include <linux/pagewalk.h>
 #include <linux/shmem_fs.h>
 #include <linux/sysctl.h>
-#include <linux/hydra_util.h> 
+#include <linux/hydra.h> 
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/memory-failure.h>

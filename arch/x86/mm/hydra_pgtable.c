@@ -1,6 +1,6 @@
 #include <linux/mm.h>
 #include <linux/gfp.h>
-#include <linux/hydra_util.h>
+#include <linux/hydra.h>
 #include <asm/pgalloc.h>
 #include <asm/pgtable.h>
 #include "mm_internal.h"

@@ -32,7 +32,7 @@
 
 #include "internal.h"
 
-#include <linux/hydra_util.h>
+#include <linux/hydra.h>
 /* Classify the kind of remap operation being performed. */
 enum mremap_type {
 	MREMAP_INVALID,		/* Initial state. */

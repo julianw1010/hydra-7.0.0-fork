@@ -81,7 +81,7 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/migrate.h>
 
-#include <linux/hydra_util.h>
+#include <linux/hydra.h>
 
 #include "internal.h"
 #include "swap.h"

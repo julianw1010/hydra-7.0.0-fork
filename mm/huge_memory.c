@@ -47,7 +47,7 @@
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/thp.h>
-#include <linux/hydra_util.h>
+#include <linux/hydra.h>
 
 /*
  * By default, transparent hugepage support is disabled in order to avoid

@@ -2,7 +2,7 @@
 #include <linux/page-flags.h>
 #include <linux/spinlock.h>
 #include <linux/highmem.h>
-#include <linux/hydra_util.h>
+#include <linux/hydra.h>
 
 struct hydra_cache_head hydra_cache[NUMA_NODE_COUNT] = {
 	[0 ... NUMA_NODE_COUNT - 1] = {
@@ -164,4 +164,107 @@ void hydra_free_replica_chain(struct page *primary, int level)
 
 		cur_page = next_page;
 	}
+}
+
+void hydra_link_page_to_replica_chain(struct page *existing_page,
+				      struct page *new_page)
+{
+	struct page *cur_page;
+	struct page *start_page;
+	struct page *next_repl;
+	int chain_len = 0;
+
+	if (!existing_page || !new_page || existing_page == new_page)
+		return;
+
+	if (WARN_ON(page_to_nid(new_page) == page_to_nid(existing_page)))
+		return;
+
+	hydra_chain_lock(existing_page);
+
+	start_page = existing_page;
+	cur_page = READ_ONCE(existing_page->next_replica);
+
+	while (cur_page && cur_page != start_page) {
+		chain_len++;
+		if (cur_page == new_page)
+			goto out_unlock;
+		if (page_to_nid(cur_page) == page_to_nid(new_page)) {
+		    pr_info("HYDRA: same-NID race: existing=%px(nid=%d) new=%px(nid=%d) "
+			    "master=%px(nid=%d) chain_len=%d cpu=%d\n",
+			    cur_page, page_to_nid(cur_page),
+			    new_page, page_to_nid(new_page),
+			    existing_page, page_to_nid(existing_page),
+			    chain_len, smp_processor_id());
+		    goto out_unlock;
+		}
+		if (WARN_ON(chain_len >= NUMA_NODE_COUNT))
+			goto out_unlock;
+		cur_page = READ_ONCE(cur_page->next_replica);
+	}
+
+	next_repl = existing_page->next_replica;
+	new_page->next_replica = next_repl ? next_repl : existing_page;
+	smp_wmb();
+	existing_page->next_replica = new_page;
+
+out_unlock:
+	hydra_chain_unlock(existing_page);
+}
+
+void hydra_break_chain(struct page *page)
+{
+	struct page *cur_page, *next_page;
+	struct page *start_page;
+
+	if (!page || !page->next_replica)
+		return;
+
+	start_page = page;
+
+	hydra_chain_lock(page);
+	cur_page = page->next_replica;
+	page->next_replica = NULL;
+	hydra_chain_unlock(page);
+
+	while (cur_page && cur_page != start_page) {
+		next_page = READ_ONCE(cur_page->next_replica);
+		WRITE_ONCE(cur_page->next_replica, NULL);
+		cur_page = next_page;
+	}
+}
+
+void hydra_unlink_single(struct page *anchor,
+			 struct page *target)
+{
+	struct page *cur;
+
+	if (!anchor || !target || anchor == target)
+		return;
+
+	hydra_chain_lock(anchor);
+
+	if (!anchor->next_replica)
+		goto out;
+
+	if (anchor->next_replica == target) {
+		anchor->next_replica = target->next_replica;
+		target->next_replica = NULL;
+		if (anchor->next_replica == anchor)
+			anchor->next_replica = NULL;
+		goto out;
+	}
+
+	cur = anchor->next_replica;
+	while (cur && cur != anchor) {
+		if (cur->next_replica == target) {
+			cur->next_replica = target->next_replica;
+			target->next_replica = NULL;
+			break;
+		}
+		cur = cur->next_replica;
+	}
+
+out:
+	hydra_chain_unlock(anchor);
 }

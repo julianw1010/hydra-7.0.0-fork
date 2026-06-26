@@ -1,7 +1,7 @@
 #include <linux/mm.h>
 #include <linux/page-flags.h>
 #include <linux/spinlock.h>
-#include <linux/hydra_util.h>
+#include <linux/hydra.h>
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
 #include <asm/page.h>

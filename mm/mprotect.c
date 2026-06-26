@@ -35,7 +35,7 @@
 #include <asm/mmu_context.h>
 #include <asm/tlbflush.h>
 #include <asm/tlb.h>
-#include <linux/hydra_util.h> 
+#include <linux/hydra.h> 
 
 #include "internal.h"
 

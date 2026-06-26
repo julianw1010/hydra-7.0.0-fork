@@ -9,7 +9,7 @@
 
 #include <asm/tlbflush.h>
 
-#include <linux/hydra_util.h>
+#include <linux/hydra.h>
 
 #include "internal.h"
 

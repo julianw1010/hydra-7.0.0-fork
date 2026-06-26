@@ -8,7 +8,7 @@
 #define GFP_PGTABLE_USER	(GFP_PGTABLE_KERNEL | __GFP_ACCOUNT)
 
 #include <asm/pgtable.h>
-#include <linux/hydra_util.h>
+#include <linux/hydra.h>
 
 /**
  * __pte_alloc_one_kernel - allocate memory for a PTE-level kernel page table

@@ -121,7 +121,7 @@
 
 #include <asm/pgtable.h>
 
-#include <linux/hydra_util.h>
+#include <linux/hydra.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/task.h>

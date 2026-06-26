@@ -1,5 +1,5 @@
-#include "../../../mm/vma_internal.h"
-#include "../../../mm/vma.h"
+#include "vma_internal.h"
+#include "vma.h"
 
 static int hydra_lookup_pud_owner(struct mm_struct *mm,
 				  unsigned long addr,

@@ -3,7 +3,7 @@
 #include <linux/uaccess.h>
 #include <linux/mm.h>
 #include <linux/gfp.h>
-#include <linux/hydra_util.h>
+#include <linux/hydra.h>
 
 extern int sysctl_hydra_repl_order;
 extern int sysctl_hydra_tlbflush_opt;

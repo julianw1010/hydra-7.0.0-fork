@@ -9,7 +9,7 @@
 #include <linux/swapops.h>
 #include <linux/signal.h>
 #include <linux/sched/signal.h>
-#include <linux/hydra_util.h>
+#include <linux/hydra.h>
 #include <linux/mempolicy.h>
 #include <linux/slab.h>
 #include "mm_internal.h"

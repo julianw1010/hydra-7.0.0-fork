@@ -79,7 +79,7 @@
 #include <trace/events/sched.h>
 
 #include <asm/pgalloc.h>
-#include <linux/hydra_util.h>
+#include <linux/hydra.h>
 
 /* For vma exec functions. */
 #include "../mm/internal.h"

@@ -16,7 +16,7 @@
 #include <linux/leafops.h>
 #include <linux/pgalloc.h>
 #include <asm/tlbflush.h>
-#include <linux/hydra_util.h> 
+#include <linux/hydra.h> 
 #include "internal.h"
 
 static int migrate_vma_collect_skip(unsigned long start,

@@ -33,7 +33,7 @@
 #include <linux/miscdevice.h>
 #include <linux/uio.h>
 
-#include <linux/hydra_util.h>
+#include <linux/hydra.h>
 
 static int sysctl_unprivileged_userfaultfd __read_mostly;
 

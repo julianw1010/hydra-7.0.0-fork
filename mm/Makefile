@@ -67,6 +67,7 @@ memory-hotplug-$(CONFIG_MEMORY_HOTPLUG) += memory_hotplug.o
 obj-y += page-alloc.o
 obj-y += page_frag_cache.o
 obj-y += init-mm.o
+obj-$(CONFIG_X86) += hydra_vma.o
 obj-y += memblock.o
 obj-y += $(memory-hotplug-y)
 obj-y += slub.o

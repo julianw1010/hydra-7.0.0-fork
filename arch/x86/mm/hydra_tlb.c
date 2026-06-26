@@ -1,5 +1,5 @@
 #include <linux/mm.h>
-#include <linux/hydra_util.h>
+#include <linux/hydra.h>
 #include <asm/pgtable.h>
 #include <asm/tlbflush.h>
 

@@ -1,7 +1,7 @@
 #include <linux/mm.h>
 #include <linux/gfp.h>
 #include <linux/page-flags.h>
-#include <linux/hydra_util.h>
+#include <linux/hydra.h>
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
 
@@ -19,4 +19,63 @@ struct page *hydra_alloc_page_on_node(size_t nid, unsigned int order)
 	}
 
 	return p;
+}
+
+bool hydra_try_return_page(struct page *page)
+{
+	int nid = page_to_nid(page);
+	bool from_cache = PageHydraFromCache(page);
+
+	ClearPageHydraFromCache(page);
+	page->next_replica = NULL;
+
+	if (from_cache && hydra_cache_push(page, nid))
+		return true;
+
+	return false;
+}
+
+void hydra_dtor_free_page(struct page *page)
+{
+	struct ptdesc *ptdesc = page_ptdesc(page);
+
+	pagetable_dtor(ptdesc);
+
+	if (hydra_try_return_page(page))
+		return;
+
+	pagetable_free(ptdesc);
+}
+
+struct page *hydra_alloc_pt_page_near(struct mm_struct *mm, gfp_t gfp,
+				      void *parent)
+{
+	int node;
+	struct page *page;
+
+	if (parent && virt_addr_valid(parent))
+		node = page_to_nid(virt_to_page(parent));
+	else
+		node = numa_node_id();
+
+	page = hydra_cache_pop(node);
+	if (!page)
+		page = alloc_pages_node(node, gfp | __GFP_THISNODE, 0);
+	if (page)
+		page->pt_owner_mm = mm;
+
+	return page;
+}
+
+struct page *hydra_alloc_pt_page(struct mm_struct *mm, gfp_t gfp,
+				 unsigned int order)
+{
+	struct page *page;
+
+	page = alloc_pages(gfp, order);
+
+	if (page)
+		page->pt_owner_mm = mm;
+
+	return page;
 }

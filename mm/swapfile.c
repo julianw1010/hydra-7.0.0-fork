@@ -42,7 +42,7 @@
 #include <linux/suspend.h>
 #include <linux/zswap.h>
 #include <linux/plist.h>
-#include <linux/hydra_util.h> 
+#include <linux/hydra.h> 
 
 #include <asm/tlbflush.h>
 #include <linux/leafops.h>
