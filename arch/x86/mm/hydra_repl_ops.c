@@ -215,7 +215,8 @@ void hydra_set_pmd(pmd_t *pmdp, pmd_t pmd)
 
 	offset = ((unsigned long)pmdp) & ~PAGE_MASK;
 
-	if (pmd_present(pmd) && (pmd_trans_huge(pmd) || pmd_leaf(pmd)))
+	if ((pmd_flags(pmd) & (_PAGE_PRESENT | _PAGE_PROTNONE)) &&
+	    (pmd_trans_huge(pmd) || pmd_leaf(pmd)))
 		repl_val = pmd;
 	else
 		repl_val = __pmd(0);
@@ -274,7 +275,8 @@ pmd_t hydra_pmdp_establish(pmd_t *pmdp, pmd_t pmd)
 
 	offset = ((unsigned long)pmdp) & ~PAGE_MASK;
 
-	if (pmd_present(pmd) && (pmd_trans_huge(pmd) || pmd_leaf(pmd)))
+	if ((pmd_flags(pmd) & (_PAGE_PRESENT | _PAGE_PROTNONE)) &&
+	    (pmd_trans_huge(pmd) || pmd_leaf(pmd)))
 		repl_val = pmd;
 	else
 		repl_val = __pmd(0);

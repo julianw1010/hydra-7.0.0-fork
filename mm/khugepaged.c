@@ -1193,6 +1193,7 @@ static enum scan_result collapse_huge_page(struct mm_struct *mm, unsigned long a
 		 */
 		pmd_populate(mm, pmd, pmd_pgtable(_pmd));
 		spin_unlock(pmd_ptl);
+		hydra_free_replica_chain(pmd_pgtable(_pmd));
 		anon_vma_unlock_write(vma->anon_vma);
 		goto out_up_write;
 	}
@@ -1207,8 +1208,10 @@ static enum scan_result collapse_huge_page(struct mm_struct *mm, unsigned long a
 					   vma, address, pte_ptl,
 					   &compound_pagelist);
 	pte_unmap(pte);
-	if (unlikely(result != SCAN_SUCCEED))
+	if (unlikely(result != SCAN_SUCCEED)) {
+		hydra_free_replica_chain(pmd_pgtable(_pmd));
 		goto out_up_write;
+	}
 
 	/*
 	 * The smp_wmb() inside __folio_mark_uptodate() ensures the

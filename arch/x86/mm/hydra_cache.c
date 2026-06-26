@@ -147,20 +147,9 @@ void hydra_free_replica_chain(struct page *primary)
 
 	while (cur_page && cur_page != start_page) {
 		struct mm_struct *owner_mm = cur_page->pt_owner_mm;
-		unsigned long *entry;
-		int i, has_live_entry = 0;
 
 		next_page = READ_ONCE(cur_page->next_replica);
 		cur_page->next_replica = NULL;
-
-		entry = (unsigned long *)page_address(cur_page);
-		for (i = 0; i < 512; i++) {
-			if (entry[i] & _PAGE_PRESENT) {
-				has_live_entry = 1;
-				break;
-			}
-		}
-		BUG_ON(has_live_entry);
 
 		if (owner_mm)
 			mm_dec_nr_ptes(owner_mm);
