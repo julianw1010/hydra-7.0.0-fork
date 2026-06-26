@@ -1214,6 +1214,20 @@ static int copy_vma_and_data(struct vma_remap_struct *vrm,
 	pmc.old = vma;
 	pmc.new = new_vma;
 
+	if (new_vma->vm_mm->lazy_repl_enabled) {
+		unsigned long pud_start = vrm->new_addr & PUD_MASK;
+		struct vm_area_struct *existing;
+		VMA_ITERATOR(vmi_owner, new_vma->vm_mm, pud_start);
+
+		for_each_vma_range(vmi_owner, existing, pud_start + PUD_SIZE) {
+			if (existing == new_vma)
+				continue;
+			WRITE_ONCE(new_vma->master_pgd_node,
+				   existing->master_pgd_node);
+			break;
+		}
+	}
+
 	moved_len = move_page_tables(&pmc);
 	if (moved_len < vrm->old_len)
 		err = -ENOMEM;
