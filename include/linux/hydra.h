@@ -17,6 +17,7 @@ int hydra_enable_replication(struct mm_struct *mm);
 int hydra_repl_fault(struct vm_fault *vmf, int fault_node);
 void hydra_break_chain_range(struct mm_struct *mm,
 			     unsigned long start, unsigned long end);
+void hydra_map_ldt_to_replicas(struct mm_struct *mm);
 
 #define HYDRA_WALK_NONE ((void *)0x1)
 

@@ -22,6 +22,7 @@
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/uaccess.h>
+#include <linux/hydra.h>
 
 #include <asm/ldt.h>
 #include <asm/tlb.h>
@@ -420,6 +421,75 @@ static void unmap_ldt_struct(struct mm_struct *mm, struct ldt_struct *ldt)
 	flush_tlb_mm_range(mm, va, va + nr_pages * PAGE_SIZE, PAGE_SHIFT, false);
 }
 
+void hydra_map_ldt_to_replicas(struct mm_struct *mm)
+{
+	struct ldt_struct *ldt;
+	unsigned long va;
+	bool is_vmalloc;
+	spinlock_t *ptl;
+	int i, nr_pages;
+
+	if (!boot_cpu_has(X86_FEATURE_PTI))
+		return;
+
+	down_write(&mm->context.ldt_usr_sem);
+
+	ldt = mm->context.ldt;
+	if (!ldt || ldt->slot < 0) {
+		up_write(&mm->context.ldt_usr_sem);
+		return;
+	}
+
+	is_vmalloc = is_vmalloc_addr(ldt->entries);
+	nr_pages = DIV_ROUND_UP(ldt->nr_entries * LDT_ENTRY_SIZE, PAGE_SIZE);
+
+	for (i = 0; i < nr_pages; i++) {
+		unsigned long offset = i << PAGE_SHIFT;
+		const void *src = (char *)ldt->entries + offset;
+		unsigned long pfn;
+		pgprot_t pte_prot;
+		pte_t pte, *ptep;
+		int n;
+
+		va = (unsigned long)ldt_slot_va(ldt->slot) + offset;
+		pfn = is_vmalloc ? vmalloc_to_pfn(src) :
+			page_to_pfn(virt_to_page(src));
+		pte_prot = __pgprot(__PAGE_KERNEL_RO & ~_PAGE_GLOBAL);
+		pgprot_val(pte_prot) &= __supported_pte_mask;
+		pte = pfn_pte(pfn, pte_prot);
+
+		for (n = 0; n < NUMA_NODE_COUNT; n++) {
+			if (!mm->repl_pgd[n] || mm->repl_pgd[n] == mm->pgd)
+				continue;
+
+			ptep = get_locked_pte(mm, va, &ptl, n);
+			if (!ptep) {
+				up_write(&mm->context.ldt_usr_sem);
+				return;
+			}
+
+			set_pte_at(mm, va, ptep, pte);
+			pte_unmap_unlock(ptep, ptl);
+		}
+	}
+
+	{
+		int n;
+
+		for (n = 0; n < NUMA_NODE_COUNT; n++) {
+			pgd_t *pgd;
+
+			if (!mm->repl_pgd[n] || mm->repl_pgd[n] == mm->pgd)
+				continue;
+
+			pgd = pgd_offset_pgd(mm->repl_pgd[n], LDT_BASE_ADDR);
+			set_pgd(kernel_to_user_pgdp(pgd), *pgd);
+		}
+	}
+
+	up_write(&mm->context.ldt_usr_sem);
+}
+
 #else /* !CONFIG_MITIGATION_PAGE_TABLE_ISOLATION */
 
 static int
@@ -450,7 +520,7 @@ static void free_ldt_pgtables(struct mm_struct *mm)
 	 * range-tracking logic in __tlb_adjust_range().
 	 */
 	tlb_gather_mmu_fullmm(&tlb, mm);
-	free_pgd_range(&tlb, start, end, start, end);
+	free_pgd_range_repl(&tlb, start, end, start, end);
 	tlb_finish_mmu(&tlb);
 #endif
 }

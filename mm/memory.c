@@ -392,6 +392,27 @@ void free_pgd_range(struct mmu_gather *tlb,
 	free_pgd_range_base(tlb, addr, end, floor, ceiling, tlb->mm->pgd);
 }
 
+void free_pgd_range_repl(struct mmu_gather *tlb,
+			unsigned long addr, unsigned long end,
+			unsigned long floor, unsigned long ceiling)
+{
+	struct mm_struct *mm = tlb->mm;
+	int i;
+
+	if (!mm->lazy_repl_enabled) {
+		free_pgd_range_base(tlb, addr, end, floor, ceiling, mm->pgd);
+		return;
+	}
+
+	for (i = 0; i < NUMA_NODE_COUNT; i++) {
+		if (!mm->repl_pgd[i] || mm->repl_pgd[i] == mm->pgd)
+			continue;
+		free_pgd_range_base(tlb, addr, end, floor, ceiling,
+				    mm->repl_pgd[i]);
+	}
+	free_pgd_range_base(tlb, addr, end, floor, ceiling, mm->pgd);
+}
+
 /**
  * free_pgtables() - Free a range of page tables
  * @tlb: The mmu gather
