@@ -28,11 +28,13 @@ static unsigned long hydra_get_entry(void *entryp)
 
 	offset = ((unsigned long)entryp) & ~PAGE_MASK;
 
+	rcu_read_lock();
 	for (cur = page->next_replica; cur && cur != page; cur = cur->next_replica) {
 		unsigned long entry_val = *(unsigned long *)(page_address(cur) + offset);
 		if (entry_val & _PAGE_PRESENT)
 			val |= entry_val & PTE_FLAGS_MASK;
 	}
+	rcu_read_unlock();
 
 	return val;
 }
@@ -56,11 +58,13 @@ static unsigned long hydra_get_and_clear_entry(void *entryp)
 	val = xchg((unsigned long *)entryp, 0);
 	offset = ((unsigned long)entryp) & ~PAGE_MASK;
 
+	rcu_read_lock();
 	for (cur = page->next_replica; cur && cur != page; cur = cur->next_replica) {
 		unsigned long old_val = xchg((unsigned long *)(page_address(cur) + offset), 0);
 		if (old_val & _PAGE_PRESENT)
 			val |= old_val & PTE_FLAGS_MASK;
 	}
+	rcu_read_unlock();
 
 	return val;
 }
@@ -88,12 +92,14 @@ static void hydra_set_wrprotect_entry(void *entryp)
 	clear_bit(_PAGE_BIT_RW, (unsigned long *)entryp);
 	offset = ((unsigned long)entryp) & ~PAGE_MASK;
 
+	rcu_read_lock();
 	for (cur = page->next_replica; cur && cur != page; cur = cur->next_replica) {
 		unsigned long *replica_entry =
 			(unsigned long *)(page_address(cur) + offset);
 		if (*replica_entry & _PAGE_PRESENT)
 			clear_bit(_PAGE_BIT_RW, replica_entry);
 	}
+	rcu_read_unlock();
 }
 
 static int hydra_test_and_clear_young_entry(void *entryp)
@@ -127,6 +133,7 @@ static int hydra_test_and_clear_young_entry(void *entryp)
 
 	offset = ((unsigned long)entryp) & ~PAGE_MASK;
 
+	rcu_read_lock();
 	for (cur = page->next_replica; cur && cur != page; cur = cur->next_replica) {
 		unsigned long *replica_entry =
 			(unsigned long *)(page_address(cur) + offset);
@@ -136,6 +143,7 @@ static int hydra_test_and_clear_young_entry(void *entryp)
 				young = 1;
 		}
 	}
+	rcu_read_unlock();
 
 	return young;
 }
@@ -159,10 +167,12 @@ void hydra_set_pte(pte_t *ptep, pte_t pteval)
 	offset = ((unsigned long)ptep) & ~PAGE_MASK;
 	repl_val = pte_present(pteval) ? pteval : __pte(0);
 
+	rcu_read_lock();
 	for (cur = pte_page->next_replica; cur && cur != pte_page; cur = cur->next_replica) {
 		pte_t *rp = (pte_t *)(page_address(cur) + offset);
 		native_set_pte(rp, repl_val);
 	}
+	rcu_read_unlock();
 }
 
 pte_t hydra_get_pte(pte_t *ptep)
@@ -210,10 +220,12 @@ void hydra_set_pmd(pmd_t *pmdp, pmd_t pmd)
 	else
 		repl_val = __pmd(0);
 
+	rcu_read_lock();
 	for (cur = page->next_replica; cur && cur != page; cur = cur->next_replica) {
 		pmd_t *rp = (pmd_t *)(page_address(cur) + offset);
 		native_set_pmd(rp, repl_val);
 	}
+	rcu_read_unlock();
 }
 
 pmd_t hydra_get_pmd(pmd_t *pmdp)
@@ -267,6 +279,7 @@ pmd_t hydra_pmdp_establish(pmd_t *pmdp, pmd_t pmd)
 	else
 		repl_val = __pmd(0);
 
+	rcu_read_lock();
 	for (cur = pmd_page->next_replica; cur && cur != pmd_page; cur = cur->next_replica) {
 		pmd_t *rp = (pmd_t *)(page_address(cur) + offset);
 		pmd_t old_repl;
@@ -281,6 +294,7 @@ pmd_t hydra_pmdp_establish(pmd_t *pmdp, pmd_t pmd)
 		if (pmd_trans_huge(old_repl) || pmd_leaf(old_repl))
 			flags |= pmd_flags(old_repl);
 	}
+	rcu_read_unlock();
 
 	return pmd_set_flags(old, flags);
 }

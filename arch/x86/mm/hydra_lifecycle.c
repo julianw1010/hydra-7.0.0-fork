@@ -57,7 +57,6 @@ int hydra_enable_replication(struct mm_struct *mm)
 	WRITE_ONCE(mm->lazy_repl_enabled, true);
 	smp_wmb();
 	on_each_cpu_mask(mm_cpumask(mm), hydra_reload_cr3, mm, 1);
-	smp_mb();
 	flush_tlb_mm(mm);
 
 	{

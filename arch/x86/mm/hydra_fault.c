@@ -247,9 +247,7 @@ unlock_new:
 
 		if (unlikely(new_pmd)) {
 			hydra_unlink_single(master_pmd_page, new_pmd_page);
-			pagetable_dtor(virt_to_ptdesc(new_pmd));
-			if (!hydra_try_return_page(new_pmd_page))
-				__free_page(new_pmd_page);
+			hydra_free_chain_node_rcu(new_pmd_page);
 			copied = 0;
 		} else {
 			*prefetched_out = copied;
@@ -497,9 +495,7 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 
 		if (unlikely(new_page)) {
 			hydra_unlink_single(master_pte_page, new_page);
-			pagetable_dtor(page_ptdesc(new_page));
-			if (!hydra_try_return_page(new_page))
-				__free_page(new_page);
+			hydra_free_chain_node_rcu(new_page);
 		} else {
 			return 0;
 		}

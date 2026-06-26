@@ -115,6 +115,21 @@ int hydra_cache_drain_all(void)
 	return total;
 }
 
+static void hydra_chain_node_free_rcu(struct rcu_head *head)
+{
+	struct page *page = container_of(head, struct page, rcu_head);
+
+	pagetable_dtor(page_ptdesc(page));
+
+	if (!hydra_try_return_page(page))
+		__free_page(page);
+}
+
+void hydra_free_chain_node_rcu(struct page *page)
+{
+	call_rcu(&page->rcu_head, hydra_chain_node_free_rcu);
+}
+
 void hydra_free_replica_chain(struct page *primary)
 {
 	struct page *cur_page, *next_page;
@@ -147,13 +162,10 @@ void hydra_free_replica_chain(struct page *primary)
 		}
 		BUG_ON(has_live_entry);
 
-		pagetable_dtor(page_ptdesc(cur_page));
-
 		if (owner_mm)
 			mm_dec_nr_ptes(owner_mm);
 
-		if (!hydra_try_return_page(cur_page))
-			__free_page(cur_page);
+		hydra_free_chain_node_rcu(cur_page);
 
 		cur_page = next_page;
 	}

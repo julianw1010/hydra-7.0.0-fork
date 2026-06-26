@@ -94,10 +94,12 @@ static inline int hydra_collect_repl_nodes(struct page *const ptpage,
 	start_page = ptpage;
 	cur_page = ptpage;
 
+	rcu_read_lock();
 	do {
 		node_set(page_to_nid(cur_page), *nodemask);
 		cur_page = cur_page->next_replica;
 	} while (cur_page && cur_page != start_page);
+	rcu_read_unlock();
 
 	return 0;
 }
@@ -118,6 +120,7 @@ void hydra_break_chain(struct page *page);
 void hydra_unlink_single(struct page *anchor, struct page *target);
 
 extern void hydra_free_replica_chain(struct page *primary);
+void hydra_free_chain_node_rcu(struct page *page);
 
 bool hydra_try_return_page(struct page *page);
 void hydra_dtor_free_page(struct page *page);
