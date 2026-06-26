@@ -110,12 +110,31 @@ static pmd_t *get_old_pmd(struct mm_struct *mm, struct vm_area_struct *vma, unsi
 	return pmd;
 }
 
+static unsigned long hydra_dest_pud_owner(struct mm_struct *mm, unsigned long addr,
+					  struct vm_area_struct *self)
+{
+	unsigned long pud_start = addr & ~(PUD_SIZE - 1);
+	struct vm_area_struct *existing;
+	VMA_ITERATOR(vmi, mm, pud_start);
+
+	for_each_vma_range(vmi, existing, pud_start + PUD_SIZE) {
+		if (existing == self)
+			continue;
+		return existing->master_pgd_node;
+	}
+	return self->master_pgd_node;
+}
+
 static pud_t *alloc_new_pud(struct mm_struct *mm, struct vm_area_struct *vma, unsigned long addr)
 {
 	pgd_t *pgd;
 	p4d_t *p4d;
+	unsigned long node = vma->master_pgd_node;
 
-	pgd = hydra_pgd_offset(mm, addr, vma->master_pgd_node);
+	if (mm->lazy_repl_enabled)
+		node = hydra_dest_pud_owner(mm, addr, vma);
+
+	pgd = hydra_pgd_offset(mm, addr, node);
 	p4d = p4d_alloc(mm, pgd, addr);
 	if (!p4d)
 		return NULL;
@@ -1213,20 +1232,6 @@ static int copy_vma_and_data(struct vma_remap_struct *vrm,
 	vrm->vma = vma;
 	pmc.old = vma;
 	pmc.new = new_vma;
-
-	if (new_vma->vm_mm->lazy_repl_enabled) {
-		unsigned long pud_start = vrm->new_addr & PUD_MASK;
-		struct vm_area_struct *existing;
-		VMA_ITERATOR(vmi_owner, new_vma->vm_mm, pud_start);
-
-		for_each_vma_range(vmi_owner, existing, pud_start + PUD_SIZE) {
-			if (existing == new_vma)
-				continue;
-			WRITE_ONCE(new_vma->master_pgd_node,
-				   existing->master_pgd_node);
-			break;
-		}
-	}
 
 	moved_len = move_page_tables(&pmc);
 	if (moved_len < vrm->old_len)
