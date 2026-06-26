@@ -1251,7 +1251,7 @@ extern int ptep_clear_flush_young(struct vm_area_struct *vma,
 
 pte_t hydra_ptep_get_and_clear(struct mm_struct *mm, pte_t *ptep);
 void hydra_ptep_set_wrprotect(struct mm_struct *mm, unsigned long addr, pte_t *ptep);
-pmd_t hydra_pmdp_huge_get_and_clear(struct mm_struct *mm, pmd_t *pmdp);
+pmd_t hydra_pmdp_get_and_clear(struct mm_struct *mm, pmd_t *pmdp);
 void hydra_pmdp_set_wrprotect(struct mm_struct *mm, unsigned long addr, pmd_t *pmdp);
 pmd_t hydra_pmdp_establish(pmd_t *pmdp, pmd_t pmd);
 
@@ -1312,7 +1312,7 @@ extern int pmdp_clear_flush_young(struct vm_area_struct *vma,
 static inline pmd_t pmdp_huge_get_and_clear(struct mm_struct *mm, unsigned long addr,
 				       pmd_t *pmdp)
 {
-	pmd_t pmd = hydra_pmdp_huge_get_and_clear(mm, pmdp);
+	pmd_t pmd = hydra_pmdp_get_and_clear(mm, pmdp);
 
 	page_table_check_pmd_clear(mm, addr, pmd);
 

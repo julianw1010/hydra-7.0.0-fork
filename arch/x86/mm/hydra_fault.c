@@ -98,7 +98,7 @@ int hydra_alloc_replica_pmd(struct mm_struct *mm, pud_t *pud,
 	return 0;
 }
 
-static int hydra_repl_huge_pmd_range(struct mm_struct *mm,
+static int hydra_repl_pmd_range(struct mm_struct *mm,
 				     struct vm_area_struct *vma,
 				     unsigned long address,
 				     size_t repl_node,
@@ -328,7 +328,7 @@ unlock:
 	return copied > 0 ? 0 : -EAGAIN;
 }
 
-static int hydra_repl_try_huge_pmd(struct mm_struct *mm,
+static int hydra_repl_try_pmd(struct mm_struct *mm,
 				   struct vm_area_struct *vma,
 				   unsigned long address,
 				   unsigned int flags,
@@ -371,7 +371,7 @@ static int hydra_repl_try_huge_pmd(struct mm_struct *mm,
 	    pmd_protnone(m_pmdval))
 		return -EAGAIN;
 
-	ret = hydra_repl_huge_pmd_range(mm, vma, address,
+	ret = hydra_repl_pmd_range(mm, vma, address,
 					repl_node, master_node,
 					&prefetched);
 	if (ret == -ENOMEM)
@@ -575,7 +575,7 @@ static int hydra_repl_try_pte(struct vm_fault *vmf, size_t repl_node,
 		if (ret & (VM_FAULT_ERROR | VM_FAULT_NOPAGE | VM_FAULT_RETRY | VM_FAULT_COMPLETED))
 			return ret;
 
-		ret = hydra_repl_try_huge_pmd(mm, vma, address, vmf->flags,
+		ret = hydra_repl_try_pmd(mm, vma, address, vmf->flags,
 					      repl_node, master_node);
 		if (ret != -EAGAIN)
 			return ret;
@@ -635,7 +635,7 @@ int hydra_repl_fault(struct vm_fault *vmf, int fault_node)
 	BUG_ON(!mm->lazy_repl_enabled);
 	BUG_ON(repl_node == master_node);
 
-	ret = hydra_repl_try_huge_pmd(mm, vmf->vma, vmf->address, vmf->flags,
+	ret = hydra_repl_try_pmd(mm, vmf->vma, vmf->address, vmf->flags,
 				      repl_node, master_node);
 	if (ret != -EAGAIN)
 		return ret;

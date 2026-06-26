@@ -221,7 +221,7 @@ pmd_t hydra_get_pmd(pmd_t *pmdp)
 	return __pmd(hydra_get_entry(pmdp));
 }
 
-pmd_t hydra_pmdp_huge_get_and_clear(struct mm_struct *mm, pmd_t *pmdp)
+pmd_t hydra_pmdp_get_and_clear(struct mm_struct *mm, pmd_t *pmdp)
 {
 	return __pmd(hydra_get_and_clear_entry(pmdp));
 }
