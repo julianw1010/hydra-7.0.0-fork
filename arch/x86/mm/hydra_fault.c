@@ -35,8 +35,6 @@ static int hydra_find_master_pte(struct mm_struct *mm, unsigned long address,
 	if (HYDRA_WALK_BAD(pmd))
 		return -EFAULT;
 
-	VM_BUG_ON(pmd_trans_huge(*pmd));
-
 	if (pmd_none(*pmd) || unlikely(pmd_bad(*pmd)))
 		return -EFAULT;
 
