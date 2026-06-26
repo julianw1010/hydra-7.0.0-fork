@@ -23,7 +23,7 @@ void hydra_fixup_pud_nodes(struct mm_struct *mm,
 			   struct vm_area_struct *vma)
 {
 	unsigned long pud_boundary;
-	int node;
+	int node, next_owner, cur_owner;
 	struct vm_area_struct *cur;
 
 	if (!mm->lazy_repl_enabled)
@@ -31,19 +31,32 @@ void hydra_fixup_pud_nodes(struct mm_struct *mm,
 
 	cur = vma;
 	while (cur) {
+		int did_split = 0;
+
 		node = hydra_lookup_pud_owner(mm, cur->vm_start, cur);
 		if (node >= 0)
 			WRITE_ONCE(cur->master_pgd_node, node);
+		cur_owner = cur->master_pgd_node;
 
 		pud_boundary = (cur->vm_start & PUD_MASK) + PUD_SIZE;
-		if (pud_boundary >= cur->vm_end)
-			break;
+		while (pud_boundary < cur->vm_end) {
+			next_owner = hydra_lookup_pud_owner(mm, pud_boundary, cur);
+			if (next_owner < 0 || next_owner == cur_owner) {
+				pud_boundary += PUD_SIZE;
+				continue;
+			}
 
-		{
-			VMA_ITERATOR(vmi, mm, pud_boundary);
-			if (split_vma(&vmi, cur, pud_boundary, 0))
-				break;
+			{
+				VMA_ITERATOR(vmi, mm, pud_boundary);
+				if (split_vma(&vmi, cur, pud_boundary, 0))
+					return;
+			}
+			did_split = 1;
+			break;
 		}
+
+		if (!did_split)
+			break;
 
 		cur = find_vma(mm, pud_boundary);
 	}
