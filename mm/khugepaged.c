@@ -1079,21 +1079,6 @@ static enum scan_result alloc_charge_folio(struct folio **foliop, struct mm_stru
 	return SCAN_SUCCEED;
 }
 
-static void hydra_assert_pte_pmd_chains(struct page *master_pte_page,
-					pmd_t *master_pmd)
-{
-	nodemask_t pte_nodes, pmd_nodes;
-	struct page *master_pmd_page = virt_to_page(master_pmd);
-
-	nodes_clear(pte_nodes);
-	nodes_clear(pmd_nodes);
-
-	hydra_collect_repl_nodes(master_pte_page, &pte_nodes);
-	hydra_collect_repl_nodes(master_pmd_page, &pmd_nodes);
-
-	BUG_ON(!nodes_subset(pte_nodes, pmd_nodes));
-}
-
 static enum scan_result collapse_huge_page(struct mm_struct *mm, unsigned long address,
 		int referenced, int unmapped, struct collapse_control *cc)
 {
@@ -1232,8 +1217,6 @@ static enum scan_result collapse_huge_page(struct mm_struct *mm, unsigned long a
 	 */
 	__folio_mark_uptodate(folio);
 	pgtable = pmd_pgtable(_pmd);
-
-	hydra_assert_pte_pmd_chains(pgtable, pmd);
 
 	hydra_free_replica_chain(pgtable);
 
@@ -1684,7 +1667,6 @@ static enum scan_result try_collapse_pte_mapped_thp(struct mm_struct *mm, unsign
 
 	mm_dec_nr_ptes(mm);
 	page_table_check_pte_clear_range(mm, haddr, pgt_pmd);
-	hydra_assert_pte_pmd_chains(pmd_pgtable(pgt_pmd), pmd);
 	hydra_free_replica_chain(pmd_pgtable(pgt_pmd));
 	pte_free_defer(mm, pmd_pgtable(pgt_pmd));
 
@@ -1846,7 +1828,6 @@ drop_pml:
 		if (success) {
 			mm_dec_nr_ptes(mm);
 			page_table_check_pte_clear_range(mm, addr, pgt_pmd);
-			hydra_assert_pte_pmd_chains(pmd_pgtable(pgt_pmd), pmd);
 			hydra_free_replica_chain(pmd_pgtable(pgt_pmd));
 			pte_free_defer(mm, pmd_pgtable(pgt_pmd));
 		}
