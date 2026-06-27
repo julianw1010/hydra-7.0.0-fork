@@ -164,77 +164,12 @@ static int hydra_repl_pmd_range(struct mm_struct *mm,
 		pmd_t *new_pmd = pmd_alloc_one(mm, haddr, repl_pud);
 		struct page *new_pmd_page, *master_pmd_page;
 		spinlock_t *pud_ptl;
-		int copied_ok = 0;
 
 		if (!new_pmd)
 			return -ENOMEM;
 
 		new_pmd_page = virt_to_page(new_pmd);
 		master_pmd_page = virt_to_page(master_pmd_base);
-		repl_pmd_base = new_pmd;
-
-		master_ptl = pmd_lockptr(mm, pmd_offset(master_pud, haddr));
-		repl_ptl = ptlock_ptr(virt_to_ptdesc(new_pmd));
-
-		if (master_ptl < repl_ptl) {
-			spin_lock(master_ptl);
-			spin_lock_nested(repl_ptl, SINGLE_DEPTH_NESTING);
-		} else if (master_ptl > repl_ptl) {
-			spin_lock(repl_ptl);
-			spin_lock_nested(master_ptl, SINGLE_DEPTH_NESTING);
-		} else {
-			spin_lock(master_ptl);
-			repl_ptl = NULL;
-		}
-
-		fault_idx = (haddr - pud_base) >> HPAGE_PMD_SHIFT;
-		{
-			pmd_t faulting_val = master_pmd_base[fault_idx];
-
-			if (!pmd_present(faulting_val) || !pmd_trans_huge(faulting_val))
-				goto unlock_new;
-		}
-
-		start_idx = (range_start - pud_base) >> HPAGE_PMD_SHIFT;
-		end_idx = (range_end - pud_base) >> HPAGE_PMD_SHIFT;
-
-		for (i = start_idx; i < end_idx; i++) {
-			pmd_t master_val = master_pmd_base[i];
-
-			if (!pmd_present(master_val) || !pmd_trans_huge(master_val))
-				continue;
-
-			if (pmd_protnone(master_val))
-				continue;
-
-			native_set_pmd(&repl_pmd_base[i], master_val);
-
-			copied++;
-		}
-
-		copied_ok = 1;
-
-unlock_new:
-		if (repl_ptl && repl_ptl != master_ptl) {
-			if (master_ptl < repl_ptl) {
-				spin_unlock(repl_ptl);
-				spin_unlock(master_ptl);
-			} else {
-				spin_unlock(master_ptl);
-				spin_unlock(repl_ptl);
-			}
-		} else {
-			spin_unlock(master_ptl);
-		}
-
-		if (!copied_ok) {
-			pagetable_dtor(virt_to_ptdesc(new_pmd));
-			if (!hydra_try_return_page(new_pmd_page))
-				__free_page(new_pmd_page);
-			return -EAGAIN;
-		}
-
-		smp_wmb();
 
 		pud_ptl = pud_lock(mm, repl_pud);
 		if (!pud_present(*repl_pud)) {
@@ -245,13 +180,8 @@ unlock_new:
 		}
 		spin_unlock(pud_ptl);
 
-		if (unlikely(new_pmd)) {
+		if (unlikely(new_pmd))
 			hydra_free_chain_node_rcu(new_pmd_page);
-			copied = 0;
-		} else {
-			*prefetched_out = copied;
-			return copied > 0 ? 0 : -EAGAIN;
-		}
 	}
 
 	repl_pmd_base = pmd_offset(repl_pud, pud_base);
@@ -466,9 +396,6 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 			}
 		}
 
-		if (master_ptl != master_pml)
-			spin_unlock(master_ptl);
-
 		smp_wmb();
 
 		if (likely(pmd_none(*repl_pmd))) {
@@ -480,6 +407,9 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 				      | _PAGE_TABLE));
 			new_page = NULL;
 		}
+
+		if (master_ptl != master_pml)
+			spin_unlock(master_ptl);
 
 		spin_unlock(master_pml);
 
