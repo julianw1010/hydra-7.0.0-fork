@@ -164,7 +164,7 @@ static int hydra_repl_pmd_range(struct mm_struct *mm,
 		pmd_t *new_pmd = pmd_alloc_one(mm, haddr, repl_pud);
 		struct page *new_pmd_page, *master_pmd_page;
 		spinlock_t *pud_ptl;
-		int linked = 0;
+		int copied_ok = 0;
 
 		if (!new_pmd)
 			return -ENOMEM;
@@ -212,8 +212,7 @@ static int hydra_repl_pmd_range(struct mm_struct *mm,
 			copied++;
 		}
 
-		hydra_link_page_to_replica_chain(master_pmd_page, new_pmd_page);
-		linked = 1;
+		copied_ok = 1;
 
 unlock_new:
 		if (repl_ptl && repl_ptl != master_ptl) {
@@ -228,7 +227,7 @@ unlock_new:
 			spin_unlock(master_ptl);
 		}
 
-		if (!linked) {
+		if (!copied_ok) {
 			pagetable_dtor(virt_to_ptdesc(new_pmd));
 			if (!hydra_try_return_page(new_pmd_page))
 				__free_page(new_pmd_page);
@@ -239,6 +238,7 @@ unlock_new:
 
 		pud_ptl = pud_lock(mm, repl_pud);
 		if (!pud_present(*repl_pud)) {
+			hydra_link_page_to_replica_chain(master_pmd_page, new_pmd_page);
 			mm_inc_nr_pmds(mm);
 			pud_populate(mm, repl_pud, new_pmd);
 			new_pmd = NULL;
@@ -246,7 +246,6 @@ unlock_new:
 		spin_unlock(pud_ptl);
 
 		if (unlikely(new_pmd)) {
-			hydra_unlink_single(master_pmd_page, new_pmd_page);
 			hydra_free_chain_node_rcu(new_pmd_page);
 			copied = 0;
 		} else {
@@ -394,7 +393,7 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 	pgd_t *repl_pgd;
 	p4d_t *repl_p4d;
 	pud_t *repl_pud;
-	spinlock_t *master_ptl, *repl_ptl;
+	spinlock_t *master_ptl, *master_pml;
 	unsigned long addr = pmd_addr;
 	int ret;
 
@@ -434,27 +433,28 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 	if (pmd_none(*repl_pmd)) {
 		pgtable_t new_page = pte_alloc_one(mm, repl_pmd);
 		struct page *master_pte_page;
-		spinlock_t *pmd_ptl;
 
 		if (!new_page)
 			return -ENOMEM;
 
 		repl_pte_base = (pte_t *)page_address(new_page);
+
+		master_pml = pmd_lock(mm, master_pmd);
+
+		if (unlikely(pmd_none(*master_pmd) || pmd_bad(*master_pmd) ||
+			     pmd_trans_huge(*master_pmd))) {
+			spin_unlock(master_pml);
+			hydra_free_chain_node_rcu(new_page);
+			return -EAGAIN;
+		}
+
+		master_pte = pte_offset_kernel(master_pmd, addr);
+		master_pte_base = (pte_t *)((unsigned long)master_pte & PAGE_MASK);
 		master_pte_page = virt_to_page(master_pte_base);
 
 		master_ptl = pte_lockptr(mm, master_pmd);
-		repl_ptl = ptlock_ptr(page_ptdesc(new_page));
-
-		if (master_ptl < repl_ptl) {
-			spin_lock(master_ptl);
-			spin_lock_nested(repl_ptl, SINGLE_DEPTH_NESTING);
-		} else if (master_ptl > repl_ptl) {
-			spin_lock(repl_ptl);
+		if (master_ptl != master_pml)
 			spin_lock_nested(master_ptl, SINGLE_DEPTH_NESTING);
-		} else {
-			spin_lock(master_ptl);
-			repl_ptl = NULL;
-		}
 
 		{
 			unsigned long i;
@@ -466,24 +466,13 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 			}
 		}
 
-		hydra_link_page_to_replica_chain(master_pte_page, new_page);
-
-		if (repl_ptl && repl_ptl != master_ptl) {
-			if (master_ptl < repl_ptl) {
-				spin_unlock(repl_ptl);
-				spin_unlock(master_ptl);
-			} else {
-				spin_unlock(master_ptl);
-				spin_unlock(repl_ptl);
-			}
-		} else {
+		if (master_ptl != master_pml)
 			spin_unlock(master_ptl);
-		}
 
 		smp_wmb();
 
-		pmd_ptl = pmd_lock(mm, repl_pmd);
 		if (likely(pmd_none(*repl_pmd))) {
+			hydra_link_page_to_replica_chain(master_pte_page, new_page);
 			mm_inc_nr_ptes(mm);
 			paravirt_alloc_pte(mm, page_to_pfn(new_page));
 			native_set_pmd(repl_pmd,
@@ -491,15 +480,26 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 				      | _PAGE_TABLE));
 			new_page = NULL;
 		}
-		spin_unlock(pmd_ptl);
+
+		spin_unlock(master_pml);
 
 		if (unlikely(new_page)) {
-			hydra_unlink_single(master_pte_page, new_page);
 			hydra_free_chain_node_rcu(new_page);
 		} else {
 			return 0;
 		}
 	}
+
+	master_pml = pmd_lock(mm, master_pmd);
+
+	if (unlikely(pmd_none(*master_pmd) || pmd_bad(*master_pmd) ||
+		     pmd_trans_huge(*master_pmd))) {
+		spin_unlock(master_pml);
+		return -EAGAIN;
+	}
+
+	master_pte = pte_offset_kernel(master_pmd, addr);
+	master_pte_base = (pte_t *)((unsigned long)master_pte & PAGE_MASK);
 
 	repl_pte = pte_offset_kernel(repl_pmd, addr);
 	repl_pte_base = (pte_t *)((unsigned long)repl_pte & PAGE_MASK);
@@ -513,18 +513,8 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 	}
 
 	master_ptl = pte_lockptr(mm, master_pmd);
-	repl_ptl = pte_lockptr(mm, repl_pmd);
-
-	if (master_ptl < repl_ptl) {
-		spin_lock(master_ptl);
-		spin_lock_nested(repl_ptl, SINGLE_DEPTH_NESTING);
-	} else if (master_ptl > repl_ptl) {
-		spin_lock(repl_ptl);
+	if (master_ptl != master_pml)
 		spin_lock_nested(master_ptl, SINGLE_DEPTH_NESTING);
-	} else {
-		spin_lock(master_ptl);
-		repl_ptl = NULL;
-	}
 
 	{
 		unsigned long i;
@@ -538,17 +528,10 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 		}
 	}
 
-	if (repl_ptl && repl_ptl != master_ptl) {
-		if (master_ptl < repl_ptl) {
-			spin_unlock(repl_ptl);
-			spin_unlock(master_ptl);
-		} else {
-			spin_unlock(master_ptl);
-			spin_unlock(repl_ptl);
-		}
-	} else {
+	if (master_ptl != master_pml)
 		spin_unlock(master_ptl);
-	}
+
+	spin_unlock(master_pml);
 
 	return 0;
 }
@@ -639,8 +622,24 @@ int hydra_repl_fault(struct vm_fault *vmf, int fault_node)
 	return hydra_repl_try_pte(vmf, repl_node, master_node);
 }
 
+static bool hydra_pud_pmd_will_free(unsigned long pud_base, unsigned long pud_end,
+				    unsigned long floor, unsigned long ceiling)
+{
+	if (pud_base < floor)
+		return false;
+	if (ceiling) {
+		ceiling &= PUD_MASK;
+		if (!ceiling)
+			return false;
+	}
+	if (pud_end - 1 > ceiling - 1)
+		return false;
+	return true;
+}
+
 void hydra_break_chain_range(struct mm_struct *mm,
-				    unsigned long start, unsigned long end)
+				    unsigned long start, unsigned long end,
+				    unsigned long floor, unsigned long ceiling)
 {
 	unsigned long addr, next_pgd, next_p4d, next_pud, next_pmd;
 	pgd_t *pgd;
@@ -676,14 +675,8 @@ void hydra_break_chain_range(struct mm_struct *mm,
 
 					pmd = pmd_offset(pud, addr);
 					{
-						/*
-						 * Only break chains when the full PUD is
-						 * being torn down. Partial teardowns share
-						 * the PMD page with other live VMAs whose
-						 * chains must survive.
-						 */
 						unsigned long pud_base = addr & PUD_MASK;
-						if (start <= pud_base && end >= pud_base + PUD_SIZE)
+						if (hydra_pud_pmd_will_free(pud_base, next_pud, floor, ceiling))
 							hydra_break_chain(virt_to_page(pmd));
 					}
 
@@ -697,7 +690,7 @@ void hydra_break_chain_range(struct mm_struct *mm,
 						pte = pte_offset_kernel(pmd, addr);
 						{
 							unsigned long pud_base = addr & PUD_MASK;
-							if (start <= pud_base && end >= pud_base + PUD_SIZE)
+							if (hydra_pud_pmd_will_free(pud_base, next_pud, floor, ceiling))
 								hydra_break_chain(virt_to_page(pte));
 						}
 next_pmd_bc:

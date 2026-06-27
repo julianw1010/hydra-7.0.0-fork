@@ -477,7 +477,8 @@ void free_pgtables(struct mmu_gather *tlb, struct unmap_desc *unmap)
 				next ? next->vm_start : unmap->pg_end;
 			int i;
 
-			hydra_break_chain_range(tlb->mm, addr, vma->vm_end);
+			hydra_break_chain_range(tlb->mm, addr, vma->vm_end,
+						unmap->pg_start, pg_ceiling);
 			for (i = 0; i < NUMA_NODE_COUNT; i++) {
 				if (!tlb->mm->repl_pgd[i] ||
 				    tlb->mm->repl_pgd[i] == tlb->mm->pgd)
