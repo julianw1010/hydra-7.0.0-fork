@@ -6607,8 +6607,16 @@ retry_pud:
 				return 0;
 			}
 
-			if (!huge_pmd_set_accessed(&vmf))
-				fix_spurious_fault(&vmf, PGTABLE_LEVEL_PMD);
+			{
+				pmd_t entry = pmd_mkyoung(vmf.orig_pmd);
+
+				if (flags & FAULT_FLAG_WRITE)
+					entry = pmd_mkdirty(entry);
+				if (!pmd_same(entry, vmf.orig_pmd))
+					native_set_pmd(vmf.pmd, entry);
+				else
+					fix_spurious_fault(&vmf, PGTABLE_LEVEL_PMD);
+			}
 			spin_unlock(vmf.ptl);
 			return 0;
 		}
