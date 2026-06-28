@@ -171,8 +171,7 @@ void hydra_link_page_to_replica_chain(struct page *existing_page,
 	if (!existing_page || !new_page || existing_page == new_page)
 		return;
 
-	if (WARN_ON(page_to_nid(new_page) == page_to_nid(existing_page)))
-		return;
+	BUG_ON(page_to_nid(new_page) == page_to_nid(existing_page));
 
 	hydra_chain_lock(existing_page);
 
@@ -192,8 +191,7 @@ void hydra_link_page_to_replica_chain(struct page *existing_page,
 			    chain_len, smp_processor_id());
 		    goto out_unlock;
 		}
-		if (WARN_ON(chain_len >= NUMA_NODE_COUNT))
-			goto out_unlock;
+		BUG_ON(chain_len >= NUMA_NODE_COUNT);
 		cur_page = READ_ONCE(cur_page->next_replica);
 	}
 

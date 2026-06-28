@@ -2059,6 +2059,8 @@ static inline unsigned long zap_pmd_range(struct mmu_gather *tlb,
 	pmd = pmd_offset(pud, addr);
 	do {
 		next = pmd_addr_end(addr, end);
+		if (tlb->collect_nodemask && !pmd_none(*pmd))
+			hydra_collect_repl_nodes(virt_to_page(pmd), &tlb->nodemask);
 		if (pmd_is_huge(*pmd)) {
 			if (next - addr != HPAGE_PMD_SIZE)
 				__split_huge_pmd(vma, pmd, addr, false);
@@ -2102,6 +2104,7 @@ static inline unsigned long zap_pud_range(struct mmu_gather *tlb,
 	do {
 		next = pud_addr_end(addr, end);
 		if (pud_trans_huge(*pud)) {
+			tlb->collect_nodemask = 0;
 			if (next - addr != HPAGE_PUD_SIZE)
 				split_huge_pud(vma, pud, addr);
 			else if (zap_huge_pud(tlb, vma, pud, addr))
@@ -2228,9 +2231,15 @@ void unmap_vmas(struct mmu_gather *tlb, struct unmap_desc *unmap)
 	mmu_notifier_range_init(&range, MMU_NOTIFY_UNMAP, 0, vma->vm_mm,
 				unmap->vma_start, unmap->vma_end);
 	mmu_notifier_invalidate_range_start(&range);
+	if (!tlb->fullmm && tlb->mm->lazy_repl_enabled && sysctl_hydra_tlbflush_opt) {
+		tlb->collect_nodemask = 1;
+		nodes_clear(tlb->nodemask);
+	}
 	do {
 		unsigned long start = unmap->vma_start;
 		unsigned long end = unmap->vma_end;
+		if (is_vm_hugetlb_page(vma))
+			tlb->collect_nodemask = 0;
 		hugetlb_zap_begin(vma, &start, &end);
 		unmap_single_vma(tlb, vma, start, end, &details);
 		hugetlb_zap_end(vma, &details);

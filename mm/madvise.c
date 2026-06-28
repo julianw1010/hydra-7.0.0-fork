@@ -826,6 +826,7 @@ static int madvise_free_single_vma(struct madvise_behavior *madv_behavior)
 	update_hiwater_rss(mm);
 
 	mmu_notifier_invalidate_range_start(&range);
+	tlb->vma = vma;
 	tlb_start_vma(tlb, vma);
 	walk_ops.walk_lock = get_walk_lock(madv_behavior->lock_mode);
 	walk_page_range_vma(vma, range.start, range.end,
@@ -863,6 +864,8 @@ static long madvise_dontneed_single_vma(struct madvise_behavior *madv_behavior)
 		.even_cows = true,
 	};
 
+	madv_behavior->tlb->vma = is_vm_hugetlb_page(madv_behavior->vma) ?
+				  NULL : madv_behavior->vma;
 	zap_page_range_single_batched(
 			madv_behavior->tlb, madv_behavior->vma, range->start,
 			range->end - range->start, &details);
