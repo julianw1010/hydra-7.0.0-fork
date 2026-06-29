@@ -440,11 +440,15 @@ static inline void vma_assert_detached(struct vm_area_struct *vma)
 	WARN_ON_ONCE(vma_is_attached(vma));
 }
 
+void hydra_vma_attach(struct vm_area_struct *vma);
+void hydra_vma_detach(struct vm_area_struct *vma);
+
 static inline void vma_mark_attached(struct vm_area_struct *vma)
 {
 	vma_assert_write_locked(vma);
 	vma_assert_detached(vma);
 	refcount_set_release(&vma->vm_refcnt, 1);
+	hydra_vma_attach(vma);
 }
 
 void __vma_exclude_readers_for_detach(struct vm_area_struct *vma);
@@ -453,6 +457,8 @@ static inline void vma_mark_detached(struct vm_area_struct *vma)
 {
 	vma_assert_write_locked(vma);
 	vma_assert_attached(vma);
+
+	hydra_vma_detach(vma);
 
 	/*
 	 * The VMA still being attached (refcnt > 0) - is unlikely, because the

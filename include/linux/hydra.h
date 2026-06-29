@@ -155,11 +155,21 @@ struct hydra_stats {
 	atomic_long_t thp_collapse;
 	atomic_long_t deposits;
 	atomic_long_t withdrawals;
-	atomic_long_t entries_copied;
-	atomic_long_t entries_prefetched;
+
 	atomic_long_t master_faults;
+	atomic_long_t master_faults_write;
+	atomic_long_t master_faults_present;
 	atomic_long_t replica_faults;
-	atomic_long_t replica_master_populate;
+	atomic_long_t replica_faults_write;
+	atomic_long_t replica_faults_present;
+	atomic_long_t replica_serviced_on_master;
+
+	atomic_long_t pte_entries_copied;
+	atomic_long_t pte_entries_prefetched;
+	atomic_long_t pte_copy_faults;
+	atomic_long_t pmd_entries_copied;
+	atomic_long_t pmd_entries_prefetched;
+	atomic_long_t pmd_copy_faults;
 
 	atomic_long_t tlb_shootdowns;
 	atomic_long_t tlb_shootdowns_saved;
@@ -169,26 +179,44 @@ struct hydra_stats {
 
 	atomic_long_t pt_cur[NUMA_NODE_COUNT][HYDRA_PT_NR_LEVELS];
 	atomic_long_t pt_max[NUMA_NODE_COUNT][HYDRA_PT_NR_LEVELS];
+
+	atomic_long_t vma_owner_cur[NUMA_NODE_COUNT];
+	atomic_long_t vma_owner_max[NUMA_NODE_COUNT];
 };
 
 struct hydra_stats *hydra_stats_attach(struct mm_struct *mm, int master_node);
 void hydra_stats_to_history(struct mm_struct *mm);
 void hydra_stats_seed(struct mm_struct *mm);
 void hydra_pt_account(struct page *page, int delta);
+void hydra_vma_attach(struct vm_area_struct *vma);
+void hydra_vma_detach(struct vm_area_struct *vma);
+void hydra_vma_chown(struct vm_area_struct *vma, int node);
+void hydra_vma_owner_seed(struct mm_struct *mm, int primary_node);
 int hydra_status_open(struct inode *inode, struct file *file);
 int hydra_history_open(struct inode *inode, struct file *file);
 
-static inline void hydra_stats_copied(struct mm_struct *mm, long copied,
-				      long prefetched)
+static inline void hydra_stats_copied_pte(struct mm_struct *mm, long copied)
 {
 	struct hydra_stats *s = mm->hydra_stats;
 
-	if (!s)
+	if (!s || copied <= 0)
 		return;
-	if (copied > 0)
-		atomic_long_add(copied, &s->entries_copied);
-	if (prefetched > 0)
-		atomic_long_add(prefetched, &s->entries_prefetched);
+	atomic_long_add(copied, &s->pte_entries_copied);
+	if (copied > 1)
+		atomic_long_add(copied - 1, &s->pte_entries_prefetched);
+	atomic_long_inc(&s->pte_copy_faults);
+}
+
+static inline void hydra_stats_copied_pmd(struct mm_struct *mm, long copied)
+{
+	struct hydra_stats *s = mm->hydra_stats;
+
+	if (!s || copied <= 0)
+		return;
+	atomic_long_add(copied, &s->pmd_entries_copied);
+	if (copied > 1)
+		atomic_long_add(copied - 1, &s->pmd_entries_prefetched);
+	atomic_long_inc(&s->pmd_copy_faults);
 }
 
 static inline void hydra_stats_tlb(struct mm_struct *mm, long sent,
@@ -228,23 +256,59 @@ static inline void hydra_stats_withdraw(struct mm_struct *mm)
 		atomic_long_inc(&mm->hydra_stats->withdrawals);
 }
 
-static inline void hydra_stats_replica_master_populate(struct mm_struct *mm)
+static inline void hydra_stats_mark_serviced(struct mm_struct *mm)
 {
 	if (mm->hydra_stats)
-		atomic_long_inc(&mm->hydra_stats->replica_master_populate);
+		current->hydra_master_serviced = 1;
 }
 
-static inline void hydra_stats_fault(struct mm_struct *mm,
-				     struct vm_area_struct *vma)
+struct hydra_fault_ctx {
+	struct hydra_stats *s;
+	bool replica;
+	bool write;
+	bool present;
+	unsigned int saved;
+};
+
+static inline struct hydra_fault_ctx hydra_stats_fault_begin(struct mm_struct *mm,
+		struct vm_area_struct *vma, unsigned int flags)
 {
-	struct hydra_stats *s = mm->hydra_stats;
+	struct hydra_fault_ctx c = { .s = mm->hydra_stats };
+
+	if (c.s) {
+		c.replica = (numa_node_id() != vma->master_pgd_node);
+		c.write = !!(flags & FAULT_FLAG_WRITE);
+		c.present = !!(flags & FAULT_FLAG_PROT);
+		if (c.replica) {
+			c.saved = current->hydra_master_serviced;
+			current->hydra_master_serviced = 0;
+		}
+	}
+	return c;
+}
+
+static inline void hydra_stats_fault_end(struct hydra_fault_ctx c)
+{
+	struct hydra_stats *s = c.s;
 
 	if (!s)
 		return;
-	if (numa_node_id() == vma->master_pgd_node)
-		atomic_long_inc(&s->master_faults);
-	else
+	if (c.replica) {
 		atomic_long_inc(&s->replica_faults);
+		if (c.write)
+			atomic_long_inc(&s->replica_faults_write);
+		if (c.present)
+			atomic_long_inc(&s->replica_faults_present);
+		if (current->hydra_master_serviced)
+			atomic_long_inc(&s->replica_serviced_on_master);
+		current->hydra_master_serviced = c.saved;
+	} else {
+		atomic_long_inc(&s->master_faults);
+		if (c.write)
+			atomic_long_inc(&s->master_faults_write);
+		if (c.present)
+			atomic_long_inc(&s->master_faults_present);
+	}
 }
 
 static inline void hydra_stats_numa(struct mm_struct *mm, bool huge,

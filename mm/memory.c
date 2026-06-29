@@ -6502,7 +6502,7 @@ vm_fault_t __handle_mm_fault(struct vm_area_struct *vma,
 
 	if (use_master) {
 		node_to_use = owner_node;
-		hydra_stats_replica_master_populate(mm);
+		hydra_stats_mark_serviced(mm);
 	} else {
 		node_to_use = numa_node_id();
 	}
@@ -6789,6 +6789,7 @@ vm_fault_t handle_mm_fault(struct vm_area_struct *vma, unsigned long address,
 {
 	/* If the fault handler drops the mmap_lock, vma may be freed */
 	struct mm_struct *mm = vma->vm_mm;
+	struct hydra_fault_ctx hctx;
 	vm_fault_t ret;
 	bool is_droppable;
 
@@ -6816,12 +6817,14 @@ vm_fault_t handle_mm_fault(struct vm_area_struct *vma, unsigned long address,
 
 	lru_gen_enter_fault(vma);
 
-	hydra_stats_fault(mm, vma);
+	hctx = hydra_stats_fault_begin(mm, vma, flags);
 
 	if (unlikely(is_vm_hugetlb_page(vma)))
 		ret = hugetlb_fault(vma->vm_mm, vma, address, flags);
 	else
 		ret = __handle_mm_fault(vma, address, flags, 0);
+
+	hydra_stats_fault_end(hctx);
 
 	/*
 	 * Warning: It is no longer safe to dereference vma-> after this point,

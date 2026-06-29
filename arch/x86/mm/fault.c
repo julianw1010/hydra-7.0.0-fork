@@ -1292,6 +1292,8 @@ void do_user_addr_fault(struct pt_regs *regs,
 		flags |= FAULT_FLAG_WRITE;
 	if (error_code & X86_PF_INSTR)
 		flags |= FAULT_FLAG_INSTRUCTION;
+	if (error_code & X86_PF_PROT)
+		flags |= FAULT_FLAG_PROT;
 
 	/*
 	 * We set FAULT_FLAG_USER based on the register state, not

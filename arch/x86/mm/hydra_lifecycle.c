@@ -45,6 +45,7 @@ int hydra_enable_replication(struct mm_struct *mm)
 	}
 
 	hydra_stats_attach(mm, primary_node);
+	hydra_vma_owner_seed(mm, primary_node);
 
 	for (i = 0; i < NUMA_NODE_COUNT; i++) {
 		if (i == primary_node) {

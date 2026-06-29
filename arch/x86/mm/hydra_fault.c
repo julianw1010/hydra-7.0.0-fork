@@ -239,7 +239,7 @@ static int hydra_repl_pmd_range(struct mm_struct *mm,
 	}
 
 	*prefetched_out = copied;
-	hydra_stats_copied(mm, copied, copied > 1 ? copied - 1 : 0);
+	hydra_stats_copied_pmd(mm, copied);
 
 unlock:
 	if (repl_ptl && repl_ptl != master_ptl) {
@@ -421,8 +421,7 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 		if (unlikely(new_page)) {
 			hydra_free_chain_node_rcu(new_page);
 		} else {
-			hydra_stats_copied(mm, copied,
-					   copied > 1 ? copied - 1 : 0);
+			hydra_stats_copied_pte(mm, copied);
 			return 0;
 		}
 	}
@@ -473,7 +472,7 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 
 	spin_unlock(master_pml);
 
-	hydra_stats_copied(mm, copied, copied > 1 ? copied - 1 : 0);
+	hydra_stats_copied_pte(mm, copied);
 
 	return 0;
 }

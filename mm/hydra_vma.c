@@ -1,6 +1,8 @@
 #include "vma_internal.h"
 #include "vma.h"
 
+void hydra_vma_chown(struct vm_area_struct *vma, int node);
+
 static int hydra_lookup_pud_owner(struct mm_struct *mm,
 				  unsigned long addr,
 				  struct vm_area_struct *exclude)
@@ -35,7 +37,7 @@ void hydra_fixup_pud_nodes(struct mm_struct *mm,
 
 		node = hydra_lookup_pud_owner(mm, cur->vm_start, cur);
 		if (node >= 0)
-			WRITE_ONCE(cur->master_pgd_node, node);
+			hydra_vma_chown(cur, node);
 		cur_owner = cur->master_pgd_node;
 
 		pud_boundary = (cur->vm_start & PUD_MASK) + PUD_SIZE;
