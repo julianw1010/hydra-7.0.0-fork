@@ -39,6 +39,8 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/exceptions.h>
 
+#include <linux/hydra.h>
+
 /*
  * Returns 0 if mmiotrace is disabled, or if the fault is not
  * handled by mmiotrace:
@@ -1474,6 +1476,10 @@ handle_page_fault(struct pt_regs *regs, unsigned long error_code,
 		do_kern_addr_fault(regs, error_code, address);
 	} else {
 		do_user_addr_fault(regs, error_code, address);
+
+		if (unlikely(READ_ONCE(sysctl_hydra_verify)) && current->mm &&
+		    current->mm->lazy_repl_enabled && !irqs_disabled())
+			hydra_verify_fault_addr(current->mm, address);
 	}
 	/*
 	 * page fault handling might have reenabled interrupts,

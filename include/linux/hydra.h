@@ -20,6 +20,9 @@ void hydra_break_chain_range(struct mm_struct *mm,
 			     unsigned long floor, unsigned long ceiling);
 void hydra_map_ldt_to_replicas(struct mm_struct *mm);
 
+extern int sysctl_hydra_verify;
+void hydra_verify_fault_addr(struct mm_struct *mm, unsigned long address);
+
 #define HYDRA_WALK_NONE ((void *)0x1)
 
 #define HYDRA_WALK_BAD(r) (((unsigned long)(r) & 1) == 1)

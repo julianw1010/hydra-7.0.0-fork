@@ -196,6 +196,50 @@ static const struct proc_ops hydra_tlbflush_opt_ops = {
 	.proc_release	= single_release,
 };
 
+static int hydra_verify_show(struct seq_file *m, void *v)
+{
+	seq_printf(m, "%d\n", sysctl_hydra_verify);
+	return 0;
+}
+
+static int hydra_verify_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, hydra_verify_show, NULL);
+}
+
+static ssize_t hydra_verify_write(struct file *file, const char __user *ubuf,
+				  size_t count, loff_t *ppos)
+{
+	char buf[32];
+	size_t len;
+	long val;
+
+	len = min(count, sizeof(buf) - 1);
+	if (copy_from_user(buf, ubuf, len))
+		return -EFAULT;
+	buf[len] = '\0';
+
+	if (kstrtol(buf, 10, &val))
+		return -EINVAL;
+
+	if (val < 0 || val > 1)
+		return -EINVAL;
+
+	WRITE_ONCE(sysctl_hydra_verify, (int)val);
+
+	pr_info("HYDRA: verify set to %d\n", sysctl_hydra_verify);
+
+	return count;
+}
+
+static const struct proc_ops hydra_verify_ops = {
+	.proc_open	= hydra_verify_open,
+	.proc_read	= seq_read,
+	.proc_write	= hydra_verify_write,
+	.proc_lseek	= seq_lseek,
+	.proc_release	= single_release,
+};
+
 static const struct proc_ops hydra_status_ops = {
 	.proc_open	= hydra_status_open,
 	.proc_read	= seq_read,
@@ -223,6 +267,9 @@ static int __init hydra_proc_init(void)
 		goto fail;
 
 	if (!proc_create("tlbflush_opt", 0644, hydra_dir, &hydra_tlbflush_opt_ops))
+		goto fail;
+
+	if (!proc_create("verify", 0644, hydra_dir, &hydra_verify_ops))
 		goto fail;
 
 	if (!proc_create("status", 0444, hydra_dir, &hydra_status_ops))
