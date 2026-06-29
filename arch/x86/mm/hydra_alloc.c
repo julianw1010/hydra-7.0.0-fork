@@ -40,6 +40,7 @@ void hydra_dtor_free_page(struct page *page)
 	struct ptdesc *ptdesc = page_ptdesc(page);
 
 	pagetable_dtor(ptdesc);
+	hydra_pt_account(page, -1);
 
 	if (hydra_try_return_page(page))
 		return;

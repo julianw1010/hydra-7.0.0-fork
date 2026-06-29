@@ -90,6 +90,7 @@ int hydra_alloc_replica_pmd(struct mm_struct *mm, pud_t *pud,
 			hydra_link_page_to_replica_chain(master_pmd_page, new_page);
 	} else {
 		pagetable_dtor(virt_to_ptdesc(new));
+		hydra_pt_account(new_page, -1);
 
 		if (!hydra_try_return_page(new_page))
 			__free_page(new_page);
@@ -238,6 +239,7 @@ static int hydra_repl_pmd_range(struct mm_struct *mm,
 	}
 
 	*prefetched_out = copied;
+	hydra_stats_copied(mm, copied, copied > 1 ? copied - 1 : 0);
 
 unlock:
 	if (repl_ptl && repl_ptl != master_ptl) {
@@ -325,6 +327,7 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 	pud_t *repl_pud;
 	spinlock_t *master_ptl, *master_pml;
 	unsigned long addr = pmd_addr;
+	unsigned long copied = 0;
 	int ret;
 
 	if (hydra_find_master_pmd(mm, addr, master_node, &master_pmd, &master_pmdval) ||
@@ -392,6 +395,8 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 				pte_t val = master_pte_base[i];
 				if (!pte_present(val) || pte_protnone(val))
 					val = __pte(0);
+				else
+					copied++;
 				repl_pte_base[i] = val;
 			}
 		}
@@ -416,6 +421,8 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 		if (unlikely(new_page)) {
 			hydra_free_chain_node_rcu(new_page);
 		} else {
+			hydra_stats_copied(mm, copied,
+					   copied > 1 ? copied - 1 : 0);
 			return 0;
 		}
 	}
@@ -446,6 +453,7 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 	if (master_ptl != master_pml)
 		spin_lock_nested(master_ptl, SINGLE_DEPTH_NESTING);
 
+	copied = 0;
 	{
 		unsigned long i;
 		for (i = start_idx; i < start_idx + count; i++) {
@@ -454,6 +462,8 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 				continue;
 			if (!pte_present(val) || pte_protnone(val))
 				val = __pte(0);
+			else
+				copied++;
 			repl_pte_base[i] = val;
 		}
 	}
@@ -462,6 +472,8 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 		spin_unlock(master_ptl);
 
 	spin_unlock(master_pml);
+
+	hydra_stats_copied(mm, copied, copied > 1 ? copied - 1 : 0);
 
 	return 0;
 }

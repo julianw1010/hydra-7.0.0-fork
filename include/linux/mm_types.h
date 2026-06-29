@@ -227,6 +227,7 @@ struct page {
 #endif
 	struct page *next_replica;
 	struct mm_struct *pt_owner_mm;
+	int pt_level;
 } _struct_page_alignment;
 
 /*
@@ -1160,6 +1161,7 @@ struct mm_struct {
 		unsigned long task_size;	/* size of task vm space */
 		bool          lazy_repl_enabled;
 		pgd_t * repl_pgd[NUMA_NODE_COUNT];
+		struct hydra_stats *hydra_stats;
 		pgd_t * pgd;
 
 #ifdef CONFIG_MEMBARRIER

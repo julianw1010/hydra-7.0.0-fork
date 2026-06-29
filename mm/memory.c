@@ -6179,6 +6179,7 @@ static vm_fault_t do_numa_page(struct vm_fault *vmf)
 
 	/* Migrate to the requested node */
 	if (!migrate_misplaced_folio(folio, target_nid)) {
+		hydra_stats_numa(vma->vm_mm, false, nid, target_nid);
 		nid = target_nid;
 		flags |= TNF_MIGRATED;
 		task_numa_fault(last_cpupid, nid, nr_pages, flags);
@@ -6501,6 +6502,7 @@ vm_fault_t __handle_mm_fault(struct vm_area_struct *vma,
 
 	if (use_master) {
 		node_to_use = owner_node;
+		hydra_stats_replica_master_populate(mm);
 	} else {
 		node_to_use = numa_node_id();
 	}
@@ -6814,6 +6816,8 @@ vm_fault_t handle_mm_fault(struct vm_area_struct *vma, unsigned long address,
 
 	lru_gen_enter_fault(vma);
 
+	hydra_stats_fault(mm, vma);
+
 	if (unlikely(is_vm_hugetlb_page(vma)))
 		ret = hugetlb_fault(vma->vm_mm, vma, address, flags);
 	else
@@ -6915,6 +6919,7 @@ int __pmd_alloc(struct mm_struct *mm, pud_t *pud, unsigned long address)
 	} else {
 		/* Return page to Hydra cache if possible before freeing. */
 		pagetable_dtor(virt_to_ptdesc(new));
+		hydra_pt_account(virt_to_page(new), -1);
 
 		if (!hydra_try_return_page(virt_to_page(new)))
 			__free_page(virt_to_page(new));

@@ -46,6 +46,9 @@ got_page:
 	pgd_prepopulate_pmd(mm, pgd, pmds);
 	spin_unlock(&pgd_lock);
 
+	page->pt_level = HYDRA_PT_PGD;
+	hydra_pt_account(page, 1);
+
 	return pgd;
 
 out_free_page:

@@ -2232,6 +2232,7 @@ vm_fault_t do_huge_pmd_numa_page(struct vm_fault *vmf)
 	writable = false;
 
 	if (!migrate_misplaced_folio(folio, target_nid)) {
+		hydra_stats_numa(vma->vm_mm, true, nid, target_nid);
 		flags |= TNF_MIGRATED;
 		nid = target_nid;
 		task_numa_fault(last_cpupid, nid, HPAGE_PMD_NR, flags);
@@ -3007,6 +3008,7 @@ static void __split_huge_pmd_locked(struct vm_area_struct *vma, pmd_t *pmd,
 	VM_WARN_ON_ONCE(!pmd_is_valid_softleaf(*pmd) && !pmd_trans_huge(*pmd));
 
 	count_vm_event(THP_SPLIT_PMD);
+	hydra_stats_thp_split(mm);
 
 	if (!vma_is_anonymous(vma)) {
 		old_pmd = pmdp_huge_clear_flush(vma, haddr, pmd);

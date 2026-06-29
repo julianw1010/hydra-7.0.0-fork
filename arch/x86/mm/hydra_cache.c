@@ -120,6 +120,7 @@ static void hydra_chain_node_free_rcu(struct rcu_head *head)
 	struct page *page = container_of(head, struct page, rcu_head);
 
 	pagetable_dtor(page_ptdesc(page));
+	hydra_pt_account(page, -1);
 
 	if (!hydra_try_return_page(page))
 		__free_page(page);

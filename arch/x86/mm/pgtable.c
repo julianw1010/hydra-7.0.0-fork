@@ -28,6 +28,7 @@ pgtable_t pte_alloc_one(struct mm_struct *mm, pmd_t *pmd)
 static void hydra_free_tlb_page(struct mmu_gather *tlb, struct page *page)
 {
 	pagetable_dtor(page_ptdesc(page));
+	hydra_pt_account(page, -1);
 
 	if (hydra_try_return_page(page))
 		return;
@@ -343,6 +344,9 @@ static inline pgd_t *_pgd_alloc(struct mm_struct *mm)
 	if (!page)
 		return NULL;
 
+	page->pt_level = HYDRA_PT_PGD;
+	hydra_pt_account(page, 1);
+
 	return (pgd_t *)page_address(page);
 }
 
@@ -350,6 +354,7 @@ static inline void _pgd_free(struct mm_struct *mm, pgd_t *pgd)
 {
 	struct page *page = virt_to_page(pgd);
 
+	hydra_pt_account(page, -1);
 	page->pt_owner_mm = NULL;
 
 	if (hydra_try_return_page(page))

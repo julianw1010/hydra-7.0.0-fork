@@ -196,6 +196,20 @@ static const struct proc_ops hydra_tlbflush_opt_ops = {
 	.proc_release	= single_release,
 };
 
+static const struct proc_ops hydra_status_ops = {
+	.proc_open	= hydra_status_open,
+	.proc_read	= seq_read,
+	.proc_lseek	= seq_lseek,
+	.proc_release	= seq_release,
+};
+
+static const struct proc_ops hydra_history_ops = {
+	.proc_open	= hydra_history_open,
+	.proc_read	= seq_read,
+	.proc_lseek	= seq_lseek,
+	.proc_release	= seq_release,
+};
+
 static int __init hydra_proc_init(void)
 {
 	hydra_dir = proc_mkdir("hydra", NULL);
@@ -209,6 +223,12 @@ static int __init hydra_proc_init(void)
 		goto fail;
 
 	if (!proc_create("tlbflush_opt", 0644, hydra_dir, &hydra_tlbflush_opt_ops))
+		goto fail;
+
+	if (!proc_create("status", 0444, hydra_dir, &hydra_status_ops))
+		goto fail;
+
+	if (!proc_create("history", 0444, hydra_dir, &hydra_history_ops))
 		goto fail;
 
 	return 0;

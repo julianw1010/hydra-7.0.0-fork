@@ -131,4 +131,136 @@ struct page *hydra_alloc_pt_page_near(struct mm_struct *mm, gfp_t gfp,
 struct page *hydra_alloc_pt_page(struct mm_struct *mm, gfp_t gfp,
 				 unsigned int order);
 
+#include <linux/list.h>
+#include <linux/sched.h>
+
+enum hydra_pt_level {
+	HYDRA_PT_PGD = 0,
+	HYDRA_PT_P4D,
+	HYDRA_PT_PUD,
+	HYDRA_PT_PMD,
+	HYDRA_PT_PTE,
+	HYDRA_PT_NR_LEVELS,
+};
+
+struct hydra_stats {
+	struct list_head list;
+	unsigned long id;
+	int pid;
+	char comm[TASK_COMM_LEN];
+	void *mm;
+	int master_node;
+
+	atomic_long_t thp_split;
+	atomic_long_t thp_collapse;
+	atomic_long_t deposits;
+	atomic_long_t withdrawals;
+	atomic_long_t entries_copied;
+	atomic_long_t entries_prefetched;
+	atomic_long_t master_faults;
+	atomic_long_t replica_faults;
+	atomic_long_t replica_master_populate;
+
+	atomic_long_t tlb_shootdowns;
+	atomic_long_t tlb_shootdowns_saved;
+
+	atomic_long_t numa_migrate_4k[NUMA_NODE_COUNT][NUMA_NODE_COUNT];
+	atomic_long_t numa_migrate_2m[NUMA_NODE_COUNT][NUMA_NODE_COUNT];
+
+	atomic_long_t pt_cur[NUMA_NODE_COUNT][HYDRA_PT_NR_LEVELS];
+	atomic_long_t pt_max[NUMA_NODE_COUNT][HYDRA_PT_NR_LEVELS];
+};
+
+struct hydra_stats *hydra_stats_attach(struct mm_struct *mm, int master_node);
+void hydra_stats_to_history(struct mm_struct *mm);
+void hydra_stats_seed(struct mm_struct *mm);
+void hydra_pt_account(struct page *page, int delta);
+int hydra_status_open(struct inode *inode, struct file *file);
+int hydra_history_open(struct inode *inode, struct file *file);
+
+static inline void hydra_stats_copied(struct mm_struct *mm, long copied,
+				      long prefetched)
+{
+	struct hydra_stats *s = mm->hydra_stats;
+
+	if (!s)
+		return;
+	if (copied > 0)
+		atomic_long_add(copied, &s->entries_copied);
+	if (prefetched > 0)
+		atomic_long_add(prefetched, &s->entries_prefetched);
+}
+
+static inline void hydra_stats_tlb(struct mm_struct *mm, long sent,
+				   long broadcast)
+{
+	struct hydra_stats *s = mm->hydra_stats;
+
+	if (!s)
+		return;
+	if (sent > 0)
+		atomic_long_add(sent, &s->tlb_shootdowns);
+	if (broadcast > sent)
+		atomic_long_add(broadcast - sent, &s->tlb_shootdowns_saved);
+}
+
+static inline void hydra_stats_thp_split(struct mm_struct *mm)
+{
+	if (mm->hydra_stats)
+		atomic_long_inc(&mm->hydra_stats->thp_split);
+}
+
+static inline void hydra_stats_thp_collapse(struct mm_struct *mm)
+{
+	if (mm->hydra_stats)
+		atomic_long_inc(&mm->hydra_stats->thp_collapse);
+}
+
+static inline void hydra_stats_deposit(struct mm_struct *mm)
+{
+	if (mm->hydra_stats)
+		atomic_long_inc(&mm->hydra_stats->deposits);
+}
+
+static inline void hydra_stats_withdraw(struct mm_struct *mm)
+{
+	if (mm->hydra_stats)
+		atomic_long_inc(&mm->hydra_stats->withdrawals);
+}
+
+static inline void hydra_stats_replica_master_populate(struct mm_struct *mm)
+{
+	if (mm->hydra_stats)
+		atomic_long_inc(&mm->hydra_stats->replica_master_populate);
+}
+
+static inline void hydra_stats_fault(struct mm_struct *mm,
+				     struct vm_area_struct *vma)
+{
+	struct hydra_stats *s = mm->hydra_stats;
+
+	if (!s)
+		return;
+	if (numa_node_id() == vma->master_pgd_node)
+		atomic_long_inc(&s->master_faults);
+	else
+		atomic_long_inc(&s->replica_faults);
+}
+
+static inline void hydra_stats_numa(struct mm_struct *mm, bool huge,
+				    int from, int to)
+{
+	struct hydra_stats *s = mm->hydra_stats;
+
+	if (!s)
+		return;
+	if (from < 0 || from >= NUMA_NODE_COUNT ||
+	    to < 0 || to >= NUMA_NODE_COUNT)
+		return;
+	if (huge)
+		atomic_long_inc(&s->numa_migrate_2m[from][to]);
+	else
+		atomic_long_inc(&s->numa_migrate_4k[from][to]);
+}
+
 #endif

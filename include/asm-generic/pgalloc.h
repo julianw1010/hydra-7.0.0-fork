@@ -87,6 +87,9 @@ static inline pgtable_t __pte_alloc_one_noprof(struct mm_struct *mm, gfp_t gfp,
 		return NULL;
 	}
 
+	page->pt_level = HYDRA_PT_PTE;
+	hydra_pt_account(page, 1);
+
 	return page;
 }
 #define __pte_alloc_one(...)	alloc_hooks(__pte_alloc_one_noprof(__VA_ARGS__))
@@ -159,6 +162,9 @@ static inline pmd_t *pmd_alloc_one_noprof(struct mm_struct *mm, unsigned long ad
 	if (mm == &init_mm)
 		ptdesc_set_kernel(page_ptdesc(page));
 
+	page->pt_level = HYDRA_PT_PMD;
+	hydra_pt_account(page, 1);
+
 	return page_address(page);
 }
 #define pmd_alloc_one(...)	alloc_hooks(pmd_alloc_one_noprof(__VA_ARGS__))
@@ -195,6 +201,9 @@ static inline pud_t *__pud_alloc_one_noprof(struct mm_struct *mm, unsigned long 
 
 	if (mm == &init_mm)
 		ptdesc_set_kernel(page_ptdesc(page));
+
+	page->pt_level = HYDRA_PT_PUD;
+	hydra_pt_account(page, 1);
 
 	return page_address(page);
 }
@@ -254,6 +263,9 @@ static inline p4d_t *__p4d_alloc_one_noprof(struct mm_struct *mm, unsigned long 
 
 	if (mm == &init_mm)
 		ptdesc_set_kernel(page_ptdesc(page));
+
+	page->pt_level = HYDRA_PT_P4D;
+	hydra_pt_account(page, 1);
 
 	return page_address(page);
 }

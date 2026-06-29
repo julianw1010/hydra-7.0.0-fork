@@ -44,6 +44,8 @@ int hydra_enable_replication(struct mm_struct *mm)
 		}
 	}
 
+	hydra_stats_attach(mm, primary_node);
+
 	for (i = 0; i < NUMA_NODE_COUNT; i++) {
 		if (i == primary_node) {
 			mm->repl_pgd[i] = mm->pgd;
@@ -69,6 +71,8 @@ int hydra_enable_replication(struct mm_struct *mm)
 		printk(KERN_INFO "HYDRA: enabled page table replication for mm %px on %d nodes\n", mm, count);
 	}
 
+	hydra_stats_seed(mm);
+
 	mmap_write_unlock(mm);
 
 	hydra_map_ldt_to_replicas(mm);
@@ -76,19 +80,7 @@ int hydra_enable_replication(struct mm_struct *mm)
 	return 0;
 }
 
-static long kernel_set_pgtblreplpolicy(int mode, const unsigned long __user *nmask,
-				       unsigned long maxnode)
+SYSCALL_DEFINE0(set_pgtblreplpolicy)
 {
-	if (!mode) {
-		printk(KERN_INFO "HYDRA: disabling page table replication is not supported\n");
-		return -EOPNOTSUPP;
-	}
-
 	return hydra_enable_replication(current->mm);
-}
-
-SYSCALL_DEFINE3(set_pgtblreplpolicy, int, mode, const unsigned long __user *, nmask,
-		unsigned long, maxnode)
-{
-	return kernel_set_pgtblreplpolicy(mode, nmask, maxnode);
 }

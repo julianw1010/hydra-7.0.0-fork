@@ -1497,6 +1497,18 @@ void flush_tlb_mm_node_range(struct mm_struct *mm,
 		cpumask_copy(&flush_mask, &mm_mask);
 	}
 
+	if (mm->hydra_stats) {
+		long sent = cpumask_weight(&flush_mask);
+		long broadcast = cpumask_weight(&mm_mask);
+
+		if (cpumask_test_cpu(cpu, &flush_mask))
+			sent--;
+		if (cpumask_test_cpu(cpu, &mm_mask))
+			broadcast--;
+
+		hydra_stats_tlb(mm, sent, broadcast);
+	}
+
 	/*
 	 * flush_tlb_multi() is not optimized for the common case in which only
 	 * a local TLB flush is needed. Optimize this use-case by calling
