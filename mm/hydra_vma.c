@@ -50,8 +50,11 @@ void hydra_fixup_pud_nodes(struct mm_struct *mm,
 
 			{
 				VMA_ITERATOR(vmi, mm, pud_boundary);
-				if (split_vma(&vmi, cur, pud_boundary, 0))
-					return;
+				if (__split_vma(&vmi, cur, pud_boundary, 0)) {
+					pr_emerg("HYDRA: fixup_pud_nodes cannot split VMA at %lx to separate PUD owners (OOM); one-master-per-PUD invariant would be violated\n",
+						 pud_boundary);
+					BUG();
+				}
 			}
 			did_split = 1;
 			break;

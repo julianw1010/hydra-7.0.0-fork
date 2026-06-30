@@ -270,6 +270,9 @@ static inline pgoff_t vma_pgoff_offset(struct vm_area_struct *vma,
 int split_vma(struct vma_iterator *vmi, struct vm_area_struct *vma,
 	      unsigned long addr, int new_below);
 
+__must_check int __split_vma(struct vma_iterator *vmi, struct vm_area_struct *vma,
+			     unsigned long addr, int new_below);
+
 void hydra_fixup_pud_nodes(struct mm_struct *mm,
 			   struct vm_area_struct *vma);
 

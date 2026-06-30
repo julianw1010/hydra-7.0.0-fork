@@ -146,6 +146,13 @@ enum hydra_pt_level {
 	HYDRA_PT_NR_LEVELS,
 };
 
+extern atomic_long_t hydra_pt_allocs[HYDRA_PT_NR_LEVELS];
+extern atomic_long_t hydra_pt_frees[HYDRA_PT_NR_LEVELS];
+
+struct seq_file;
+int hydra_audit_run(pid_t pid);
+void hydra_audit_seq_show(struct seq_file *m);
+
 struct hydra_stats {
 	struct list_head list;
 	unsigned long id;

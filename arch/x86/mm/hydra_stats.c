@@ -13,6 +13,9 @@ static LIST_HEAD(hydra_hist_list);
 static DEFINE_SPINLOCK(hydra_stats_lock);
 static unsigned long hydra_stats_next_id;
 
+atomic_long_t hydra_pt_allocs[HYDRA_PT_NR_LEVELS];
+atomic_long_t hydra_pt_frees[HYDRA_PT_NR_LEVELS];
+
 struct hydra_stats *hydra_stats_attach(struct mm_struct *mm, int master_node)
 {
 	struct hydra_stats *s;
@@ -85,16 +88,21 @@ void hydra_pt_account(struct page *page, int delta)
 	if (!page)
 		return;
 
+	lvl = page->pt_level;
+	if (lvl < 0 || lvl >= HYDRA_PT_NR_LEVELS)
+		return;
+
+	if (delta > 0)
+		atomic_long_inc(&hydra_pt_allocs[lvl]);
+	else
+		atomic_long_inc(&hydra_pt_frees[lvl]);
+
 	mm = page->pt_owner_mm;
 	if (!mm)
 		return;
 
 	s = mm->hydra_stats;
 	if (!s)
-		return;
-
-	lvl = page->pt_level;
-	if (lvl < 0 || lvl >= HYDRA_PT_NR_LEVELS)
 		return;
 
 	nid = page_to_nid(page);
