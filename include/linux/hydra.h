@@ -23,28 +23,6 @@ void hydra_map_ldt_to_replicas(struct mm_struct *mm);
 extern int sysctl_hydra_verify;
 void hydra_verify_fault_addr(struct mm_struct *mm, unsigned long address);
 
-enum hydra_flush_reason {
-	HFS_TOTAL,
-	HFS_BC_NOTREPL,
-	HFS_BC_PGD,
-	HFS_BC_P4D,
-	HFS_BC_PUD,
-	HFS_BC_PMD_NONE,
-	HFS_BC_PMD_BAD,
-	HFS_BC_RANGE_THP,
-	HFS_BC_RANGE_PTE,
-	HFS_SCOPED_THP,
-	HFS_SCOPED_PTE,
-	HFS_NR
-};
-
-extern atomic_long_t hydra_flush_stats[HFS_NR];
-extern atomic_long_t hydra_flush_weight[NUMA_NODE_COUNT + 1];
-
-extern atomic_long_t hydra_batched_pending_flush;
-extern atomic_long_t hydra_ubc_set_pending;
-extern atomic_long_t hydra_ubc_flush;
-
 #define HYDRA_WALK_NONE ((void *)0x1)
 
 #define HYDRA_WALK_BAD(r) (((unsigned long)(r) & 1) == 1)
