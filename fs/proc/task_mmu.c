@@ -1821,7 +1821,6 @@ static ssize_t clear_refs_write(struct file *file, const char __user *buf,
 			}
 
 			inc_tlb_flush_pending(mm);
-			hydra_tlb_foreign_enter(mm);
 			mmu_notifier_range_init(&range, MMU_NOTIFY_SOFT_DIRTY,
 						0, mm, 0, -1UL);
 			mmu_notifier_invalidate_range_start(&range);
@@ -1830,7 +1829,6 @@ static ssize_t clear_refs_write(struct file *file, const char __user *buf,
 		if (type == CLEAR_REFS_SOFT_DIRTY) {
 			mmu_notifier_invalidate_range_end(&range);
 			flush_tlb_mm(mm);
-			hydra_tlb_foreign_exit(mm);
 			dec_tlb_flush_pending(mm);
 		}
 out_unlock:

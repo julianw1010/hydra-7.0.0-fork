@@ -1162,10 +1162,6 @@ struct mm_struct {
 		bool          lazy_repl_enabled;
 		pgd_t * repl_pgd[NUMA_NODE_COUNT];
 		struct hydra_stats *hydra_stats;
-		struct rb_root_cached hydra_tlb_intervals;
-		spinlock_t            hydra_tlb_lock;
-		int                   hydra_tlb_nr;
-		atomic_t              hydra_tlb_foreign;
 		pgd_t * pgd;
 
 #ifdef CONFIG_MEMBARRIER

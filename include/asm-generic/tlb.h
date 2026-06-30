@@ -14,7 +14,6 @@
 #include <linux/mmu_notifier.h>
 #include <linux/swap.h>
 #include <linux/hugetlb_inline.h>
-#include <linux/interval_tree.h>
 #include <asm/tlbflush.h>
 #include <asm/cacheflush.h>
 
@@ -339,8 +338,7 @@ struct mmu_gather {
 	 * requires a complete flush of the tlb
 	 */
 	unsigned int		need_flush_all : 1,
-                        collect_nodemask : 1,
-                        hydra_registered : 1;
+                        collect_nodemask : 1;
 
 	/*
 	 * we have removed page directories
@@ -385,7 +383,6 @@ struct mmu_gather {
 
 	struct vm_area_struct *vma;
 	nodemask_t nodemask;
-	struct interval_tree_node hydra_node;
 
 #ifndef CONFIG_MMU_GATHER_NO_GATHER
 	struct mmu_gather_batch *active;
@@ -567,16 +564,10 @@ static inline unsigned long tlb_get_unmap_size(struct mmu_gather *tlb)
  * case where we're doing a full MM flush.  When we're doing a munmap,
  * the vmas are adjusted to only cover the region to be torn down.
  */
-void hydra_tlb_register(struct mmu_gather *tlb, unsigned long start,
-		       unsigned long end);
-
 static inline void tlb_start_vma(struct mmu_gather *tlb, struct vm_area_struct *vma)
 {
 	if (tlb->fullmm)
 		return;
-
-	if (tlb->mm->lazy_repl_enabled)
-		hydra_tlb_register(tlb, vma->vm_start, vma->vm_end);
 
 	tlb_update_vma_flags(tlb, vma);
 #ifndef CONFIG_MMU_GATHER_NO_FLUSH_CACHE

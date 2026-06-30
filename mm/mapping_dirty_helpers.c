@@ -186,7 +186,6 @@ static int wp_clean_pre_vma(unsigned long start, unsigned long end,
 	 * tlb_gather_mmu() records the full range.
 	 */
 	inc_tlb_flush_pending(walk->mm);
-	hydra_tlb_foreign_enter(walk->mm);
 
 	return 0;
 }
@@ -209,7 +208,6 @@ static void wp_clean_post_vma(struct mm_walk *walk)
 				wpwalk->tlbflush_end);
 
 	mmu_notifier_invalidate_range_end(&wpwalk->range);
-	hydra_tlb_foreign_exit(walk->mm);
 	dec_tlb_flush_pending(walk->mm);
 }
 

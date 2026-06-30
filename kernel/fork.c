@@ -1101,10 +1101,6 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 	atomic64_set(&mm->pinned_vm, 0);
 	mm->lazy_repl_enabled = false;
 	mm->hydra_stats = NULL;
-	mm->hydra_tlb_intervals = RB_ROOT_CACHED;
-	spin_lock_init(&mm->hydra_tlb_lock);
-	mm->hydra_tlb_nr = 0;
-	atomic_set(&mm->hydra_tlb_foreign, 0);
 	memset(&mm->rss_stat, 0, sizeof(mm->rss_stat));
 	spin_lock_init(&mm->page_table_lock);
 	spin_lock_init(&mm->arg_lock);
