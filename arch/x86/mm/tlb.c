@@ -1469,6 +1469,7 @@ void flush_tlb_mm_node_range(struct mm_struct *mm,
 	cpumask_t flush_mask;
 	cpumask_t mm_mask;
 	bool coalesce;
+	bool node_ride;
 
 	cpumask_clear(&flush_mask);
 	cpumask_clear(&mm_mask);
@@ -1484,6 +1485,8 @@ void flush_tlb_mm_node_range(struct mm_struct *mm,
 	coalesce = mm->lazy_repl_enabled &&
 		   READ_ONCE(sysctl_hydra_tlbflush_coalesce) &&
 		   !nodemask && end == TLB_FLUSH_ALL;
+	node_ride = mm->lazy_repl_enabled &&
+		    READ_ONCE(sysctl_hydra_tlbflush_coalesce) && nodemask;
 
 	/* This is also a barrier that synchronizes with switch_mm(). */
 	new_tlb_gen = inc_mm_tlb_gen(mm);
@@ -1500,6 +1503,18 @@ void flush_tlb_mm_node_range(struct mm_struct *mm,
 		cpumask_and(&flush_mask, &flush_mask, &mm_mask);
 	} else {
 		cpumask_copy(&flush_mask, &mm_mask);
+	}
+
+	if (node_ride && cpumask_any_but(&flush_mask, cpu) < nr_cpu_ids &&
+	    hydra_flush_coalesce_try_ride(mm, new_tlb_gen)) {
+		if (mm->hydra_stats) {
+			long saved = cpumask_weight(&flush_mask);
+
+			if (cpumask_test_cpu(cpu, &flush_mask))
+				saved--;
+			hydra_stats_tlb_coalesced(mm, saved);
+		}
+		goto out;
 	}
 
 	if (mm->hydra_stats && !coalesce) {
@@ -1552,6 +1567,7 @@ void flush_tlb_mm_node_range(struct mm_struct *mm,
 		local_irq_enable();
 	}
 
+out:
 	put_flush_tlb_info();
 	put_cpu();
 	mmu_notifier_arch_invalidate_secondary_tlbs(mm, start, end);

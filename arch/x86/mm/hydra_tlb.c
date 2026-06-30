@@ -38,6 +38,18 @@ void hydra_flush_coalesce_leader_done(struct mm_struct *mm, u64 covered_gen)
 	spin_unlock(&mm->hydra_flush_lock);
 }
 
+bool hydra_flush_coalesce_try_ride(struct mm_struct *mm, u64 my_gen)
+{
+	for (;;) {
+		if (READ_ONCE(mm->hydra_flush_done_gen) >= my_gen)
+			return true;
+		if (!READ_ONCE(mm->hydra_flush_inflight))
+			return false;
+		while (READ_ONCE(mm->hydra_flush_inflight))
+			cpu_relax();
+	}
+}
+
 void hydra_tlb_register(struct mmu_gather *tlb, unsigned long start,
 		       unsigned long end)
 {
