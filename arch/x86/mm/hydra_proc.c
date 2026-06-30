@@ -347,6 +347,62 @@ static const struct proc_ops hydra_audit_ops = {
 	.proc_release	= single_release,
 };
 
+static int hydra_flushstats_show(struct seq_file *m, void *v)
+{
+	static const char * const names[HFS_NR] = {
+		[HFS_TOTAL]		= "total flush_tlb_vma_range calls",
+		[HFS_BC_NOTREPL]	= "broadcast: not replicated / opt off",
+		[HFS_BC_PGD]		= "broadcast: master pgd none/bad",
+		[HFS_BC_P4D]		= "broadcast: master p4d none/bad",
+		[HFS_BC_PUD]		= "broadcast: master pud none/bad",
+		[HFS_BC_PMD_NONE]	= "broadcast: master pmd none",
+		[HFS_BC_PMD_BAD]	= "broadcast: master pmd bad",
+		[HFS_BC_RANGE_THP]	= "broadcast: range > 1 PUD (THP)",
+		[HFS_BC_RANGE_PTE]	= "broadcast: range > 1 PMD (PTE)",
+		[HFS_SCOPED_THP]	= "scoped via PMD-page chain (THP)",
+		[HFS_SCOPED_PTE]	= "scoped via PTE-page chain",
+	};
+	int i;
+
+	seq_puts(m, "  flush_tlb_vma_range outcomes  (write any value to reset)\n");
+	seq_puts(m, "  ----------------------------------------------------------------\n");
+	for (i = 0; i < HFS_NR; i++)
+		seq_printf(m, "  %-38s %16ld\n", names[i],
+			   atomic_long_read(&hydra_flush_stats[i]));
+
+	seq_puts(m, "\n  scoped flushes by nodemask size  (rows = #nodes the flush targets)\n");
+	seq_puts(m, "  ----------------------------------------------------------------\n");
+	for (i = 0; i <= NUMA_NODE_COUNT; i++)
+		seq_printf(m, "  %2d node(s) %43ld\n", i,
+			   atomic_long_read(&hydra_flush_weight[i]));
+	return 0;
+}
+
+static int hydra_flushstats_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, hydra_flushstats_show, NULL);
+}
+
+static ssize_t hydra_flushstats_write(struct file *file, const char __user *ubuf,
+				      size_t count, loff_t *ppos)
+{
+	int i;
+
+	for (i = 0; i < HFS_NR; i++)
+		atomic_long_set(&hydra_flush_stats[i], 0);
+	for (i = 0; i <= NUMA_NODE_COUNT; i++)
+		atomic_long_set(&hydra_flush_weight[i], 0);
+	return count;
+}
+
+static const struct proc_ops hydra_flushstats_ops = {
+	.proc_open	= hydra_flushstats_open,
+	.proc_read	= seq_read,
+	.proc_write	= hydra_flushstats_write,
+	.proc_lseek	= seq_lseek,
+	.proc_release	= single_release,
+};
+
 static int __init hydra_proc_init(void)
 {
 	hydra_dir = proc_mkdir("hydra", NULL);
@@ -375,6 +431,9 @@ static int __init hydra_proc_init(void)
 		goto fail;
 
 	if (!proc_create("audit", 0644, hydra_dir, &hydra_audit_ops))
+		goto fail;
+
+	if (!proc_create("flushstats", 0644, hydra_dir, &hydra_flushstats_ops))
 		goto fail;
 
 	return 0;
