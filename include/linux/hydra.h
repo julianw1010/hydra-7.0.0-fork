@@ -24,7 +24,6 @@ extern int sysctl_hydra_verify;
 void hydra_verify_fault_addr(struct mm_struct *mm, unsigned long address);
 
 extern int sysctl_hydra_tlbflush_nested_opt;
-extern int sysctl_hydra_tlbflush_coalesce;
 struct mmu_gather;
 void hydra_tlb_register(struct mmu_gather *tlb, unsigned long start,
 		       unsigned long end);
@@ -32,8 +31,6 @@ bool hydra_tlb_decide(struct mmu_gather *tlb, bool nested);
 void hydra_tlb_unregister(struct mmu_gather *tlb);
 void hydra_tlb_foreign_enter(struct mm_struct *mm);
 void hydra_tlb_foreign_exit(struct mm_struct *mm);
-bool hydra_flush_coalesce_enter(struct mm_struct *mm, u64 my_gen);
-void hydra_flush_coalesce_leader_done(struct mm_struct *mm, u64 covered_gen);
 
 #define HYDRA_WALK_NONE ((void *)0x1)
 
@@ -195,8 +192,6 @@ struct hydra_stats {
 
 	atomic_long_t tlb_shootdowns;
 	atomic_long_t tlb_shootdowns_saved;
-	atomic_long_t tlb_coalesce_rode;
-	atomic_long_t tlb_coalesce_ipi_saved;
 
 	atomic_long_t numa_migrate_4k[NUMA_NODE_COUNT][NUMA_NODE_COUNT];
 	atomic_long_t numa_migrate_2m[NUMA_NODE_COUNT][NUMA_NODE_COUNT];
@@ -254,18 +249,6 @@ static inline void hydra_stats_tlb(struct mm_struct *mm, long sent,
 		atomic_long_add(sent, &s->tlb_shootdowns);
 	if (broadcast > sent)
 		atomic_long_add(broadcast - sent, &s->tlb_shootdowns_saved);
-}
-
-static inline void hydra_stats_tlb_coalesced(struct mm_struct *mm,
-					     long ipi_saved)
-{
-	struct hydra_stats *s = mm->hydra_stats;
-
-	if (!s)
-		return;
-	atomic_long_inc(&s->tlb_coalesce_rode);
-	if (ipi_saved > 0)
-		atomic_long_add(ipi_saved, &s->tlb_coalesce_ipi_saved);
 }
 
 static inline void hydra_stats_thp_split(struct mm_struct *mm)

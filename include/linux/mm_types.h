@@ -1166,11 +1166,6 @@ struct mm_struct {
 		spinlock_t            hydra_tlb_lock;
 		int                   hydra_tlb_nr;
 		atomic_t              hydra_tlb_foreign;
-		spinlock_t            hydra_flush_lock;
-		u64                   hydra_flush_done_gen;
-		bool                  hydra_flush_inflight;
-		unsigned int          hydra_flush_pool_ops;
-		unsigned int          hydra_flush_degree;
 		pgd_t * pgd;
 
 #ifdef CONFIG_MEMBARRIER

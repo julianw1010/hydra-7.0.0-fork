@@ -1468,8 +1468,6 @@ void flush_tlb_mm_node_range(struct mm_struct *mm,
 	u64 new_tlb_gen;
 	cpumask_t flush_mask;
 	cpumask_t mm_mask;
-	bool coalesce;
-	bool node_ride;
 
 	cpumask_clear(&flush_mask);
 	cpumask_clear(&mm_mask);
@@ -1481,12 +1479,6 @@ void flush_tlb_mm_node_range(struct mm_struct *mm,
 		start = 0;
 		end = TLB_FLUSH_ALL;
 	}
-
-	coalesce = mm->lazy_repl_enabled &&
-		   READ_ONCE(sysctl_hydra_tlbflush_coalesce) &&
-		   !nodemask && end == TLB_FLUSH_ALL;
-	node_ride = mm->lazy_repl_enabled &&
-		    READ_ONCE(sysctl_hydra_tlbflush_coalesce) && nodemask;
 
 	/* This is also a barrier that synchronizes with switch_mm(). */
 	new_tlb_gen = inc_mm_tlb_gen(mm);
@@ -1505,27 +1497,7 @@ void flush_tlb_mm_node_range(struct mm_struct *mm,
 		cpumask_copy(&flush_mask, &mm_mask);
 	}
 
-	if (node_ride && cpumask_any_but(&flush_mask, cpu) < nr_cpu_ids) {
-		long cost_node = cpumask_weight(&flush_mask);
-		long cost_full = cpumask_weight(&mm_mask);
-		long degree = READ_ONCE(mm->hydra_flush_degree);
-
-		if (cpumask_test_cpu(cpu, &flush_mask))
-			cost_node--;
-		if (cpumask_test_cpu(cpu, &mm_mask))
-			cost_full--;
-
-		if (degree * cost_node > cost_full) {
-			cpumask_copy(&flush_mask, &mm_mask);
-			start = 0;
-			end = TLB_FLUSH_ALL;
-			info->start = 0;
-			info->end = TLB_FLUSH_ALL;
-			coalesce = true;
-		}
-	}
-
-	if (mm->hydra_stats && !coalesce) {
+	if (mm->hydra_stats) {
 		long sent = cpumask_weight(&flush_mask);
 		long broadcast = cpumask_weight(&mm_mask);
 
@@ -1545,29 +1517,9 @@ void flush_tlb_mm_node_range(struct mm_struct *mm,
 	if (mm_global_asid(mm)) {
 		broadcast_tlb_flush(info);
 	} else if (cpumask_any_but(&flush_mask, cpu) < nr_cpu_ids) {
-		if (coalesce) {
-			long bcast = cpumask_weight(&mm_mask);
-
-			if (cpumask_test_cpu(cpu, &mm_mask))
-				bcast--;
-
-			if (hydra_flush_coalesce_enter(mm, new_tlb_gen)) {
-				hydra_stats_tlb_coalesced(mm, bcast);
-			} else {
-				u64 covered = atomic64_read(&mm->context.tlb_gen);
-
-				info->new_tlb_gen = covered;
-				info->trim_cpumask = should_trim_cpumask(mm);
-				flush_tlb_multi(&flush_mask, info);
-				consider_global_asid(mm);
-				hydra_flush_coalesce_leader_done(mm, covered);
-				hydra_stats_tlb(mm, bcast, bcast);
-			}
-		} else {
-			info->trim_cpumask = should_trim_cpumask(mm);
-			flush_tlb_multi(&flush_mask, info);
-			consider_global_asid(mm);
-		}
+		info->trim_cpumask = should_trim_cpumask(mm);
+		flush_tlb_multi(&flush_mask, info);
+		consider_global_asid(mm);
 	} else if (mm == this_cpu_read(cpu_tlbstate.loaded_mm)) {
 		lockdep_assert_irqs_enabled();
 		local_irq_disable();

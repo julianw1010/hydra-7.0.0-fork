@@ -417,18 +417,12 @@ static void hydra_stats_print(struct seq_file *m, struct hydra_stats *s,
 	{
 		long tlb_sent = atomic_long_read(&s->tlb_shootdowns);
 		long tlb_saved = atomic_long_read(&s->tlb_shootdowns_saved);
-		long tlb_crode = atomic_long_read(&s->tlb_coalesce_rode);
-		long tlb_csaved = atomic_long_read(&s->tlb_coalesce_ipi_saved);
 
 		hydra_print_section(m, "TLB shootdowns (remote-CPU IPIs)");
 		hydra_print_kv(m, "Total shootdowns (with optimization)", tlb_sent);
 		hydra_print_kv(m, "Shootdowns saved by node-scoping", tlb_saved);
 		hydra_print_kv(m, "Shootdowns without optimization (est)",
 			       tlb_sent + tlb_saved);
-		hydra_print_kv(m, "Full-mm broadcasts coalesced (rode peer)",
-			       tlb_crode);
-		hydra_print_kv(m, "Shootdowns saved by broadcast coalescing",
-			       tlb_csaved);
 	}
 
 	hydra_print_section(m,
