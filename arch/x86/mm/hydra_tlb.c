@@ -1,7 +1,105 @@
 #include <linux/mm.h>
 #include <linux/hydra.h>
+#include <linux/interval_tree.h>
+#include <linux/spinlock.h>
 #include <asm/pgtable.h>
 #include <asm/tlbflush.h>
+#include <asm/tlb.h>
+
+int sysctl_hydra_tlbflush_nested_opt __read_mostly = 1;
+
+void hydra_tlb_register(struct mmu_gather *tlb, unsigned long start,
+		       unsigned long end)
+{
+	struct mm_struct *mm = tlb->mm;
+	unsigned long last;
+
+	if (!READ_ONCE(sysctl_hydra_tlbflush_nested_opt) ||
+	    !mm->lazy_repl_enabled || tlb->fullmm || end <= start)
+		return;
+
+	last = end - 1;
+
+	spin_lock(&mm->hydra_tlb_lock);
+	if (tlb->hydra_registered) {
+		if (start < tlb->hydra_node.start || last > tlb->hydra_node.last) {
+			interval_tree_remove(&tlb->hydra_node,
+					     &mm->hydra_tlb_intervals);
+			if (start < tlb->hydra_node.start)
+				tlb->hydra_node.start = start;
+			if (last > tlb->hydra_node.last)
+				tlb->hydra_node.last = last;
+			interval_tree_insert(&tlb->hydra_node,
+					     &mm->hydra_tlb_intervals);
+		}
+	} else {
+		tlb->hydra_node.start = start;
+		tlb->hydra_node.last = last;
+		interval_tree_insert(&tlb->hydra_node, &mm->hydra_tlb_intervals);
+		mm->hydra_tlb_nr++;
+		tlb->hydra_registered = 1;
+	}
+	spin_unlock(&mm->hydra_tlb_lock);
+}
+
+bool hydra_tlb_decide(struct mmu_gather *tlb, bool nested)
+{
+	struct mm_struct *mm = tlb->mm;
+	struct interval_tree_node *n;
+	bool force = nested;
+
+	if (!tlb->hydra_registered)
+		return nested;
+
+	spin_lock(&mm->hydra_tlb_lock);
+
+	if (nested && READ_ONCE(sysctl_hydra_tlbflush_nested_opt) &&
+	    atomic_read(&mm->hydra_tlb_foreign) == 0) {
+		force = false;
+		if (mm->hydra_tlb_nr > 1) {
+			for (n = interval_tree_iter_first(&mm->hydra_tlb_intervals,
+							  tlb->hydra_node.start,
+							  tlb->hydra_node.last);
+			     n;
+			     n = interval_tree_iter_next(n, tlb->hydra_node.start,
+							 tlb->hydra_node.last)) {
+				if (n != &tlb->hydra_node) {
+					force = true;
+					break;
+				}
+			}
+		}
+	}
+
+	spin_unlock(&mm->hydra_tlb_lock);
+	return force;
+}
+
+void hydra_tlb_unregister(struct mmu_gather *tlb)
+{
+	struct mm_struct *mm = tlb->mm;
+
+	if (!tlb->hydra_registered)
+		return;
+
+	spin_lock(&mm->hydra_tlb_lock);
+	interval_tree_remove(&tlb->hydra_node, &mm->hydra_tlb_intervals);
+	mm->hydra_tlb_nr--;
+	tlb->hydra_registered = 0;
+	spin_unlock(&mm->hydra_tlb_lock);
+}
+
+void hydra_tlb_foreign_enter(struct mm_struct *mm)
+{
+	if (mm->lazy_repl_enabled)
+		atomic_inc(&mm->hydra_tlb_foreign);
+}
+
+void hydra_tlb_foreign_exit(struct mm_struct *mm)
+{
+	if (mm->lazy_repl_enabled)
+		atomic_dec(&mm->hydra_tlb_foreign);
+}
 
 void flush_tlb_vma_range(struct vm_area_struct *vma, unsigned long start,
 			 unsigned long end, unsigned int stride_shift,

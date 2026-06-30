@@ -12,6 +12,7 @@
 #include <linux/rmap.h>
 #include <linux/pgalloc.h>
 #include <linux/hugetlb.h>
+#include <linux/hydra.h>
 
 #include <asm/tlb.h>
 
@@ -422,6 +423,7 @@ static void __tlb_gather_mmu(struct mmu_gather *tlb, struct mm_struct *mm,
 	tlb->vma = NULL;
 #endif
 	tlb->delayed_rmap = 0;
+	tlb->hydra_registered = 0;
 
 	tlb_table_init(tlb);
 #ifdef CONFIG_MMU_GATHER_PAGE_SIZE
@@ -482,6 +484,8 @@ void tlb_gather_mmu_fullmm(struct mmu_gather *tlb, struct mm_struct *mm)
 void tlb_gather_mmu_vma(struct mmu_gather *tlb, struct vm_area_struct *vma)
 {
 	tlb_gather_mmu(tlb, vma->vm_mm);
+	if (vma->vm_mm->lazy_repl_enabled)
+		hydra_tlb_register(tlb, vma->vm_start, vma->vm_end);
 	tlb_update_vma_flags(tlb, vma);
 	if (is_vm_hugetlb_page(vma))
 		/* All entries have the same size. */
@@ -515,7 +519,7 @@ void tlb_finish_mmu(struct mmu_gather *tlb)
 	 * may result in having stale TLB entries for some architectures,
 	 * e.g. aarch64, that could specify flush what level TLB.
 	 */
-	if (mm_tlb_flush_nested(tlb->mm)) {
+	if (hydra_tlb_decide(tlb, mm_tlb_flush_nested(tlb->mm))) {
 		/*
 		 * The aarch64 yields better performance with fullmm by
 		 * avoiding multiple CPUs spamming TLBI messages at the
@@ -534,5 +538,6 @@ void tlb_finish_mmu(struct mmu_gather *tlb)
 #ifndef CONFIG_MMU_GATHER_NO_GATHER
 	tlb_batch_list_free(tlb);
 #endif
+	hydra_tlb_unregister(tlb);
 	dec_tlb_flush_pending(tlb->mm);
 }

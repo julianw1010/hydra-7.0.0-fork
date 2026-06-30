@@ -23,6 +23,15 @@ void hydra_map_ldt_to_replicas(struct mm_struct *mm);
 extern int sysctl_hydra_verify;
 void hydra_verify_fault_addr(struct mm_struct *mm, unsigned long address);
 
+extern int sysctl_hydra_tlbflush_nested_opt;
+struct mmu_gather;
+void hydra_tlb_register(struct mmu_gather *tlb, unsigned long start,
+		       unsigned long end);
+bool hydra_tlb_decide(struct mmu_gather *tlb, bool nested);
+void hydra_tlb_unregister(struct mmu_gather *tlb);
+void hydra_tlb_foreign_enter(struct mm_struct *mm);
+void hydra_tlb_foreign_exit(struct mm_struct *mm);
+
 #define HYDRA_WALK_NONE ((void *)0x1)
 
 #define HYDRA_WALK_BAD(r) (((unsigned long)(r) & 1) == 1)
