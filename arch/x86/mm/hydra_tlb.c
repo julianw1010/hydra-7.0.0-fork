@@ -11,6 +11,7 @@ atomic_long_t hydra_flush_weight[NUMA_NODE_COUNT + 1];
 atomic_long_t hydra_batched_pending_flush;
 atomic_long_t hydra_ubc_set_pending;
 atomic_long_t hydra_ubc_flush;
+atomic_long_t hydra_tlbflush_dispatch[4];
 
 void flush_tlb_vma_range(struct vm_area_struct *vma, unsigned long start,
 			 unsigned long end, unsigned int stride_shift,

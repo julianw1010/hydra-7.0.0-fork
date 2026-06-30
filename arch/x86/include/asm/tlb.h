@@ -20,13 +20,17 @@ static inline void tlb_flush(struct mmu_gather *tlb)
 		end = tlb->end;
 
 		if (tlb->collect_nodemask) {
+			atomic_long_inc(&hydra_tlbflush_dispatch[0]);
 			flush_tlb_mm_node_range(tlb->mm, start, end, stride_shift, tlb->freed_tables, &tlb->nodemask);
 		} else if (tlb->vma) {
+			atomic_long_inc(&hydra_tlbflush_dispatch[1]);
 			flush_tlb_vma_range(tlb->vma, start, end, stride_shift, tlb->freed_tables);
 		} else {
+			atomic_long_inc(&hydra_tlbflush_dispatch[2]);
 			flush_tlb_mm_range(tlb->mm, start, end, stride_shift, tlb->freed_tables);
 		}
 	} else {
+		atomic_long_inc(&hydra_tlbflush_dispatch[3]);
 		flush_tlb_mm_range(tlb->mm, start, end, stride_shift, tlb->freed_tables);
 	}
 }
