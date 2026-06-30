@@ -1108,6 +1108,8 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 	spin_lock_init(&mm->hydra_flush_lock);
 	mm->hydra_flush_done_gen = 0;
 	mm->hydra_flush_inflight = false;
+	mm->hydra_flush_pool_ops = 0;
+	mm->hydra_flush_degree = 0;
 	memset(&mm->rss_stat, 0, sizeof(mm->rss_stat));
 	spin_lock_init(&mm->page_table_lock);
 	spin_lock_init(&mm->arg_lock);

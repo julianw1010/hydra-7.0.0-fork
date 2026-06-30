@@ -12,6 +12,7 @@ int sysctl_hydra_tlbflush_coalesce __read_mostly = 1;
 bool hydra_flush_coalesce_enter(struct mm_struct *mm, u64 my_gen)
 {
 	spin_lock(&mm->hydra_flush_lock);
+	mm->hydra_flush_pool_ops++;
 	for (;;) {
 		if (mm->hydra_flush_done_gen >= my_gen) {
 			spin_unlock(&mm->hydra_flush_lock);
@@ -34,6 +35,9 @@ void hydra_flush_coalesce_leader_done(struct mm_struct *mm, u64 covered_gen)
 	spin_lock(&mm->hydra_flush_lock);
 	if (covered_gen > mm->hydra_flush_done_gen)
 		mm->hydra_flush_done_gen = covered_gen;
+	mm->hydra_flush_degree = mm->hydra_flush_pool_ops ?
+				 mm->hydra_flush_pool_ops : 1;
+	mm->hydra_flush_pool_ops = 0;
 	mm->hydra_flush_inflight = false;
 	spin_unlock(&mm->hydra_flush_lock);
 }

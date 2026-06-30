@@ -1508,14 +1508,14 @@ void flush_tlb_mm_node_range(struct mm_struct *mm,
 	if (node_ride && cpumask_any_but(&flush_mask, cpu) < nr_cpu_ids) {
 		long cost_node = cpumask_weight(&flush_mask);
 		long cost_full = cpumask_weight(&mm_mask);
-		long pending = atomic_read(&mm->tlb_flush_pending);
+		long degree = READ_ONCE(mm->hydra_flush_degree);
 
 		if (cpumask_test_cpu(cpu, &flush_mask))
 			cost_node--;
 		if (cpumask_test_cpu(cpu, &mm_mask))
 			cost_full--;
 
-		if (pending * cost_node > cost_full) {
+		if (degree * cost_node > cost_full) {
 			cpumask_copy(&flush_mask, &mm_mask);
 			start = 0;
 			end = TLB_FLUSH_ALL;
