@@ -41,6 +41,10 @@ enum hydra_flush_reason {
 extern atomic_long_t hydra_flush_stats[HFS_NR];
 extern atomic_long_t hydra_flush_weight[NUMA_NODE_COUNT + 1];
 
+extern atomic_long_t hydra_batched_pending_flush;
+extern atomic_long_t hydra_ubc_set_pending;
+extern atomic_long_t hydra_ubc_flush;
+
 #define HYDRA_WALK_NONE ((void *)0x1)
 
 #define HYDRA_WALK_BAD(r) (((unsigned long)(r) & 1) == 1)

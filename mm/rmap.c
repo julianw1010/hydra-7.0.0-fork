@@ -717,6 +717,7 @@ void try_to_unmap_flush(void)
 	if (!tlb_ubc->flush_required)
 		return;
 
+	atomic_long_inc(&hydra_ubc_flush);
 	arch_tlbbatch_flush(&tlb_ubc->arch);
 	tlb_ubc->flush_required = false;
 	tlb_ubc->writable = false;
@@ -751,6 +752,7 @@ static void set_tlb_ubc_flush_pending(struct mm_struct *mm, pte_t pteval,
 	if (!pte_accessible(mm, pteval))
 		return;
 
+	atomic_long_inc(&hydra_ubc_set_pending);
 	arch_tlbbatch_add_pending(&tlb_ubc->arch, mm, start, end);
 	tlb_ubc->flush_required = true;
 
@@ -816,6 +818,7 @@ void flush_tlb_batched_pending(struct mm_struct *mm)
 	int flushed = batch >> TLB_FLUSH_BATCH_FLUSHED_SHIFT;
 
 	if (pending != flushed) {
+		atomic_long_inc(&hydra_batched_pending_flush);
 		flush_tlb_mm(mm);
 		/*
 		 * If the new TLB flushing is pending during flushing, leave
