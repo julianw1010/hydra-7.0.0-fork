@@ -34,7 +34,6 @@ void hydra_tlb_foreign_enter(struct mm_struct *mm);
 void hydra_tlb_foreign_exit(struct mm_struct *mm);
 bool hydra_flush_coalesce_enter(struct mm_struct *mm, u64 my_gen);
 void hydra_flush_coalesce_leader_done(struct mm_struct *mm, u64 covered_gen);
-bool hydra_flush_coalesce_try_ride(struct mm_struct *mm, u64 my_gen);
 
 #define HYDRA_WALK_NONE ((void *)0x1)
 

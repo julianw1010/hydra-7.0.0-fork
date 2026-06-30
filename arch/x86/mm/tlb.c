@@ -1505,16 +1505,24 @@ void flush_tlb_mm_node_range(struct mm_struct *mm,
 		cpumask_copy(&flush_mask, &mm_mask);
 	}
 
-	if (node_ride && cpumask_any_but(&flush_mask, cpu) < nr_cpu_ids &&
-	    hydra_flush_coalesce_try_ride(mm, new_tlb_gen)) {
-		if (mm->hydra_stats) {
-			long saved = cpumask_weight(&flush_mask);
+	if (node_ride && cpumask_any_but(&flush_mask, cpu) < nr_cpu_ids) {
+		long cost_node = cpumask_weight(&flush_mask);
+		long cost_full = cpumask_weight(&mm_mask);
+		long pending = atomic_read(&mm->tlb_flush_pending);
 
-			if (cpumask_test_cpu(cpu, &flush_mask))
-				saved--;
-			hydra_stats_tlb_coalesced(mm, saved);
+		if (cpumask_test_cpu(cpu, &flush_mask))
+			cost_node--;
+		if (cpumask_test_cpu(cpu, &mm_mask))
+			cost_full--;
+
+		if (pending * cost_node > cost_full) {
+			cpumask_copy(&flush_mask, &mm_mask);
+			start = 0;
+			end = TLB_FLUSH_ALL;
+			info->start = 0;
+			info->end = TLB_FLUSH_ALL;
+			coalesce = true;
 		}
-		goto out;
 	}
 
 	if (mm->hydra_stats && !coalesce) {
@@ -1567,7 +1575,6 @@ void flush_tlb_mm_node_range(struct mm_struct *mm,
 		local_irq_enable();
 	}
 
-out:
 	put_flush_tlb_info();
 	put_cpu();
 	mmu_notifier_arch_invalidate_secondary_tlbs(mm, start, end);
