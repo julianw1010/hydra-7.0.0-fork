@@ -8,6 +8,7 @@
 extern int sysctl_hydra_repl_order;
 extern int sysctl_hydra_tlbflush_opt;
 extern int sysctl_hydra_tlbflush_nested_opt;
+extern int sysctl_hydra_tlbflush_coalesce;
 
 static struct proc_dir_entry *hydra_dir;
 
@@ -243,6 +244,52 @@ static const struct proc_ops hydra_tlbflush_nested_opt_ops = {
 	.proc_release	= single_release,
 };
 
+static int hydra_tlbflush_coalesce_show(struct seq_file *m, void *v)
+{
+	seq_printf(m, "%d\n", sysctl_hydra_tlbflush_coalesce);
+	return 0;
+}
+
+static int hydra_tlbflush_coalesce_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, hydra_tlbflush_coalesce_show, NULL);
+}
+
+static ssize_t hydra_tlbflush_coalesce_write(struct file *file,
+					     const char __user *ubuf,
+					     size_t count, loff_t *ppos)
+{
+	char buf[32];
+	size_t len;
+	long val;
+
+	len = min(count, sizeof(buf) - 1);
+	if (copy_from_user(buf, ubuf, len))
+		return -EFAULT;
+	buf[len] = '\0';
+
+	if (kstrtol(buf, 10, &val))
+		return -EINVAL;
+
+	if (val < 0 || val > 1)
+		return -EINVAL;
+
+	sysctl_hydra_tlbflush_coalesce = (int)val;
+
+	pr_info("HYDRA: tlbflush_coalesce set to %d\n",
+		sysctl_hydra_tlbflush_coalesce);
+
+	return count;
+}
+
+static const struct proc_ops hydra_tlbflush_coalesce_ops = {
+	.proc_open	= hydra_tlbflush_coalesce_open,
+	.proc_read	= seq_read,
+	.proc_write	= hydra_tlbflush_coalesce_write,
+	.proc_lseek	= seq_lseek,
+	.proc_release	= single_release,
+};
+
 static int hydra_verify_show(struct seq_file *m, void *v)
 {
 	seq_printf(m, "%d\n", sysctl_hydra_verify);
@@ -411,6 +458,10 @@ static int __init hydra_proc_init(void)
 
 	if (!proc_create("tlbflush_nested_opt", 0644, hydra_dir,
 			 &hydra_tlbflush_nested_opt_ops))
+		goto fail;
+
+	if (!proc_create("tlbflush_coalesce", 0644, hydra_dir,
+			 &hydra_tlbflush_coalesce_ops))
 		goto fail;
 
 	if (!proc_create("verify", 0644, hydra_dir, &hydra_verify_ops))
