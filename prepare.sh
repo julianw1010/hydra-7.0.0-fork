@@ -36,8 +36,17 @@ if [[ "$NUMA_NODES" -lt 1 ]]; then
 fi
 log "Detected $NUMA_NODES NUMA node(s)."
 
-log "Generating baseline defconfig..."
-make defconfig
+RUNNING_CONFIG="/boot/config-$(uname -r)"
+log "Copying running kernel config from $RUNNING_CONFIG..."
+if [[ ! -f "$RUNNING_CONFIG" ]]; then
+    echo "ERROR: running kernel config $RUNNING_CONFIG not found. Aborting." >&2
+    exit 1
+fi
+cp "$RUNNING_CONFIG" .config
+
+log "Clearing distro signing keys (would otherwise break the build)..."
+./scripts/config --set-str CONFIG_SYSTEM_TRUSTED_KEYS ""
+./scripts/config --set-str CONFIG_SYSTEM_REVOCATION_KEYS ""
 
 log "Trimming config to currently loaded modules (localmodconfig)..."
 # 'yes' keeps writing blank lines until localmodconfig stops reading stdin,
