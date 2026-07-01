@@ -111,4 +111,7 @@ log "  CONFIG_${NUMA_CONFIG_NAME} = $NUMA_NODES"
 log "Resolving dependencies (olddefconfig, pass 2)..."
 make olddefconfig
 
+log "Syncing..."
+make syncconfig
+
 log "Done. Your system is ready to build the Linux kernel."
