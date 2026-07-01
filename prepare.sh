@@ -106,6 +106,7 @@ log "  CONFIG_${NUMA_CONFIG_NAME} = $NUMA_NODES"
 ./scripts/config --enable  TRANSPARENT_HUGEPAGE
 ./scripts/config --enable  NUMA_BALANCING
 ./scripts/config --enable  MITIGATION_PAGE_TABLE_ISOLATION
+./scripts/config --disable LOCALVERSION_AUTO
 
 log "Resolving dependencies (olddefconfig, pass 2)..."
 make olddefconfig
