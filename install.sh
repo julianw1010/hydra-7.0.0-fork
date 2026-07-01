@@ -32,8 +32,9 @@ for f in "${BOOT_FILES[@]}"; do
 done
 sudo rm -f "${BOOT_FILES[@]}"
 
-log "Building kernel with $(nproc) job(s)..."
-make -j"$(nproc)"
+JOBS=$(( $(nproc) * 4 ))
+log "Building kernel with $JOBS job(s)..."
+make LD=ld.lld -j"$JOBS"
 
 log "Installing modules..."
 sudo make modules_install
