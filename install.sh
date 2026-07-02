@@ -41,13 +41,13 @@ verify_distributed_setup() {
         && _ok "iceccd running with -n ${netname} -s ${sched}" \
         || _bad "iceccd not running with -n ${netname} -s ${sched}"
 
-    grep -q '/usr/lib/icecc/bin' "$bashrc" 2>/dev/null \
-        && _ok "~/.bashrc puts icecc on PATH" \
-        || _bad "~/.bashrc missing icecc PATH"
+    [[ "$(command -v gcc)" == /usr/lib/icecc/bin/gcc ]] \
+        && _ok "gcc resolves to icecc wrapper (current env)" \
+        || _bad "gcc is NOT the icecc wrapper — PATH broken in this shell"
 
-    grep -qE 'LD=ld[.]lld' "$bashrc" 2>/dev/null \
-        && _ok "~/.bashrc has lld build alias" \
-        || _bad "~/.bashrc missing lld build alias"
+    bash -lic 'alias kbuild' 2>/dev/null | grep -qE 'LD=ld[.]lld' \
+        && _ok "kbuild alias resolves in fresh login shell" \
+        || _bad "kbuild alias missing from login config"
 
     timeout 5 bash -c ">/dev/tcp/${sched}/8765" 2>/dev/null \
         && _ok "scheduler ${sched}:8765 reachable" \
