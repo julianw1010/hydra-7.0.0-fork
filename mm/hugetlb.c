@@ -38,7 +38,6 @@
 #include <linux/mm_inline.h>
 #include <linux/padata.h>
 #include <linux/pgalloc.h>
-#include <linux/hydra.h> 
 
 #include <asm/page.h>
 #include <asm/tlb.h>
@@ -6942,7 +6941,7 @@ int huge_pmd_unshare(struct mmu_gather *tlb, struct vm_area_struct *vma,
 {
 	unsigned long sz = huge_page_size(hstate_vma(vma));
 	struct mm_struct *mm = vma->vm_mm;
-	pgd_t *pgd = hydra_pgd_offset(mm, addr, vma->master_pgd_node);
+	pgd_t *pgd = pgd_offset(mm, addr);
 	p4d_t *p4d = p4d_offset(pgd, addr);
 	pud_t *pud = pud_offset(p4d, addr);
 
@@ -7021,7 +7020,7 @@ pte_t *huge_pte_alloc(struct mm_struct *mm, struct vm_area_struct *vma,
 	pud_t *pud;
 	pte_t *pte = NULL;
 
-	pgd = hydra_pgd_offset(mm, addr, vma->master_pgd_node);
+	pgd = pgd_offset(mm, addr);
 	p4d = p4d_alloc(mm, pgd, addr);
 	if (!p4d)
 		return NULL;
@@ -7031,10 +7030,13 @@ pte_t *huge_pte_alloc(struct mm_struct *mm, struct vm_area_struct *vma,
 			pte = (pte_t *)pud;
 		} else {
 			BUG_ON(sz != PMD_SIZE);
-			if (want_pmd_share(vma, addr) && pud_none(*pud))
+			if (want_pmd_share(vma, addr) && pud_none(*pud)) {
+				pr_emerg("hugetlb: huge pmd sharing attempted; hugetlb is disabled on this kernel\n");
+				BUG();
 				pte = huge_pmd_share(mm, vma, addr, pud);
-			else
+			} else {
 				pte = (pte_t *)pmd_alloc(mm, pud, addr);
+			}
 		}
 	}
 
@@ -7057,15 +7059,14 @@ pte_t *huge_pte_alloc(struct mm_struct *mm, struct vm_area_struct *vma,
  * table.
  */
 pte_t *huge_pte_offset(struct mm_struct *mm,
-		       unsigned long addr, unsigned long sz,
-		       unsigned long master_node)
+		       unsigned long addr, unsigned long sz)
 {
 	pgd_t *pgd;
 	p4d_t *p4d;
 	pud_t *pud;
 	pmd_t *pmd;
 
-	pgd = hydra_pgd_offset(mm, addr, master_node);
+	pgd = pgd_offset(mm, addr);
 	if (!pgd_present(*pgd))
 		return NULL;
 	p4d = p4d_offset(pgd, addr);

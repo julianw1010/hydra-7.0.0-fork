@@ -864,8 +864,7 @@ static long madvise_dontneed_single_vma(struct madvise_behavior *madv_behavior)
 		.even_cows = true,
 	};
 
-	madv_behavior->tlb->vma = is_vm_hugetlb_page(madv_behavior->vma) ?
-				  NULL : madv_behavior->vma;
+	madv_behavior->tlb->vma = madv_behavior->vma;
 	zap_page_range_single_batched(
 			madv_behavior->tlb, madv_behavior->vma, range->start,
 			range->end - range->start, &details);
