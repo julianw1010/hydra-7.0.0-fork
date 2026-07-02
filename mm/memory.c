@@ -6455,8 +6455,11 @@ static vm_fault_t handle_pte_fault(struct vm_fault *vmf, int has_recursed)
 			}
 
 			changed = !pte_same(current_replica, entry);
-			if (changed)
-				native_set_pte(vmf->pte, entry);
+			if (changed &&
+			    !try_cmpxchg((long *)&vmf->pte->pte,
+					 (long *)&current_replica,
+					 *(long *)&entry))
+				goto unlock;
 		} else {
 			changed = ptep_set_access_flags(vmf->vma, vmf->address,
 							vmf->pte, entry,
@@ -6624,7 +6627,9 @@ retry_pud:
 				if (flags & FAULT_FLAG_WRITE)
 					entry = pmd_mkdirty(entry);
 				if (!pmd_same(entry, vmf.orig_pmd))
-					native_set_pmd(vmf.pmd, entry);
+					try_cmpxchg((long *)vmf.pmd,
+						    (long *)&vmf.orig_pmd,
+						    *(long *)&entry);
 				else
 					fix_spurious_fault(&vmf, PGTABLE_LEVEL_PMD);
 			}
