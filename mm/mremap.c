@@ -73,13 +73,29 @@ struct vma_remap_struct {
 	bool vmi_needs_invalidate;	/* Is the VMA iterator invalidated? */
 };
 
+static unsigned long hydra_addr_owner(struct mm_struct *mm,
+				      struct vm_area_struct *vma,
+				      unsigned long addr)
+{
+	struct vm_area_struct *cover;
+
+	if (!mm->lazy_repl_enabled)
+		return vma->master_pgd_node;
+
+	cover = find_vma(mm, addr);
+	BUG_ON(!cover);
+	BUG_ON(cover->vm_start > addr &&
+	       (cover->vm_start & PUD_MASK) != (addr & PUD_MASK));
+	return cover->master_pgd_node;
+}
+
 static pud_t *get_old_pud(struct mm_struct *mm, struct vm_area_struct *vma, unsigned long addr)
 {
 	pgd_t *pgd;
 	p4d_t *p4d;
 	pud_t *pud;
 
-	pgd = hydra_pgd_offset(mm, addr, vma->master_pgd_node);
+	pgd = hydra_pgd_offset(mm, addr, hydra_addr_owner(mm, vma, addr));
 	if (pgd_none_or_clear_bad(pgd))
 		return NULL;
 
@@ -110,31 +126,12 @@ static pmd_t *get_old_pmd(struct mm_struct *mm, struct vm_area_struct *vma, unsi
 	return pmd;
 }
 
-static unsigned long hydra_dest_pud_owner(struct mm_struct *mm, unsigned long addr,
-					  struct vm_area_struct *self)
-{
-	unsigned long pud_start = addr & ~(PUD_SIZE - 1);
-	struct vm_area_struct *existing;
-	VMA_ITERATOR(vmi, mm, pud_start);
-
-	for_each_vma_range(vmi, existing, pud_start + PUD_SIZE) {
-		if (existing == self)
-			continue;
-		return existing->master_pgd_node;
-	}
-	return self->master_pgd_node;
-}
-
 static pud_t *alloc_new_pud(struct mm_struct *mm, struct vm_area_struct *vma, unsigned long addr)
 {
 	pgd_t *pgd;
 	p4d_t *p4d;
-	unsigned long node = vma->master_pgd_node;
 
-	if (mm->lazy_repl_enabled)
-		node = hydra_dest_pud_owner(mm, addr, vma);
-
-	pgd = hydra_pgd_offset(mm, addr, node);
+	pgd = hydra_pgd_offset(mm, addr, hydra_addr_owner(mm, vma, addr));
 	p4d = p4d_alloc(mm, pgd, addr);
 	if (!p4d)
 		return NULL;
@@ -1228,6 +1225,11 @@ static int copy_vma_and_data(struct vma_remap_struct *vrm,
 	/* By merging, we may have invalidated any iterator in use. */
 	if (vma != vrm->vma)
 		vrm->vmi_needs_invalidate = true;
+
+	if (vma->vm_mm->lazy_repl_enabled) {
+		hydra_fixup_pud_nodes(vma->vm_mm, new_vma);
+		vrm->vmi_needs_invalidate = true;
+	}
 
 	vrm->vma = vma;
 	pmc.old = vma;
