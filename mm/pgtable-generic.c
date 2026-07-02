@@ -171,6 +171,8 @@ void pgtable_trans_huge_deposit(struct mm_struct *mm, pmd_t *pmdp,
 
 	hydra_stats_deposit(mm);
 
+	BUG_ON(page_to_nid(virt_to_page(pmdp)) != page_to_nid(pgtable));
+
 	/* FIFO */
 	if (!pmd_huge_pte(mm, pmdp))
 		INIT_LIST_HEAD(&pgtable->lru);
