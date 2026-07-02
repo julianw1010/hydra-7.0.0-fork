@@ -22,7 +22,6 @@
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/uaccess.h>
-#include <linux/hydra.h>
 
 #include <asm/ldt.h>
 #include <asm/tlb.h>
@@ -264,45 +263,19 @@ static void sanity_check_ldt_mapping(struct mm_struct *mm)
 
 static void map_ldt_struct_to_user(struct mm_struct *mm)
 {
-	pgd_t *pgd;
+	pgd_t *pgd = pgd_offset(mm, LDT_BASE_ADDR);
 
-	if (!boot_cpu_has(X86_FEATURE_PTI) || mm->context.ldt)
-		return;
-
-	if (mm->lazy_repl_enabled) {
-		int n;
-		for (n = 0; n < NUMA_NODE_COUNT; n++) {
-			if (!mm->repl_pgd[n])
-				continue;
-			pgd = pgd_offset_pgd(mm->repl_pgd[n], LDT_BASE_ADDR);
-			set_pgd(kernel_to_user_pgdp(pgd), *pgd);
-		}
-	} else {
-		pgd = pgd_offset(mm, LDT_BASE_ADDR);
+	if (boot_cpu_has(X86_FEATURE_PTI) && !mm->context.ldt)
 		set_pgd(kernel_to_user_pgdp(pgd), *pgd);
-	}
 }
 
 static void sanity_check_ldt_mapping(struct mm_struct *mm)
 {
-	pgd_t *pgd;
+	pgd_t *pgd = pgd_offset(mm, LDT_BASE_ADDR);
+	bool had_kernel = (pgd->pgd != 0);
+	bool had_user   = (kernel_to_user_pgdp(pgd)->pgd != 0);
 
-	if (mm->lazy_repl_enabled) {
-		int n;
-		for (n = 0; n < NUMA_NODE_COUNT; n++) {
-			if (!mm->repl_pgd[n])
-				continue;
-			pgd = pgd_offset_pgd(mm->repl_pgd[n], LDT_BASE_ADDR);
-			do_sanity_check(mm, pgd->pgd != 0,
-					kernel_to_user_pgdp(pgd)->pgd != 0);
-		}
-	} else {
-		pgd = pgd_offset(mm, LDT_BASE_ADDR);
-		bool had_kernel = (pgd->pgd != 0);
-		bool had_user   = (kernel_to_user_pgdp(pgd)->pgd != 0);
-
-		do_sanity_check(mm, had_kernel, had_user);
-	}
+	do_sanity_check(mm, had_kernel, had_user);
 }
 
 #endif /* CONFIG_X86_PAE */
@@ -341,11 +314,18 @@ map_ldt_struct(struct mm_struct *mm, struct ldt_struct *ldt, int slot)
 		unsigned long pfn;
 		pgprot_t pte_prot;
 		pte_t pte, *ptep;
-		int n, end_n;
 
 		va = (unsigned long)ldt_slot_va(slot) + offset;
 		pfn = is_vmalloc ? vmalloc_to_pfn(src) :
 			page_to_pfn(virt_to_page(src));
+		/*
+		 * Treat the PTI LDT range as a *userspace* range.
+		 * get_locked_pte() will allocate all needed pagetables
+		 * and account for them in this mm.
+		 */
+		ptep = get_locked_pte(mm, va, &ptl, 0);
+		if (!ptep)
+			return -ENOMEM;
 		/*
 		 * Map it RO so the easy to find address is not a primary
 		 * target via some kernel interface which misses a
@@ -355,23 +335,8 @@ map_ldt_struct(struct mm_struct *mm, struct ldt_struct *ldt, int slot)
 		/* Filter out unsuppored __PAGE_KERNEL* bits: */
 		pgprot_val(pte_prot) &= __supported_pte_mask;
 		pte = pfn_pte(pfn, pte_prot);
-
-		end_n = mm->lazy_repl_enabled ? NUMA_NODE_COUNT : 1;
-		for (n = 0; n < end_n; n++) {
-			if (mm->lazy_repl_enabled && !mm->repl_pgd[n])
-				continue;
-			/*
-			 * Treat the PTI LDT range as a *userspace* range.
-			 * get_locked_pte() will allocate all needed pagetables
-			 * and account for them in this mm.
-			 */
-			ptep = get_locked_pte(mm, va, &ptl, n);
-			if (!ptep)
-				return -ENOMEM;
-
-			set_pte_at(mm, va, ptep, pte);
-			pte_unmap_unlock(ptep, ptl);
-		}
+		set_pte_at(mm, va, ptep, pte);
+		pte_unmap_unlock(ptep, ptl);
 	}
 
 	/* Propagate LDT mapping to the user page-table */
@@ -398,96 +363,18 @@ static void unmap_ldt_struct(struct mm_struct *mm, struct ldt_struct *ldt)
 	for (i = 0; i < nr_pages; i++) {
 		unsigned long offset = i << PAGE_SHIFT;
 		spinlock_t *ptl;
-		int n, end_n;
+		pte_t *ptep;
 
 		va = (unsigned long)ldt_slot_va(ldt->slot) + offset;
-
-		end_n = mm->lazy_repl_enabled ? NUMA_NODE_COUNT : 1;
-		for (n = 0; n < end_n; n++) {
-			pte_t *ptep;
-
-			if (mm->lazy_repl_enabled && !mm->repl_pgd[n])
-				continue;
-
-			ptep = get_locked_pte(mm, va, &ptl, n);
-			if (!WARN_ON_ONCE(!ptep)) {
-				pte_clear(mm, va, ptep);
-				pte_unmap_unlock(ptep, ptl);
-			}
+		ptep = get_locked_pte(mm, va, &ptl, 0);
+		if (!WARN_ON_ONCE(!ptep)) {
+			pte_clear(mm, va, ptep);
+			pte_unmap_unlock(ptep, ptl);
 		}
 	}
 
 	va = (unsigned long)ldt_slot_va(ldt->slot);
 	flush_tlb_mm_range(mm, va, va + nr_pages * PAGE_SIZE, PAGE_SHIFT, false);
-}
-
-void hydra_map_ldt_to_replicas(struct mm_struct *mm)
-{
-	struct ldt_struct *ldt;
-	unsigned long va;
-	bool is_vmalloc;
-	spinlock_t *ptl;
-	int i, nr_pages;
-
-	if (!boot_cpu_has(X86_FEATURE_PTI))
-		return;
-
-	down_write(&mm->context.ldt_usr_sem);
-
-	ldt = mm->context.ldt;
-	if (!ldt || ldt->slot < 0) {
-		up_write(&mm->context.ldt_usr_sem);
-		return;
-	}
-
-	is_vmalloc = is_vmalloc_addr(ldt->entries);
-	nr_pages = DIV_ROUND_UP(ldt->nr_entries * LDT_ENTRY_SIZE, PAGE_SIZE);
-
-	for (i = 0; i < nr_pages; i++) {
-		unsigned long offset = i << PAGE_SHIFT;
-		const void *src = (char *)ldt->entries + offset;
-		unsigned long pfn;
-		pgprot_t pte_prot;
-		pte_t pte, *ptep;
-		int n;
-
-		va = (unsigned long)ldt_slot_va(ldt->slot) + offset;
-		pfn = is_vmalloc ? vmalloc_to_pfn(src) :
-			page_to_pfn(virt_to_page(src));
-		pte_prot = __pgprot(__PAGE_KERNEL_RO & ~_PAGE_GLOBAL);
-		pgprot_val(pte_prot) &= __supported_pte_mask;
-		pte = pfn_pte(pfn, pte_prot);
-
-		for (n = 0; n < NUMA_NODE_COUNT; n++) {
-			if (!mm->repl_pgd[n] || mm->repl_pgd[n] == mm->pgd)
-				continue;
-
-			ptep = get_locked_pte(mm, va, &ptl, n);
-			if (!ptep) {
-				up_write(&mm->context.ldt_usr_sem);
-				return;
-			}
-
-			set_pte_at(mm, va, ptep, pte);
-			pte_unmap_unlock(ptep, ptl);
-		}
-	}
-
-	{
-		int n;
-
-		for (n = 0; n < NUMA_NODE_COUNT; n++) {
-			pgd_t *pgd;
-
-			if (!mm->repl_pgd[n] || mm->repl_pgd[n] == mm->pgd)
-				continue;
-
-			pgd = pgd_offset_pgd(mm->repl_pgd[n], LDT_BASE_ADDR);
-			set_pgd(kernel_to_user_pgdp(pgd), *pgd);
-		}
-	}
-
-	up_write(&mm->context.ldt_usr_sem);
 }
 
 #else /* !CONFIG_MITIGATION_PAGE_TABLE_ISOLATION */
@@ -520,7 +407,7 @@ static void free_ldt_pgtables(struct mm_struct *mm)
 	 * range-tracking logic in __tlb_adjust_range().
 	 */
 	tlb_gather_mmu_fullmm(&tlb, mm);
-	free_pgd_range_repl(&tlb, start, end, start, end);
+	free_pgd_range(&tlb, start, end, start, end);
 	tlb_finish_mmu(&tlb);
 #endif
 }
@@ -696,6 +583,9 @@ static int write_ldt(void __user *ptr, unsigned long bytecount, int oldmode)
 	struct user_desc ldt_info;
 	struct desc_struct ldt;
 	int error;
+
+	pr_emerg("ldt: modify_ldt write attempted; modify_ldt is disabled on this kernel\n");
+	BUG();
 
 	error = -EINVAL;
 	if (bytecount != sizeof(ldt_info))

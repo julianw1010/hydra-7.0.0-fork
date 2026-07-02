@@ -18,7 +18,6 @@ int hydra_repl_fault(struct vm_fault *vmf, int fault_node);
 void hydra_break_chain_range(struct mm_struct *mm,
 			     unsigned long start, unsigned long end,
 			     unsigned long floor, unsigned long ceiling);
-void hydra_map_ldt_to_replicas(struct mm_struct *mm);
 
 extern int sysctl_hydra_verify;
 void hydra_verify_fault_addr(struct mm_struct *mm, unsigned long address);

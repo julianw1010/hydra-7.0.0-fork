@@ -76,8 +76,6 @@ int hydra_enable_replication(struct mm_struct *mm)
 
 	mmap_write_unlock(mm);
 
-	hydra_map_ldt_to_replicas(mm);
-
 	return 0;
 }
 
