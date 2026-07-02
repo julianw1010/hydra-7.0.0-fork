@@ -111,7 +111,7 @@ static int hugetlbfs_file_mmap_prepare(struct vm_area_desc *desc)
 	struct hstate *h = hstate_file(file);
 	vma_flags_t vma_flags;
 
-	pr_emerg("hugetlbfs: hugetlb mmap attempted; hugetlb is disabled on this kernel\n");
+	pr_emerg("hugetlb mmap attempted; hugetlb is disabled on this kernel\n");
 	BUG();
 
 	/*
