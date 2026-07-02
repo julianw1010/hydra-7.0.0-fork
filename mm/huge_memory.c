@@ -2470,6 +2470,8 @@ bool move_huge_pmd(struct vm_area_struct *vma, unsigned long old_addr,
 	pmd_t pmd;
 	struct mm_struct *mm = vma->vm_mm;
 	bool force_flush = false;
+	pgtable_t fresh_pgtable = NULL;
+	pgtable_t stale_pgtable = NULL;
 
 	/*
 	 * The destination pmd shouldn't be established, free_pgtables()
@@ -2479,6 +2481,14 @@ bool move_huge_pmd(struct vm_area_struct *vma, unsigned long old_addr,
 	if (!pmd_none(*new_pmd)) {
 		VM_BUG_ON(pmd_trans_huge(*new_pmd));
 		return false;
+	}
+
+	if (vma_is_anonymous(vma) &&
+	    page_to_nid(virt_to_page(old_pmd)) !=
+	    page_to_nid(virt_to_page(new_pmd))) {
+		fresh_pgtable = pte_alloc_one(mm, new_pmd);
+		if (!fresh_pgtable)
+			return false;
 	}
 
 	/*
@@ -2498,6 +2508,11 @@ bool move_huge_pmd(struct vm_area_struct *vma, unsigned long old_addr,
 		if (pmd_move_must_withdraw(new_ptl, old_ptl, vma)) {
 			pgtable_t pgtable;
 			pgtable = pgtable_trans_huge_withdraw(mm, old_pmd);
+			if (fresh_pgtable) {
+				stale_pgtable = pgtable;
+				pgtable = fresh_pgtable;
+				fresh_pgtable = NULL;
+			}
 			pgtable_trans_huge_deposit(mm, new_pmd, pgtable);
 		}
 		pmd = move_soft_dirty_pmd(pmd);
@@ -2509,8 +2524,14 @@ bool move_huge_pmd(struct vm_area_struct *vma, unsigned long old_addr,
 		if (new_ptl != old_ptl)
 			spin_unlock(new_ptl);
 		spin_unlock(old_ptl);
+		if (stale_pgtable)
+			pte_free(mm, stale_pgtable);
+		if (fresh_pgtable)
+			pte_free(mm, fresh_pgtable);
 		return true;
 	}
+	if (fresh_pgtable)
+		pte_free(mm, fresh_pgtable);
 	return false;
 }
 
@@ -2714,6 +2735,8 @@ int move_pages_huge_pmd(struct mm_struct *mm, pmd_t *dst_pmd, pmd_t *src_pmd, pm
 	struct folio *src_folio;
 	spinlock_t *src_ptl, *dst_ptl;
 	pgtable_t src_pgtable;
+	pgtable_t fresh_pgtable = NULL;
+	pgtable_t stale_pgtable = NULL;
 	struct mmu_notifier_range range;
 	int err = 0;
 
@@ -2754,6 +2777,16 @@ int move_pages_huge_pmd(struct mm_struct *mm, pmd_t *dst_pmd, pmd_t *src_pmd, pm
 		src_folio = NULL;
 
 	spin_unlock(src_ptl);
+
+	if (page_to_nid(virt_to_page(src_pmd)) !=
+	    page_to_nid(virt_to_page(dst_pmd))) {
+		fresh_pgtable = pte_alloc_one(mm, dst_pmd);
+		if (!fresh_pgtable) {
+			if (src_folio)
+				folio_put(src_folio);
+			return -ENOMEM;
+		}
+	}
 
 	flush_cache_range(src_vma, src_addr, src_addr + HPAGE_PMD_SIZE);
 	mmu_notifier_range_init(&range, MMU_NOTIFY_CLEAR, 0, mm, src_addr,
@@ -2805,6 +2838,11 @@ int move_pages_huge_pmd(struct mm_struct *mm, pmd_t *dst_pmd, pmd_t *src_pmd, pm
 	set_pmd_at(mm, dst_addr, dst_pmd, _dst_pmd);
 
 	src_pgtable = pgtable_trans_huge_withdraw(mm, src_pmd);
+	if (fresh_pgtable) {
+		stale_pgtable = src_pgtable;
+		src_pgtable = fresh_pgtable;
+		fresh_pgtable = NULL;
+	}
 	pgtable_trans_huge_deposit(mm, dst_pmd, src_pgtable);
 unlock_ptls:
 	double_pt_unlock(src_ptl, dst_ptl);
@@ -2814,6 +2852,10 @@ unlock_ptls:
 	mmu_notifier_invalidate_range_end(&range);
 	if (src_folio)
 		folio_put(src_folio);
+	if (stale_pgtable)
+		pte_free(mm, stale_pgtable);
+	if (fresh_pgtable)
+		pte_free(mm, fresh_pgtable);
 	return err;
 }
 #endif /* CONFIG_USERFAULTFD */
