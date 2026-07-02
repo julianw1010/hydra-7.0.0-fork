@@ -392,27 +392,6 @@ void free_pgd_range(struct mmu_gather *tlb,
 	free_pgd_range_base(tlb, addr, end, floor, ceiling, tlb->mm->pgd);
 }
 
-void free_pgd_range_repl(struct mmu_gather *tlb,
-			unsigned long addr, unsigned long end,
-			unsigned long floor, unsigned long ceiling)
-{
-	struct mm_struct *mm = tlb->mm;
-	int i;
-
-	if (!mm->lazy_repl_enabled) {
-		free_pgd_range_base(tlb, addr, end, floor, ceiling, mm->pgd);
-		return;
-	}
-
-	for (i = 0; i < NUMA_NODE_COUNT; i++) {
-		if (!mm->repl_pgd[i] || mm->repl_pgd[i] == mm->pgd)
-			continue;
-		free_pgd_range_base(tlb, addr, end, floor, ceiling,
-				    mm->repl_pgd[i]);
-	}
-	free_pgd_range_base(tlb, addr, end, floor, ceiling, mm->pgd);
-}
-
 /**
  * free_pgtables() - Free a range of page tables
  * @tlb: The mmu gather
@@ -2238,8 +2217,6 @@ void unmap_vmas(struct mmu_gather *tlb, struct unmap_desc *unmap)
 	do {
 		unsigned long start = unmap->vma_start;
 		unsigned long end = unmap->vma_end;
-		if (is_vm_hugetlb_page(vma))
-			tlb->collect_nodemask = 0;
 		hugetlb_zap_begin(vma, &start, &end);
 		unmap_single_vma(tlb, vma, start, end, &details);
 		hugetlb_zap_end(vma, &details);
@@ -6824,10 +6801,13 @@ vm_fault_t handle_mm_fault(struct vm_area_struct *vma, unsigned long address,
 
 	hctx = hydra_stats_fault_begin(mm, vma, flags);
 
-	if (unlikely(is_vm_hugetlb_page(vma)))
+	if (unlikely(is_vm_hugetlb_page(vma))) {
+		pr_emerg("hugetlb: hugetlb fault attempted; hugetlb is disabled on this kernel\n");
+		BUG();
 		ret = hugetlb_fault(vma->vm_mm, vma, address, flags);
-	else
+	} else {
 		ret = __handle_mm_fault(vma, address, flags, 0);
+	}
 
 	hydra_stats_fault_end(hctx);
 
