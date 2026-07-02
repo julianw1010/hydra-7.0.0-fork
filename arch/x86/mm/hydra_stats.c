@@ -79,23 +79,15 @@ static void hydra_bump_max(atomic_long_t *maxp, long cur)
 	}
 }
 
-void hydra_pt_account(struct page *page, int delta)
+static void hydra_pt_account_mm(struct page *page, int delta)
 {
 	struct mm_struct *mm;
 	struct hydra_stats *s;
 	int nid, lvl;
 
-	if (!page)
-		return;
-
 	lvl = page->pt_level;
 	if (lvl < 0 || lvl >= HYDRA_PT_NR_LEVELS)
 		return;
-
-	if (delta > 0)
-		atomic_long_inc(&hydra_pt_allocs[lvl]);
-	else
-		atomic_long_inc(&hydra_pt_frees[lvl]);
 
 	mm = page->pt_owner_mm;
 	if (!mm)
@@ -114,6 +106,25 @@ void hydra_pt_account(struct page *page, int delta)
 			       atomic_long_inc_return(&s->pt_cur[nid][lvl]));
 	else
 		atomic_long_dec(&s->pt_cur[nid][lvl]);
+}
+
+void hydra_pt_account(struct page *page, int delta)
+{
+	int lvl;
+
+	if (!page)
+		return;
+
+	lvl = page->pt_level;
+	if (lvl < 0 || lvl >= HYDRA_PT_NR_LEVELS)
+		return;
+
+	if (delta > 0)
+		atomic_long_inc(&hydra_pt_allocs[lvl]);
+	else
+		atomic_long_inc(&hydra_pt_frees[lvl]);
+
+	hydra_pt_account_mm(page, delta);
 }
 
 void hydra_vma_attach(struct vm_area_struct *vma)
@@ -193,7 +204,7 @@ void hydra_stats_seed(struct mm_struct *mm)
 	if (!mm->hydra_stats)
 		return;
 
-	hydra_pt_account(virt_to_page(pgd_base), 1);
+	hydra_pt_account_mm(virt_to_page(pgd_base), 1);
 
 	addr = 0;
 	pgd = pgd_offset_pgd(pgd_base, addr);
@@ -204,14 +215,14 @@ void hydra_stats_seed(struct mm_struct *mm)
 
 		p4d = p4d_offset(pgd, addr);
 		if (virt_to_page(p4d) != virt_to_page(pgd_base))
-			hydra_pt_account(virt_to_page(p4d), 1);
+			hydra_pt_account_mm(virt_to_page(p4d), 1);
 		do {
 			next_p4d = p4d_addr_end(addr, next_pgd);
 			if (p4d_none(*p4d) || p4d_bad(*p4d))
 				goto next_p4d_seed;
 
 			pud = pud_offset(p4d, addr);
-			hydra_pt_account(virt_to_page(pud), 1);
+			hydra_pt_account_mm(virt_to_page(pud), 1);
 			do {
 				next_pud = pud_addr_end(addr, next_p4d);
 				if (pud_none(*pud) || pud_bad(*pud) ||
@@ -219,7 +230,21 @@ void hydra_stats_seed(struct mm_struct *mm)
 					goto next_pud_seed;
 
 				pmd = pmd_offset(pud, addr);
-				hydra_pt_account(virt_to_page(pmd), 1);
+				hydra_pt_account_mm(virt_to_page(pmd), 1);
+				{
+					spinlock_t *dep_ptl = pmd_lockptr(mm, pmd);
+					pgtable_t dep;
+					struct page *dp;
+
+					spin_lock(dep_ptl);
+					dep = pmd_huge_pte(mm, pmd);
+					if (dep) {
+						hydra_pt_account_mm(dep, 1);
+						list_for_each_entry(dp, &dep->lru, lru)
+							hydra_pt_account_mm(dp, 1);
+					}
+					spin_unlock(dep_ptl);
+				}
 				do {
 					next_pmd = pmd_addr_end(addr, next_pud);
 					if (pmd_none(*pmd) || pmd_bad(*pmd) ||
@@ -228,7 +253,7 @@ void hydra_stats_seed(struct mm_struct *mm)
 						goto next_pmd_seed;
 
 					pte = pte_offset_kernel(pmd, addr);
-					hydra_pt_account(virt_to_page(pte), 1);
+					hydra_pt_account_mm(virt_to_page(pte), 1);
 next_pmd_seed:
 					addr = next_pmd;
 				} while (pmd++, addr != next_pud);
