@@ -40,19 +40,22 @@ void flush_tlb_vma_range(struct vm_area_struct *vma, unsigned long start,
 
 	nodes_clear(nodemask);
 
-	if (pmd_trans_huge(*pmd)) {
-		if ((start & PUD_MASK) != ((end - 1) & PUD_MASK))
-			goto broadcast;
-		hydra_collect_repl_nodes(virt_to_page(pmd), &nodemask);
-	} else {
+	if (!pmd_trans_huge(*pmd)) {
 		if (unlikely(pmd_bad(*pmd)))
 			goto broadcast;
-		if ((start & PMD_MASK) != ((end - 1) & PMD_MASK))
-			goto broadcast;
-		pte = pte_offset_kernel(pmd, start);
-		hydra_collect_repl_nodes(virt_to_page(pte), &nodemask);
+
+		if ((start & PMD_MASK) == ((end - 1) & PMD_MASK)) {
+			pte = pte_offset_kernel(pmd, start);
+			hydra_collect_repl_nodes(virt_to_page(pte), &nodemask);
+			goto do_flush;
+		}
 	}
 
+	if ((start & PUD_MASK) != ((end - 1) & PUD_MASK))
+		goto broadcast;
+	hydra_collect_repl_nodes(virt_to_page(pmd), &nodemask);
+
+do_flush:
 	flush_tlb_mm_node_range(mm, start, end, stride_shift,
 				freed_tables, &nodemask);
 	return;
