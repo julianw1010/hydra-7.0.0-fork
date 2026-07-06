@@ -163,6 +163,7 @@ struct hydra_stats {
 	char comm[TASK_COMM_LEN];
 	void *mm;
 	int master_node;
+	int ever_enabled;
 
 	atomic_long_t thp_split;
 	atomic_long_t thp_collapse;
@@ -197,14 +198,13 @@ struct hydra_stats {
 	atomic_long_t vma_owner_max[NUMA_NODE_COUNT];
 };
 
-struct hydra_stats *hydra_stats_attach(struct mm_struct *mm, int master_node);
-void hydra_stats_to_history(struct mm_struct *mm);
-void hydra_stats_seed(struct mm_struct *mm);
+struct hydra_stats *hydra_stats_attach(struct mm_struct *mm);
+void hydra_stats_mark_enabled(struct mm_struct *mm, int master_node);
+void hydra_stats_detach(struct mm_struct *mm);
 void hydra_pt_account(struct page *page, int delta);
 void hydra_vma_attach(struct vm_area_struct *vma);
 void hydra_vma_detach(struct vm_area_struct *vma);
 void hydra_vma_chown(struct vm_area_struct *vma, int node);
-void hydra_vma_owner_seed(struct mm_struct *mm, int primary_node);
 int hydra_status_open(struct inode *inode, struct file *file);
 int hydra_history_open(struct inode *inode, struct file *file);
 
@@ -289,7 +289,8 @@ static inline struct hydra_fault_ctx hydra_stats_fault_begin(struct mm_struct *m
 	struct hydra_fault_ctx c = { .s = mm->hydra_stats };
 
 	if (c.s) {
-		c.replica = (numa_node_id() != vma->master_pgd_node);
+		c.replica = mm->lazy_repl_enabled &&
+			    (numa_node_id() != vma->master_pgd_node);
 		c.write = !!(flags & FAULT_FLAG_WRITE);
 		c.present = !!(flags & FAULT_FLAG_PROT);
 		if (c.replica) {

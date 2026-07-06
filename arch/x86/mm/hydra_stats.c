@@ -16,7 +16,7 @@ static unsigned long hydra_stats_next_id;
 atomic_long_t hydra_pt_allocs[HYDRA_PT_NR_LEVELS];
 atomic_long_t hydra_pt_frees[HYDRA_PT_NR_LEVELS];
 
-struct hydra_stats *hydra_stats_attach(struct mm_struct *mm, int master_node)
+struct hydra_stats *hydra_stats_attach(struct mm_struct *mm)
 {
 	struct hydra_stats *s;
 
@@ -31,7 +31,7 @@ struct hydra_stats *hydra_stats_attach(struct mm_struct *mm, int master_node)
 	s->pid = current->pid;
 	get_task_comm(s->comm, current);
 	s->mm = mm;
-	s->master_node = master_node;
+	s->master_node = -1;
 
 	spin_lock(&hydra_stats_lock);
 	s->id = ++hydra_stats_next_id;
@@ -42,13 +42,39 @@ struct hydra_stats *hydra_stats_attach(struct mm_struct *mm, int master_node)
 	return s;
 }
 
-void hydra_stats_to_history(struct mm_struct *mm)
+void hydra_stats_mark_enabled(struct mm_struct *mm, int master_node)
+{
+	struct hydra_stats *s = mm->hydra_stats;
+
+	if (!s)
+		return;
+
+	s->master_node = master_node;
+	WRITE_ONCE(s->ever_enabled, 1);
+
+	if (mm == current->mm) {
+		s->pid = current->pid;
+		get_task_comm(s->comm, current);
+	}
+}
+
+void hydra_stats_detach(struct mm_struct *mm)
 {
 	struct hydra_stats *s = mm->hydra_stats;
 	int i, count = 0;
 
 	if (!s)
 		return;
+
+	mm->hydra_stats = NULL;
+
+	if (!s->ever_enabled) {
+		spin_lock(&hydra_stats_lock);
+		list_del(&s->list);
+		spin_unlock(&hydra_stats_lock);
+		kfree(s);
+		return;
+	}
 
 	for (i = 0; i < NUMA_NODE_COUNT; i++) {
 		if (mm->repl_pgd[i] && mm->repl_pgd[i] != mm->pgd)
@@ -58,8 +84,6 @@ void hydra_stats_to_history(struct mm_struct *mm)
 
 	printk(KERN_INFO "HYDRA: disabled page table replication for mm %px on %d nodes\n",
 	       mm, count);
-
-	mm->hydra_stats = NULL;
 
 	spin_lock(&hydra_stats_lock);
 	list_move_tail(&s->list, &hydra_hist_list);
@@ -176,96 +200,6 @@ void hydra_vma_chown(struct vm_area_struct *vma, int node)
 			       atomic_long_inc_return(&s->vma_owner_cur[node]));
 	}
 	WRITE_ONCE(vma->master_pgd_node, node);
-}
-
-void hydra_vma_owner_seed(struct mm_struct *mm, int primary_node)
-{
-	struct hydra_stats *s = mm->hydra_stats;
-	long n;
-
-	if (!s || primary_node < 0 || primary_node >= NUMA_NODE_COUNT)
-		return;
-	n = mm->map_count;
-	atomic_long_set(&s->vma_owner_cur[primary_node], n);
-	atomic_long_set(&s->vma_owner_max[primary_node], n);
-}
-
-void hydra_stats_seed(struct mm_struct *mm)
-{
-	unsigned long addr, end = TASK_SIZE;
-	unsigned long next_pgd, next_p4d, next_pud, next_pmd;
-	pgd_t *pgd_base = mm->pgd;
-	pgd_t *pgd;
-	p4d_t *p4d;
-	pud_t *pud;
-	pmd_t *pmd;
-	pte_t *pte;
-
-	if (!mm->hydra_stats)
-		return;
-
-	hydra_pt_account_mm(virt_to_page(pgd_base), 1);
-
-	addr = 0;
-	pgd = pgd_offset_pgd(pgd_base, addr);
-	do {
-		next_pgd = pgd_addr_end(addr, end);
-		if (pgd_none(*pgd) || pgd_bad(*pgd))
-			goto next_pgd_seed;
-
-		p4d = p4d_offset(pgd, addr);
-		if (virt_to_page(p4d) != virt_to_page(pgd_base))
-			hydra_pt_account_mm(virt_to_page(p4d), 1);
-		do {
-			next_p4d = p4d_addr_end(addr, next_pgd);
-			if (p4d_none(*p4d) || p4d_bad(*p4d))
-				goto next_p4d_seed;
-
-			pud = pud_offset(p4d, addr);
-			hydra_pt_account_mm(virt_to_page(pud), 1);
-			do {
-				next_pud = pud_addr_end(addr, next_p4d);
-				if (pud_none(*pud) || pud_bad(*pud) ||
-				    pud_leaf(*pud))
-					goto next_pud_seed;
-
-				pmd = pmd_offset(pud, addr);
-				hydra_pt_account_mm(virt_to_page(pmd), 1);
-				{
-					spinlock_t *dep_ptl = pmd_lockptr(mm, pmd);
-					pgtable_t dep;
-					struct page *dp;
-
-					spin_lock(dep_ptl);
-					dep = pmd_huge_pte(mm, pmd);
-					if (dep) {
-						hydra_pt_account_mm(dep, 1);
-						list_for_each_entry(dp, &dep->lru, lru)
-							hydra_pt_account_mm(dp, 1);
-					}
-					spin_unlock(dep_ptl);
-				}
-				do {
-					next_pmd = pmd_addr_end(addr, next_pud);
-					if (pmd_none(*pmd) || pmd_bad(*pmd) ||
-					    pmd_trans_huge(*pmd) ||
-					    pmd_leaf(*pmd))
-						goto next_pmd_seed;
-
-					pte = pte_offset_kernel(pmd, addr);
-					hydra_pt_account_mm(virt_to_page(pte), 1);
-next_pmd_seed:
-					addr = next_pmd;
-				} while (pmd++, addr != next_pud);
-next_pud_seed:
-				addr = next_pud;
-			} while (pud++, addr != next_p4d);
-next_p4d_seed:
-			addr = next_p4d;
-		} while (p4d++, addr != next_pgd);
-next_pgd_seed:
-		addr = next_pgd;
-	} while (pgd++, addr != end);
 }
 
 static const char * const hydra_level_name[HYDRA_PT_NR_LEVELS] = {
@@ -509,6 +443,9 @@ static void hydra_seq_stop(struct seq_file *m, void *v)
 static int hydra_seq_show(struct seq_file *m, void *v)
 {
 	struct hydra_stats *s = list_entry(v, struct hydra_stats, list);
+
+	if (!READ_ONCE(s->ever_enabled))
+		return SEQ_SKIP;
 
 	hydra_stats_print(m, s, m->private == &hydra_hist_list);
 	return 0;

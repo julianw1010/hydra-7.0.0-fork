@@ -42,12 +42,11 @@ int hydra_enable_replication(struct mm_struct *mm)
 		struct vm_area_struct *vma;
 		VMA_ITERATOR(vmi, mm, 0);
 		for_each_vma(vmi, vma) {
-			WRITE_ONCE(vma->master_pgd_node, primary_node);
+			hydra_vma_chown(vma, primary_node);
 		}
 	}
 
-	hydra_stats_attach(mm, primary_node);
-	hydra_vma_owner_seed(mm, primary_node);
+	hydra_stats_mark_enabled(mm, primary_node);
 
 	for (i = 0; i < NUMA_NODE_COUNT; i++) {
 		if (i == primary_node) {
@@ -73,8 +72,6 @@ int hydra_enable_replication(struct mm_struct *mm)
 		count++;
 		printk(KERN_INFO "HYDRA: enabled page table replication for mm %px on %d nodes\n", mm, count);
 	}
-
-	hydra_stats_seed(mm);
 
 	mmap_write_unlock(mm);
 

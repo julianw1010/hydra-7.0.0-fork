@@ -1131,6 +1131,8 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 	if (futex_mm_init(mm))
 		goto fail_mm_init;
 
+	hydra_stats_attach(mm);
+
 	if (mm_alloc_pgd(mm))
 		goto fail_nopgd;
 
@@ -1164,6 +1166,7 @@ fail_nocontext:
 fail_noid:
 	mm_free_pgd(mm);
 fail_nopgd:
+	hydra_stats_detach(mm);
 	futex_hash_free(mm);
 fail_mm_init:
 	free_mm(mm);
@@ -1195,7 +1198,7 @@ static inline void __mmput(struct mm_struct *mm)
 	ksm_exit(mm);
 	khugepaged_exit(mm); /* must run before exit_mmap */
 	exit_mmap(mm);
-	hydra_stats_to_history(mm);
+	hydra_stats_detach(mm);
 	mm_put_huge_zero_folio(mm);
 	set_mm_exe_file(mm, NULL);
 	if (!list_empty(&mm->mmlist)) {
