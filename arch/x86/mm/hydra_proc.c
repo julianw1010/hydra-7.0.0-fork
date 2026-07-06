@@ -91,7 +91,7 @@ static ssize_t hydra_cache_write(struct file *file, const char __user *ubuf,
 {
 	char buf[32];
 	size_t len;
-	long val, added, total;
+	long val, added;
 	int node, drained;
 
 	len = min(count, sizeof(buf) - 1);
@@ -111,42 +111,30 @@ static ssize_t hydra_cache_write(struct file *file, const char __user *ubuf,
 	if (val <= 0)
 		return -EINVAL;
 
-	total = 0;
 	for (node = 0; node < NUMA_NODE_COUNT; node++) {
 		if (!node_online(node))
 			continue;
 
-		added = 0;
-		while (added < val) {
+		for (added = 0; added < val; added++) {
 			struct page *page;
 
 			page = alloc_pages_node(node,
-				GFP_KERNEL | __GFP_ZERO | __GFP_THISNODE |
-				__GFP_RETRY_MAYFAIL, 0);
+				GFP_KERNEL | __GFP_ZERO | __GFP_THISNODE, 0);
 			if (!page)
-				break;
+				return -ENOMEM;
 
-			if (page_to_nid(page) != node) {
-				__free_page(page);
-				break;
-			}
+			BUG_ON(page_to_nid(page) != node);
 
 			page->next_replica = NULL;
 			page->pt_owner_mm = NULL;
 
-			if (!hydra_cache_push(page, node)) {
-				__free_page(page);
-				break;
-			}
-
-			added++;
+			if (!hydra_cache_push(page, node))
+				BUG();
 		}
-
-		total += added;
 	}
 
-	pr_info("HYDRA: cache populated %ld pages across %d nodes\n",
-		total, num_online_nodes());
+	pr_info("HYDRA: cache populated %ld pages on each of %d nodes\n",
+		val, num_online_nodes());
 
 	return count;
 }
