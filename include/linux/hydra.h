@@ -8,9 +8,12 @@
 #include <linux/atomic.h>
 #include <linux/highmem.h>
 #include <linux/bitmap.h>
+#include <linux/jump_label.h>
 
 #include <asm/pgtable.h>
 #include <asm/tlbflush.h>
+
+DECLARE_STATIC_KEY_FALSE(hydra_repl_ever_enabled);
 
 void hydra_reload_cr3(void *info);
 int hydra_enable_replication(struct mm_struct *mm);

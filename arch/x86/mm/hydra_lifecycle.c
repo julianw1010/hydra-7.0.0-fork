@@ -27,6 +27,8 @@ int hydra_enable_replication(struct mm_struct *mm)
 	if (mm->lazy_repl_enabled)
 		return 0;
 
+	static_branch_enable(&hydra_repl_ever_enabled);
+
 	mmap_write_lock(mm);
 
 	if (mm->lazy_repl_enabled) {

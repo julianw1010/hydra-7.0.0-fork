@@ -1,10 +1,13 @@
 #include <linux/mm.h>
 #include <linux/page-flags.h>
 #include <linux/spinlock.h>
+#include <linux/jump_label.h>
 #include <linux/hydra.h>
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
 #include <asm/page.h>
+
+DEFINE_STATIC_KEY_FALSE(hydra_repl_ever_enabled);
 
 static unsigned long hydra_get_entry(void *entryp)
 {
@@ -13,6 +16,9 @@ static unsigned long hydra_get_entry(void *entryp)
 
 	if (!entryp)
 		return 0;
+
+	if (!static_branch_unlikely(&hydra_repl_ever_enabled))
+		return *(unsigned long *)entryp;
 
 	if (!virt_addr_valid(entryp))
 		return *(unsigned long *)entryp;
@@ -47,6 +53,9 @@ static unsigned long hydra_get_and_clear_entry(void *entryp)
 	if (!entryp)
 		return 0;
 
+	if (!static_branch_unlikely(&hydra_repl_ever_enabled))
+		return xchg((unsigned long *)entryp, 0);
+
 	if (!virt_addr_valid(entryp))
 		return xchg((unsigned long *)entryp, 0);
 
@@ -76,6 +85,11 @@ static void hydra_set_wrprotect_entry(void *entryp)
 
 	if (!entryp)
 		return;
+
+	if (!static_branch_unlikely(&hydra_repl_ever_enabled)) {
+		clear_bit(_PAGE_BIT_RW, (unsigned long *)entryp);
+		return;
+	}
 
 	if (!virt_addr_valid(entryp)) {
 		clear_bit(_PAGE_BIT_RW, (unsigned long *)entryp);
@@ -110,6 +124,13 @@ static int hydra_test_and_clear_young_entry(void *entryp)
 
 	if (!entryp)
 		return 0;
+
+	if (!static_branch_unlikely(&hydra_repl_ever_enabled)) {
+		if (test_bit(_PAGE_BIT_ACCESSED, (unsigned long *)entryp))
+			young = test_and_clear_bit(_PAGE_BIT_ACCESSED,
+						   (unsigned long *)entryp);
+		return young;
+	}
 
 	if (!virt_addr_valid(entryp)) {
 		if (test_bit(_PAGE_BIT_ACCESSED, (unsigned long *)entryp))
@@ -155,6 +176,9 @@ void hydra_set_pte(pte_t *ptep, pte_t pteval)
 	pte_t repl_val;
 
 	native_set_pte(ptep, pteval);
+
+	if (!static_branch_unlikely(&hydra_repl_ever_enabled))
+		return;
 
 	if (!virt_addr_valid(ptep))
 		return;
@@ -204,6 +228,9 @@ void hydra_set_pmd(pmd_t *pmdp, pmd_t pmd)
 	pmd_t repl_val;
 
 	native_set_pmd(pmdp, pmd);
+
+	if (!static_branch_unlikely(&hydra_repl_ever_enabled))
+		return;
 
 	if (!virt_addr_valid(pmdp))
 		return;
@@ -264,6 +291,9 @@ pmd_t hydra_pmdp_establish(pmd_t *pmdp, pmd_t pmd)
 		old = *pmdp;
 		WRITE_ONCE(*pmdp, pmd);
 	}
+
+	if (!static_branch_unlikely(&hydra_repl_ever_enabled))
+		return old;
 
 	if (!virt_addr_valid(pmdp))
 		return old;
