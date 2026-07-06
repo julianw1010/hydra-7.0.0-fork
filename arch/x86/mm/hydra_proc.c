@@ -10,23 +10,73 @@ extern int sysctl_hydra_tlbflush_opt;
 
 static struct proc_dir_entry *hydra_dir;
 
-static int hydra_cache_show(struct seq_file *m, void *v)
+static void hydra_cache_print_row(struct seq_file *m, const char *label,
+				  const long long *vals, long long total)
 {
 	int node;
 
-	seq_printf(m, "%-6s %8s %12s %12s %12s\n",
-		   "node", "count", "hits", "misses", "returns");
+	seq_printf(m, " %-11s", label);
+	for (node = 0; node < NUMA_NODE_COUNT; node++)
+		seq_printf(m, " %10lld", vals[node]);
+	seq_printf(m, " %10lld\n", total);
+}
+
+static int hydra_cache_show(struct seq_file *m, void *v)
+{
+	long pages[NUMA_NODE_COUNT];
+	long long hits[NUMA_NODE_COUNT], misses[NUMA_NODE_COUNT];
+	long long returns[NUMA_NODE_COUNT];
+	long total_pages = 0;
+	long long total_hits = 0, total_misses = 0, total_returns = 0;
+	char buf[24];
+	long mib10;
+	int node;
 
 	for (node = 0; node < NUMA_NODE_COUNT; node++) {
 		struct hydra_cache_head *c = &hydra_cache[node];
 
-		seq_printf(m, "%-6d %8d %12lld %12lld %12lld\n",
-			   node,
-			   atomic_read(&c->count),
-			   atomic64_read(&c->hits),
-			   atomic64_read(&c->misses),
-			   atomic64_read(&c->returns));
+		pages[node] = atomic_read(&c->count);
+		hits[node] = atomic64_read(&c->hits);
+		misses[node] = atomic64_read(&c->misses);
+		returns[node] = atomic64_read(&c->returns);
+
+		total_pages += pages[node];
+		total_hits += hits[node];
+		total_misses += misses[node];
+		total_returns += returns[node];
 	}
+
+	seq_puts(m, " Hydra per-node page-table page cache\n");
+	seq_puts(m, " write N > 0: add N pages to the cache of every online node\n");
+	seq_puts(m, " write -1:    drain all nodes\n");
+	seq_puts(m, " rows = cache metric,  cols = NUMA node\n");
+	seq_puts(m, " --------------------------------------------------------------------------------------------------------------\n");
+
+	seq_printf(m, " %-11s", "");
+	for (node = 0; node < NUMA_NODE_COUNT; node++) {
+		scnprintf(buf, sizeof(buf), "n%d", node);
+		seq_printf(m, " %10s", buf);
+	}
+	seq_printf(m, " %10s\n", "TOTAL");
+
+	seq_printf(m, " %-11s", "pages");
+	for (node = 0; node < NUMA_NODE_COUNT; node++)
+		seq_printf(m, " %10ld", pages[node]);
+	seq_printf(m, " %10ld\n", total_pages);
+
+	seq_printf(m, " %-11s", "size (MiB)");
+	for (node = 0; node < NUMA_NODE_COUNT; node++) {
+		mib10 = pages[node] * (PAGE_SIZE / 1024) * 10 / 1024;
+		scnprintf(buf, sizeof(buf), "%ld.%ld", mib10 / 10, mib10 % 10);
+		seq_printf(m, " %10s", buf);
+	}
+	mib10 = total_pages * (PAGE_SIZE / 1024) * 10 / 1024;
+	scnprintf(buf, sizeof(buf), "%ld.%ld", mib10 / 10, mib10 % 10);
+	seq_printf(m, " %10s\n", buf);
+
+	hydra_cache_print_row(m, "hits", hits, total_hits);
+	hydra_cache_print_row(m, "misses", misses, total_misses);
+	hydra_cache_print_row(m, "returns", returns, total_returns);
 
 	return 0;
 }
@@ -41,8 +91,8 @@ static ssize_t hydra_cache_write(struct file *file, const char __user *ubuf,
 {
 	char buf[32];
 	size_t len;
-	long val;
-	int node, added, total, drained;
+	long val, added, total;
+	int node, drained;
 
 	len = min(count, sizeof(buf) - 1);
 	if (copy_from_user(buf, ubuf, len))
@@ -58,7 +108,7 @@ static ssize_t hydra_cache_write(struct file *file, const char __user *ubuf,
 		return count;
 	}
 
-	if (val <= 0 || val > 131072)
+	if (val <= 0)
 		return -EINVAL;
 
 	total = 0;
@@ -71,7 +121,8 @@ static ssize_t hydra_cache_write(struct file *file, const char __user *ubuf,
 			struct page *page;
 
 			page = alloc_pages_node(node,
-				GFP_KERNEL | __GFP_ZERO | __GFP_THISNODE, 0);
+				GFP_KERNEL | __GFP_ZERO | __GFP_THISNODE |
+				__GFP_RETRY_MAYFAIL, 0);
 			if (!page)
 				break;
 
@@ -94,7 +145,7 @@ static ssize_t hydra_cache_write(struct file *file, const char __user *ubuf,
 		total += added;
 	}
 
-	pr_info("HYDRA: cache populated %d pages across %d nodes\n",
+	pr_info("HYDRA: cache populated %ld pages across %d nodes\n",
 		total, num_online_nodes());
 
 	return count;
