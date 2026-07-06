@@ -355,11 +355,11 @@ static inline void _pgd_free(struct mm_struct *mm, pgd_t *pgd)
 	struct page *page = virt_to_page(pgd);
 
 	hydra_pt_account(page, -1);
-	page->pt_owner_mm = NULL;
 
 	if (hydra_try_return_page(page))
 		return;
 
+	page->pt_owner_mm = NULL;
 	__pgd_free(mm, pgd);
 }
 

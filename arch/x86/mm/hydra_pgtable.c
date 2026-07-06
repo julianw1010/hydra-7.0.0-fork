@@ -20,7 +20,7 @@ pgd_t *hydra_repl_pgd_alloc(struct mm_struct *mm, size_t nid)
 	nodemask_t nm = NODE_MASK_NONE;
 
 	if (order == 0) {
-		page = hydra_cache_pop(nid);
+		page = hydra_cache_pop(nid, true);
 		if (page)
 			goto got_page;
 	}

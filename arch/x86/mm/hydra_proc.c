@@ -49,6 +49,7 @@ static int hydra_cache_show(struct seq_file *m, void *v)
 	seq_puts(m, " Hydra per-node page-table page cache\n");
 	seq_puts(m, " write N > 0: add N pages to the cache of every online node\n");
 	seq_puts(m, " write -1:    drain all nodes\n");
+	seq_puts(m, " hits/misses/returns count only mms with replication enabled\n");
 	seq_puts(m, " rows = cache metric,  cols = NUMA node\n");
 	seq_puts(m, " --------------------------------------------------------------------------------------------------------------\n");
 
@@ -128,7 +129,7 @@ static ssize_t hydra_cache_write(struct file *file, const char __user *ubuf,
 			page->next_replica = NULL;
 			page->pt_owner_mm = NULL;
 
-			if (!hydra_cache_push(page, node))
+			if (!hydra_cache_push(page, node, false))
 				BUG();
 		}
 	}

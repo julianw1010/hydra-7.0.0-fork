@@ -88,8 +88,8 @@ struct hydra_cache_head {
 
 extern struct hydra_cache_head hydra_cache[NUMA_NODE_COUNT];
 
-extern bool hydra_cache_push(struct page *page, int node);
-extern struct page *hydra_cache_pop(int node);
+extern bool hydra_cache_push(struct page *page, int node, bool count_stats);
+extern struct page *hydra_cache_pop(int node, bool count_stats);
 extern int hydra_cache_drain_node(int node);
 extern int hydra_cache_drain_all(void);
 

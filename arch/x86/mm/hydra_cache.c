@@ -15,7 +15,7 @@ struct hydra_cache_head hydra_cache[NUMA_NODE_COUNT] = {
 	}
 };
 
-bool hydra_cache_push(struct page *page, int node)
+bool hydra_cache_push(struct page *page, int node, bool count_stats)
 {
 	struct hydra_cache_head *cache;
 	unsigned long flags;
@@ -33,12 +33,13 @@ bool hydra_cache_push(struct page *page, int node)
 	spin_unlock_irqrestore(&cache->lock, flags);
 
 	atomic_inc(&cache->count);
-	atomic64_inc(&cache->returns);
+	if (count_stats)
+		atomic64_inc(&cache->returns);
 
 	return true;
 }
 
-struct page *hydra_cache_pop(int node)
+struct page *hydra_cache_pop(int node, bool count_stats)
 {
 	struct hydra_cache_head *cache;
 	struct page *page;
@@ -53,14 +54,16 @@ struct page *hydra_cache_pop(int node)
 	page = cache->head;
 	if (!page) {
 		spin_unlock_irqrestore(&cache->lock, flags);
-		atomic64_inc(&cache->misses);
+		if (count_stats)
+			atomic64_inc(&cache->misses);
 		return NULL;
 	}
 	cache->head = page->next_replica;
 	spin_unlock_irqrestore(&cache->lock, flags);
 
 	atomic_dec(&cache->count);
-	atomic64_inc(&cache->hits);
+	if (count_stats)
+		atomic64_inc(&cache->hits);
 
 	page->next_replica = NULL;
 	SetPageHydraFromCache(page);
