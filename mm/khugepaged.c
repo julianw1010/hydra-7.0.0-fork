@@ -1193,7 +1193,7 @@ static enum scan_result collapse_huge_page(struct mm_struct *mm, unsigned long a
 		 */
 		pmd_populate(mm, pmd, pmd_pgtable(_pmd));
 		spin_unlock(pmd_ptl);
-		hydra_free_replica_chain(pmd_pgtable(_pmd));
+		hydra_free_replica_chain(pmd_pgtable(_pmd), NULL);
 		anon_vma_unlock_write(vma->anon_vma);
 		goto out_up_write;
 	}
@@ -1209,7 +1209,7 @@ static enum scan_result collapse_huge_page(struct mm_struct *mm, unsigned long a
 					   &compound_pagelist);
 	pte_unmap(pte);
 	if (unlikely(result != SCAN_SUCCEED)) {
-		hydra_free_replica_chain(pmd_pgtable(_pmd));
+		hydra_free_replica_chain(pmd_pgtable(_pmd), NULL);
 		goto out_up_write;
 	}
 
@@ -1221,7 +1221,7 @@ static enum scan_result collapse_huge_page(struct mm_struct *mm, unsigned long a
 	__folio_mark_uptodate(folio);
 	pgtable = pmd_pgtable(_pmd);
 
-	hydra_free_replica_chain(pgtable);
+	hydra_free_replica_chain(pgtable, NULL);
 
 	spin_lock(pmd_ptl);
 	BUG_ON(!pmd_none(*pmd));
@@ -1664,7 +1664,7 @@ static enum scan_result try_collapse_pte_mapped_thp(struct mm_struct *mm, unsign
 	}
 	pgt_pmd = pmdp_collapse_flush(vma, haddr, pmd);
 	pmdp_get_lockless_sync();
-	hydra_free_replica_chain(pmd_pgtable(pgt_pmd));
+	hydra_free_replica_chain(pmd_pgtable(pgt_pmd), NULL);
 	pte_unmap_unlock(start_pte, ptl);
 	if (ptl != pml)
 		spin_unlock(pml);
@@ -1820,7 +1820,7 @@ static void retract_page_tables(struct address_space *mapping, pgoff_t pgoff)
 		if (likely(file_backed_vma_is_retractable(vma))) {
 			pgt_pmd = pmdp_collapse_flush(vma, addr, pmd);
 			pmdp_get_lockless_sync();
-			hydra_free_replica_chain(pmd_pgtable(pgt_pmd));
+			hydra_free_replica_chain(pmd_pgtable(pgt_pmd), NULL);
 			success = true;
 		}
 

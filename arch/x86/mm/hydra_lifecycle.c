@@ -15,8 +15,13 @@ void hydra_reload_cr3(void *info)
 	struct mm_struct *mm = info;
 	if (this_cpu_read(cpu_tlbstate.loaded_mm) == mm) {
 		int node = numa_node_id();
-		unsigned long new_cr3 = __pa(mm->repl_pgd[node]);
-		write_cr3(new_cr3);
+		unsigned long cur_cr3 = __read_cr3();
+		unsigned long new_pa = __pa(mm->repl_pgd[node]);
+
+		if ((cur_cr3 & PAGE_MASK) != new_pa) {
+			native_write_cr3(new_pa | (cur_cr3 & ~PAGE_MASK));
+			__flush_tlb_all();
+		}
 	}
 }
 

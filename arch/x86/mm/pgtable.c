@@ -27,12 +27,12 @@ pgtable_t pte_alloc_one(struct mm_struct *mm, pmd_t *pmd)
 
 static void hydra_free_tlb_page(struct mmu_gather *tlb, struct page *page)
 {
-	pagetable_dtor(page_ptdesc(page));
 	hydra_pt_account(page, -1);
 
-	if (hydra_try_return_page(page))
-		return;
+	if (PageHydraFromCache(page))
+		hydra_cache_count_return(page->pt_owner_mm, page_to_nid(page));
 
+	page->pt_owner_mm = NULL;
 	tlb_remove_ptdesc(tlb, page_ptdesc(page));
 }
 
@@ -40,7 +40,7 @@ void ___pte_free_tlb(struct mmu_gather *tlb, struct page *pte)
 {
 	paravirt_release_pte(page_to_pfn(pte));
 	if (pte->next_replica)
-		hydra_free_replica_chain(pte);
+		hydra_free_replica_chain(pte, tlb);
 	hydra_free_tlb_page(tlb, pte);
 }
 

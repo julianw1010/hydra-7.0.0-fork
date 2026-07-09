@@ -1227,8 +1227,11 @@ static void cpu_detect_tlb_amd(struct cpuinfo_x86 *c)
 	tlb_lli_4m = tlb_lli_2m >> 1;
 
 	/* Max number of pages INVLPGB can invalidate in one shot */
-	if (cpu_has(c, X86_FEATURE_INVLPGB))
+	if (cpu_has(c, X86_FEATURE_INVLPGB)) {
 		invlpgb_count_max = (cpuid_edx(0x80000008) & 0xffff) + 1;
+		pr_info("HYDRA: INVLPGB enabled, max %u pages per invocation\n",
+			invlpgb_count_max);
+	}
 }
 
 static const struct cpu_dev amd_cpu_dev = {

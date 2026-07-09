@@ -213,10 +213,15 @@ struct mmu_table_batch {
 #define MAX_TABLE_BATCH		\
 	((PAGE_SIZE - sizeof(struct mmu_table_batch)) / sizeof(void *))
 
+bool hydra_cache_return_table(struct ptdesc *ptdesc);
+
 #ifndef CONFIG_HAVE_ARCH_TLB_REMOVE_TABLE
 static inline void __tlb_remove_table(void *table)
 {
 	struct ptdesc *ptdesc = (struct ptdesc *)table;
+
+	if (hydra_cache_return_table(ptdesc))
+		return;
 
 	pagetable_dtor_free(ptdesc);
 }

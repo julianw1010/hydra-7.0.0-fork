@@ -3,6 +3,7 @@
 #include <linux/spinlock.h>
 #include <linux/highmem.h>
 #include <linux/hydra.h>
+#include <asm/tlb.h>
 
 struct hydra_cache_head hydra_cache[NUMA_NODE_COUNT] = {
 	[0 ... NUMA_NODE_COUNT - 1] = {
@@ -134,7 +135,7 @@ void hydra_free_chain_node_rcu(struct page *page)
 	call_rcu(&page->rcu_head, hydra_chain_node_free_rcu);
 }
 
-void hydra_free_replica_chain(struct page *primary)
+void hydra_free_replica_chain(struct page *primary, struct mmu_gather *tlb)
 {
 	struct page *cur_page, *next_page;
 	struct page *start_page;
@@ -158,10 +159,43 @@ void hydra_free_replica_chain(struct page *primary)
 		if (owner_mm)
 			mm_dec_nr_ptes(owner_mm);
 
-		hydra_free_chain_node_rcu(cur_page);
+		if (tlb) {
+			hydra_pt_account(cur_page, -1);
+			if (PageHydraFromCache(cur_page))
+				hydra_cache_count_return(owner_mm,
+							 page_to_nid(cur_page));
+			cur_page->pt_owner_mm = NULL;
+			tlb_remove_ptdesc(tlb, page_ptdesc(cur_page));
+		} else {
+			hydra_free_chain_node_rcu(cur_page);
+		}
 
 		cur_page = next_page;
 	}
+}
+
+void hydra_cache_count_return(struct mm_struct *owner_mm, int node)
+{
+	if (node < 0 || node >= NUMA_NODE_COUNT)
+		return;
+
+	if (owner_mm && READ_ONCE(owner_mm->lazy_repl_enabled))
+		atomic64_inc(&hydra_cache[node].returns);
+}
+
+bool hydra_cache_return_table(struct ptdesc *ptdesc)
+{
+	struct page *page = ptdesc_page(ptdesc);
+
+	if (!PageHydraFromCache(page))
+		return false;
+
+	pagetable_dtor(ptdesc);
+
+	if (!hydra_cache_push(page, page_to_nid(page), false))
+		__free_page(page);
+
+	return true;
 }
 
 void hydra_link_page_to_replica_chain(struct page *existing_page,
