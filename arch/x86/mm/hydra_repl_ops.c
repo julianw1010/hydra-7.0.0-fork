@@ -9,75 +9,6 @@
 
 DEFINE_STATIC_KEY_FALSE(hydra_repl_ever_enabled);
 
-static unsigned long hydra_get_entry(void *entryp)
-{
-	struct page *page, *cur;
-	unsigned long offset, val;
-
-	if (!entryp)
-		return 0;
-
-	if (!static_branch_unlikely(&hydra_repl_ever_enabled))
-		return *(unsigned long *)entryp;
-
-	if (!virt_addr_valid(entryp))
-		return *(unsigned long *)entryp;
-
-	page = virt_to_page(entryp);
-
-	if (!READ_ONCE(page->next_replica))
-		return *(unsigned long *)entryp;
-
-	val = *(unsigned long *)entryp;
-	if (!(val & _PAGE_PRESENT))
-		return val;
-
-	offset = ((unsigned long)entryp) & ~PAGE_MASK;
-
-	rcu_read_lock();
-	for (cur = page->next_replica; cur && cur != page; cur = cur->next_replica) {
-		unsigned long entry_val = *(unsigned long *)(page_address(cur) + offset);
-		if (entry_val & _PAGE_PRESENT)
-			val |= entry_val & PTE_FLAGS_MASK;
-	}
-	rcu_read_unlock();
-
-	return val;
-}
-
-static unsigned long hydra_get_and_clear_entry(void *entryp)
-{
-	struct page *page, *cur;
-	unsigned long offset, val;
-
-	if (!entryp)
-		return 0;
-
-	if (!static_branch_unlikely(&hydra_repl_ever_enabled))
-		return xchg((unsigned long *)entryp, 0);
-
-	if (!virt_addr_valid(entryp))
-		return xchg((unsigned long *)entryp, 0);
-
-	page = virt_to_page(entryp);
-
-	if (!READ_ONCE(page->next_replica))
-		return xchg((unsigned long *)entryp, 0);
-
-	val = xchg((unsigned long *)entryp, 0);
-	offset = ((unsigned long)entryp) & ~PAGE_MASK;
-
-	rcu_read_lock();
-	for (cur = page->next_replica; cur && cur != page; cur = cur->next_replica) {
-		unsigned long old_val = xchg((unsigned long *)(page_address(cur) + offset), 0);
-		if (old_val & _PAGE_PRESENT)
-			val |= old_val & PTE_FLAGS_MASK;
-	}
-	rcu_read_unlock();
-
-	return val;
-}
-
 static void hydra_wrprotect_pte_one(pte_t *ptep)
 {
 	pte_t old_pte, new_pte;
@@ -164,59 +95,6 @@ static void hydra_set_wrprotect_pmd_entry(pmd_t *pmdp)
 	rcu_read_unlock();
 }
 
-static int hydra_test_and_clear_young_entry(void *entryp)
-{
-	struct page *page, *cur;
-	unsigned long offset;
-	int young = 0;
-
-	if (!entryp)
-		return 0;
-
-	if (!static_branch_unlikely(&hydra_repl_ever_enabled)) {
-		if (test_bit(_PAGE_BIT_ACCESSED, (unsigned long *)entryp))
-			young = test_and_clear_bit(_PAGE_BIT_ACCESSED,
-						   (unsigned long *)entryp);
-		return young;
-	}
-
-	if (!virt_addr_valid(entryp)) {
-		if (test_bit(_PAGE_BIT_ACCESSED, (unsigned long *)entryp))
-			young = test_and_clear_bit(_PAGE_BIT_ACCESSED,
-						   (unsigned long *)entryp);
-		return young;
-	}
-
-	page = virt_to_page(entryp);
-
-	if (!READ_ONCE(page->next_replica)) {
-		if (test_bit(_PAGE_BIT_ACCESSED, (unsigned long *)entryp))
-			young = test_and_clear_bit(_PAGE_BIT_ACCESSED,
-						   (unsigned long *)entryp);
-		return young;
-	}
-
-	if (test_bit(_PAGE_BIT_ACCESSED, (unsigned long *)entryp))
-		young = test_and_clear_bit(_PAGE_BIT_ACCESSED,
-					   (unsigned long *)entryp);
-
-	offset = ((unsigned long)entryp) & ~PAGE_MASK;
-
-	rcu_read_lock();
-	for (cur = page->next_replica; cur && cur != page; cur = cur->next_replica) {
-		unsigned long *replica_entry =
-			(unsigned long *)(page_address(cur) + offset);
-		if ((*replica_entry & _PAGE_PRESENT) &&
-		    test_bit(_PAGE_BIT_ACCESSED, replica_entry)) {
-			if (test_and_clear_bit(_PAGE_BIT_ACCESSED, replica_entry))
-				young = 1;
-		}
-	}
-	rcu_read_unlock();
-
-	return young;
-}
-
 void hydra_set_pte(pte_t *ptep, pte_t pteval)
 {
 	struct page *pte_page, *cur;
@@ -249,12 +127,74 @@ void hydra_set_pte(pte_t *ptep, pte_t pteval)
 
 pte_t hydra_get_pte(pte_t *ptep)
 {
-	return __pte(hydra_get_entry(ptep));
+	struct page *page, *cur;
+	unsigned long offset;
+	pte_t val;
+
+	if (!ptep)
+		return __pte(0);
+
+	if (!static_branch_unlikely(&hydra_repl_ever_enabled))
+		return *ptep;
+
+	if (!virt_addr_valid(ptep))
+		return *ptep;
+
+	page = virt_to_page(ptep);
+
+	if (!READ_ONCE(page->next_replica))
+		return *ptep;
+
+	val = *ptep;
+	if (!(pte_val(val) & _PAGE_PRESENT))
+		return val;
+
+	offset = ((unsigned long)ptep) & ~PAGE_MASK;
+
+	rcu_read_lock();
+	for (cur = page->next_replica; cur && cur != page; cur = cur->next_replica) {
+		pte_t rv = *(pte_t *)(page_address(cur) + offset);
+		if (pte_val(rv) & _PAGE_PRESENT)
+			val = __pte(pte_val(val) | (pte_val(rv) & PTE_FLAGS_MASK));
+	}
+	rcu_read_unlock();
+
+	return val;
 }
 
 pte_t hydra_ptep_get_and_clear(struct mm_struct *mm, pte_t *ptep)
 {
-	return __pte(hydra_get_and_clear_entry(ptep));
+	struct page *page, *cur;
+	unsigned long offset;
+	pte_t val;
+
+	if (!ptep)
+		return __pte(0);
+
+	if (!static_branch_unlikely(&hydra_repl_ever_enabled))
+		return native_ptep_get_and_clear(ptep);
+
+	if (!virt_addr_valid(ptep))
+		return native_ptep_get_and_clear(ptep);
+
+	page = virt_to_page(ptep);
+
+	if (!READ_ONCE(page->next_replica))
+		return native_ptep_get_and_clear(ptep);
+
+	val = native_ptep_get_and_clear(ptep);
+	offset = ((unsigned long)ptep) & ~PAGE_MASK;
+
+	rcu_read_lock();
+	for (cur = page->next_replica; cur && cur != page; cur = cur->next_replica) {
+		pte_t old = native_ptep_get_and_clear(
+			(pte_t *)(page_address(cur) + offset));
+		if (pte_val(old) & _PAGE_PRESENT)
+			val = __pte(pte_val(val) | (pte_val(old) & PTE_FLAGS_MASK));
+	}
+	rcu_read_unlock();
+
+	return val;
 }
 
 void hydra_ptep_set_wrprotect(struct mm_struct *mm,
@@ -266,7 +206,44 @@ void hydra_ptep_set_wrprotect(struct mm_struct *mm,
 int hydra_ptep_test_and_clear_young(struct vm_area_struct *vma,
 				    unsigned long addr, pte_t *ptep)
 {
-	return hydra_test_and_clear_young_entry(ptep);
+	struct page *page, *cur;
+	unsigned long offset;
+	int young = 0;
+
+	if (!ptep)
+		return 0;
+
+	if (pte_young(*ptep))
+		young = test_and_clear_bit(_PAGE_BIT_ACCESSED,
+					   (unsigned long *)&ptep->pte);
+
+	if (!static_branch_unlikely(&hydra_repl_ever_enabled))
+		return young;
+
+	if (!virt_addr_valid(ptep))
+		return young;
+
+	page = virt_to_page(ptep);
+
+	if (!READ_ONCE(page->next_replica))
+		return young;
+
+	offset = ((unsigned long)ptep) & ~PAGE_MASK;
+
+	rcu_read_lock();
+	for (cur = page->next_replica; cur && cur != page; cur = cur->next_replica) {
+		pte_t *rp = (pte_t *)(page_address(cur) + offset);
+		pte_t rv = *rp;
+
+		if ((pte_val(rv) & _PAGE_PRESENT) && pte_young(rv)) {
+			if (test_and_clear_bit(_PAGE_BIT_ACCESSED,
+					       (unsigned long *)&rp->pte))
+				young = 1;
+		}
+	}
+	rcu_read_unlock();
+
+	return young;
 }
 
 void hydra_set_pmd(pmd_t *pmdp, pmd_t pmd)
@@ -306,12 +283,74 @@ void hydra_set_pmd(pmd_t *pmdp, pmd_t pmd)
 
 pmd_t hydra_get_pmd(pmd_t *pmdp)
 {
-	return __pmd(hydra_get_entry(pmdp));
+	struct page *page, *cur;
+	unsigned long offset;
+	pmd_t val;
+
+	if (!pmdp)
+		return __pmd(0);
+
+	if (!static_branch_unlikely(&hydra_repl_ever_enabled))
+		return *pmdp;
+
+	if (!virt_addr_valid(pmdp))
+		return *pmdp;
+
+	page = virt_to_page(pmdp);
+
+	if (!READ_ONCE(page->next_replica))
+		return *pmdp;
+
+	val = *pmdp;
+	if (!(pmd_val(val) & _PAGE_PRESENT))
+		return val;
+
+	offset = ((unsigned long)pmdp) & ~PAGE_MASK;
+
+	rcu_read_lock();
+	for (cur = page->next_replica; cur && cur != page; cur = cur->next_replica) {
+		pmd_t rv = *(pmd_t *)(page_address(cur) + offset);
+		if (pmd_val(rv) & _PAGE_PRESENT)
+			val = __pmd(pmd_val(val) | (pmd_val(rv) & PTE_FLAGS_MASK));
+	}
+	rcu_read_unlock();
+
+	return val;
 }
 
 pmd_t hydra_pmdp_get_and_clear(struct mm_struct *mm, pmd_t *pmdp)
 {
-	return __pmd(hydra_get_and_clear_entry(pmdp));
+	struct page *page, *cur;
+	unsigned long offset;
+	pmd_t val;
+
+	if (!pmdp)
+		return __pmd(0);
+
+	if (!static_branch_unlikely(&hydra_repl_ever_enabled))
+		return native_pmdp_get_and_clear(pmdp);
+
+	if (!virt_addr_valid(pmdp))
+		return native_pmdp_get_and_clear(pmdp);
+
+	page = virt_to_page(pmdp);
+
+	if (!READ_ONCE(page->next_replica))
+		return native_pmdp_get_and_clear(pmdp);
+
+	val = native_pmdp_get_and_clear(pmdp);
+	offset = ((unsigned long)pmdp) & ~PAGE_MASK;
+
+	rcu_read_lock();
+	for (cur = page->next_replica; cur && cur != page; cur = cur->next_replica) {
+		pmd_t old = native_pmdp_get_and_clear(
+			(pmd_t *)(page_address(cur) + offset));
+		if (pmd_val(old) & _PAGE_PRESENT)
+			val = __pmd(pmd_val(val) | (pmd_val(old) & PTE_FLAGS_MASK));
+	}
+	rcu_read_unlock();
+
+	return val;
 }
 
 void hydra_pmdp_set_wrprotect(struct mm_struct *mm,
@@ -323,7 +362,44 @@ void hydra_pmdp_set_wrprotect(struct mm_struct *mm,
 int hydra_pmdp_test_and_clear_young(struct vm_area_struct *vma,
 				    unsigned long addr, pmd_t *pmdp)
 {
-	return hydra_test_and_clear_young_entry(pmdp);
+	struct page *page, *cur;
+	unsigned long offset;
+	int young = 0;
+
+	if (!pmdp)
+		return 0;
+
+	if (pmd_young(*pmdp))
+		young = test_and_clear_bit(_PAGE_BIT_ACCESSED,
+					   (unsigned long *)pmdp);
+
+	if (!static_branch_unlikely(&hydra_repl_ever_enabled))
+		return young;
+
+	if (!virt_addr_valid(pmdp))
+		return young;
+
+	page = virt_to_page(pmdp);
+
+	if (!READ_ONCE(page->next_replica))
+		return young;
+
+	offset = ((unsigned long)pmdp) & ~PAGE_MASK;
+
+	rcu_read_lock();
+	for (cur = page->next_replica; cur && cur != page; cur = cur->next_replica) {
+		pmd_t *rp = (pmd_t *)(page_address(cur) + offset);
+		pmd_t rv = *rp;
+
+		if ((pmd_val(rv) & _PAGE_PRESENT) && pmd_young(rv)) {
+			if (test_and_clear_bit(_PAGE_BIT_ACCESSED,
+					       (unsigned long *)rp))
+				young = 1;
+		}
+	}
+	rcu_read_unlock();
+
+	return young;
 }
 
 pmd_t hydra_pmdp_establish(pmd_t *pmdp, pmd_t pmd)
