@@ -232,7 +232,7 @@ static int hydra_repl_pmd_range(struct mm_struct *mm,
 
 		if (pmd_present(repl_val) && pmd_trans_huge(repl_val)) {
 			if ((pmd_val(repl_val) ^ pmd_val(master_val)) &
-			    ~(_PAGE_ACCESSED | _PAGE_DIRTY)) {
+			    ~(_PAGE_ACCESSED | _PAGE_DIRTY | _PAGE_SAVED_DIRTY)) {
 				struct page *m_pg = virt_to_page(master_pmd_base);
 				struct page *r_pg = virt_to_page(repl_pmd_base);
 
@@ -475,7 +475,7 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 			if (pte_present(repl_cur)) {
 				if (pte_present(val) && !pte_protnone(val) &&
 				    ((pte_val(repl_cur) ^ pte_val(val)) &
-				     ~(_PAGE_ACCESSED | _PAGE_DIRTY))) {
+				     ~(_PAGE_ACCESSED | _PAGE_DIRTY | _PAGE_SAVED_DIRTY))) {
 					struct page *m_pg = virt_to_page(master_pte_base);
 					struct page *r_pg = virt_to_page(repl_pte_base);
 

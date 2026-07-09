@@ -13,7 +13,7 @@
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
 
-#define HYDRA_AUDIT_AD (_PAGE_ACCESSED | _PAGE_DIRTY)
+#define HYDRA_AUDIT_AD (_PAGE_ACCESSED | _PAGE_DIRTY | _PAGE_SAVED_DIRTY)
 
 struct hydra_audit_result {
 	int valid;
