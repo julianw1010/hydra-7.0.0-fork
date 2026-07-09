@@ -230,8 +230,22 @@ static int hydra_repl_pmd_range(struct mm_struct *mm,
 		if (pmd_protnone(master_val))
 			continue;
 
-		if (pmd_present(repl_val) && pmd_trans_huge(repl_val))
+		if (pmd_present(repl_val) && pmd_trans_huge(repl_val)) {
+			if ((pmd_val(repl_val) ^ pmd_val(master_val)) &
+			    ~(_PAGE_ACCESSED | _PAGE_DIRTY)) {
+				struct page *m_pg = virt_to_page(master_pmd_base);
+				struct page *r_pg = virt_to_page(repl_pmd_base);
+
+				pr_emerg("HYDRA: replica huge PMD diverged under PTLs: idx %lu master %lx replica %lx m_pg %px (nid %d) next %px r_pg %px (nid %d) next %px\n",
+					 i, pmd_val(master_val), pmd_val(repl_val),
+					 m_pg, page_to_nid(m_pg),
+					 m_pg->next_replica,
+					 r_pg, page_to_nid(r_pg),
+					 r_pg->next_replica);
+				BUG();
+			}
 			continue;
+		}
 
 		native_set_pmd(&repl_pmd_base[i], master_val);
 
@@ -457,8 +471,24 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 		unsigned long i;
 		for (i = start_idx; i < start_idx + count; i++) {
 			pte_t val = master_pte_base[i];
-			if (pte_present(repl_pte_base[i]))
+			pte_t repl_cur = repl_pte_base[i];
+			if (pte_present(repl_cur)) {
+				if (pte_present(val) && !pte_protnone(val) &&
+				    ((pte_val(repl_cur) ^ pte_val(val)) &
+				     ~(_PAGE_ACCESSED | _PAGE_DIRTY))) {
+					struct page *m_pg = virt_to_page(master_pte_base);
+					struct page *r_pg = virt_to_page(repl_pte_base);
+
+					pr_emerg("HYDRA: replica PTE diverged under master PTL: idx %lu master %lx replica %lx m_pg %px (nid %d) next %px r_pg %px (nid %d) next %px\n",
+						 i, pte_val(val), pte_val(repl_cur),
+						 m_pg, page_to_nid(m_pg),
+						 m_pg->next_replica,
+						 r_pg, page_to_nid(r_pg),
+						 r_pg->next_replica);
+					BUG();
+				}
 				continue;
+			}
 			if (!pte_present(val) || pte_protnone(val))
 				val = __pte(0);
 			else
