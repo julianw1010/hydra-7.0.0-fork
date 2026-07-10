@@ -3121,7 +3121,9 @@ int expand_upwards(struct vm_area_struct *vma, unsigned long address)
 	address += PAGE_SIZE;
 
 	if (mm->lazy_repl_enabled &&
-	    ((address - 1) & PUD_MASK) != ((vma->vm_end - 1) & PUD_MASK))
+	    hydra_stack_expand_conflict(mm, vma,
+					((vma->vm_end - 1) & PUD_MASK) + PUD_SIZE,
+					((address - 1) & PUD_MASK) + PUD_SIZE))
 		return -ENOMEM;
 
 	/* Enforce stack_guard_gap */
@@ -3208,7 +3210,8 @@ int expand_downwards(struct vm_area_struct *vma, unsigned long address)
 		return -EPERM;
 
 	if (mm->lazy_repl_enabled &&
-	    (address & PUD_MASK) != (vma->vm_start & PUD_MASK))
+	    hydra_stack_expand_conflict(mm, vma, address & PUD_MASK,
+					vma->vm_start & PUD_MASK))
 		return -ENOMEM;
 
 	/* Enforce stack_guard_gap */

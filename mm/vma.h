@@ -276,6 +276,10 @@ __must_check int __split_vma(struct vma_iterator *vmi, struct vm_area_struct *vm
 void hydra_fixup_pud_nodes(struct mm_struct *mm,
 			   struct vm_area_struct *vma);
 
+bool hydra_stack_expand_conflict(struct mm_struct *mm,
+				 struct vm_area_struct *vma,
+				 unsigned long start, unsigned long end);
+
 #ifdef CONFIG_DEBUG_VM_MAPLE_TREE
 void validate_mm(struct mm_struct *mm);
 #else

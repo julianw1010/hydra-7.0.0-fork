@@ -21,6 +21,26 @@ static int hydra_lookup_pud_owner(struct mm_struct *mm,
 	return -1;
 }
 
+bool hydra_stack_expand_conflict(struct mm_struct *mm,
+				 struct vm_area_struct *vma,
+				 unsigned long start, unsigned long end)
+{
+	struct vm_area_struct *existing;
+	VMA_ITERATOR(vmi, mm, start);
+
+	if (start >= end)
+		return false;
+
+	for_each_vma_range(vmi, existing, end) {
+		if (existing == vma)
+			continue;
+		if (existing->master_pgd_node != vma->master_pgd_node)
+			return true;
+	}
+
+	return false;
+}
+
 void hydra_fixup_pud_nodes(struct mm_struct *mm,
 			   struct vm_area_struct *vma)
 {
