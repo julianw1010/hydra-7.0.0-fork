@@ -1642,6 +1642,8 @@ unsigned long __get_current_cr3_fast(void)
 			  this_cpu_read(cpu_tlbstate.loaded_mm_asid),
 			  tlbstate_lam_cr3_mask());
 
+	BUG_ON(this_cpu_read(cpu_tlbstate.loaded_mm)->lazy_repl_enabled);
+
 	/* For now, be very restrictive about when this can be called. */
 	VM_WARN_ON(in_nmi() || preemptible());
 

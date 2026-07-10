@@ -13,6 +13,10 @@
 #include <asm/pgtable.h>
 #include <asm/tlbflush.h>
 
+#ifndef CONFIG_PT_RECLAIM
+#error "hydra next_replica walkers are preemptible-RCU readers and need the call_rcu __tlb_remove_table_one fallback selected by CONFIG_PT_RECLAIM; the IPI-sync fallback only waits for irqs-off readers"
+#endif
+
 DECLARE_STATIC_KEY_FALSE(hydra_repl_ever_enabled);
 
 void hydra_reload_cr3(void *info);
