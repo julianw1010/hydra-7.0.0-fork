@@ -15,7 +15,6 @@ boot.sh
 diffall.sh
 compile.sh
 hydra700.txt
-shared/
 .*
 *.a
 *.asn1.[ch]
