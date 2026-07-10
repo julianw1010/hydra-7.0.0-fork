@@ -58,8 +58,11 @@ int hydra_enable_replication(struct mm_struct *mm)
 			mm->repl_pgd[i] = mm->pgd;
 		} else {
 			mm->repl_pgd[i] = hydra_repl_pgd_alloc(mm, i);
-			if (!mm->repl_pgd[i])
-				mm->repl_pgd[i] = mm->pgd;
+			if (!mm->repl_pgd[i]) {
+				pr_emerg("HYDRA: replica PGD allocation failed for mm %px node %d during enable\n",
+					 mm, i);
+				BUG();
+			}
 		}
 	}
 
