@@ -387,6 +387,93 @@ static const struct proc_ops hydra_audit_ops = {
 	.proc_release	= single_release,
 };
 
+static int hydra_sweep_show(struct seq_file *m, void *v)
+{
+	hydra_sweep_seq_show(m);
+	return 0;
+}
+
+static int hydra_sweep_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, hydra_sweep_show, NULL);
+}
+
+static ssize_t hydra_sweep_write(struct file *file, const char __user *ubuf,
+				 size_t count, loff_t *ppos)
+{
+	char buf[32];
+	size_t len;
+	long pid;
+	int ret;
+
+	len = min(count, sizeof(buf) - 1);
+	if (copy_from_user(buf, ubuf, len))
+		return -EFAULT;
+	buf[len] = '\0';
+
+	if (kstrtol(buf, 10, &pid))
+		return -EINVAL;
+	if (pid < 0)
+		return -EINVAL;
+
+	ret = hydra_sweep_run((pid_t)pid);
+	if (ret)
+		return ret;
+
+	return count;
+}
+
+static const struct proc_ops hydra_sweep_ops = {
+	.proc_open	= hydra_sweep_open,
+	.proc_read	= seq_read,
+	.proc_write	= hydra_sweep_write,
+	.proc_lseek	= seq_lseek,
+	.proc_release	= single_release,
+};
+
+static int hydra_walk_show(struct seq_file *m, void *v)
+{
+	hydra_walk_seq_show(m);
+	return 0;
+}
+
+static int hydra_walk_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, hydra_walk_show, NULL);
+}
+
+static ssize_t hydra_walk_write(struct file *file, const char __user *ubuf,
+				size_t count, loff_t *ppos)
+{
+	char buf[64];
+	unsigned long addr;
+	size_t len;
+	int pid;
+	int ret;
+
+	len = min(count, sizeof(buf) - 1);
+	if (copy_from_user(buf, ubuf, len))
+		return -EFAULT;
+	buf[len] = '\0';
+
+	if (sscanf(buf, "%d %lx", &pid, &addr) != 2)
+		return -EINVAL;
+
+	ret = hydra_walk_set((pid_t)pid, addr);
+	if (ret)
+		return ret;
+
+	return count;
+}
+
+static const struct proc_ops hydra_walk_ops = {
+	.proc_open	= hydra_walk_open,
+	.proc_read	= seq_read,
+	.proc_write	= hydra_walk_write,
+	.proc_lseek	= seq_lseek,
+	.proc_release	= single_release,
+};
+
 static int __init hydra_proc_init(void)
 {
 	hydra_dir = proc_mkdir("hydra", NULL);
@@ -415,6 +502,12 @@ static int __init hydra_proc_init(void)
 		goto fail;
 
 	if (!proc_create("audit", 0644, hydra_dir, &hydra_audit_ops))
+		goto fail;
+
+	if (!proc_create("sweep", 0644, hydra_dir, &hydra_sweep_ops))
+		goto fail;
+
+	if (!proc_create("walk", 0644, hydra_dir, &hydra_walk_ops))
 		goto fail;
 
 	return 0;

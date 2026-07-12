@@ -160,6 +160,10 @@ extern atomic_long_t hydra_pt_frees[HYDRA_PT_NR_LEVELS];
 struct seq_file;
 int hydra_audit_run(pid_t pid);
 void hydra_audit_seq_show(struct seq_file *m);
+int hydra_sweep_run(pid_t pid);
+void hydra_sweep_seq_show(struct seq_file *m);
+int hydra_walk_set(pid_t pid, unsigned long addr);
+void hydra_walk_seq_show(struct seq_file *m);
 
 struct hydra_stats {
 	struct list_head list;
