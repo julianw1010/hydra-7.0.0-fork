@@ -94,8 +94,6 @@ int hydra_cache_drain_node(int node)
 	if (!page)
 		return 0;
 
-	atomic_set(&cache->count, 0);
-
 	while (page) {
 		next = page->next_replica;
 		page->next_replica = NULL;
@@ -104,6 +102,8 @@ int hydra_cache_drain_node(int node)
 		freed++;
 		page = next;
 	}
+
+	atomic_sub(freed, &cache->count);
 
 	return freed;
 }
@@ -124,7 +124,6 @@ static void hydra_chain_node_free_rcu(struct rcu_head *head)
 	struct page *page = container_of(head, struct page, rcu_head);
 
 	pagetable_dtor(page_ptdesc(page));
-	hydra_pt_account(page, -1);
 
 	if (!hydra_try_return_page(page))
 		__free_page(page);
@@ -132,6 +131,10 @@ static void hydra_chain_node_free_rcu(struct rcu_head *head)
 
 void hydra_free_chain_node_rcu(struct page *page)
 {
+	hydra_pt_account(page, -1);
+	if (PageHydraFromCache(page))
+		hydra_cache_count_return(page->pt_owner_mm, page_to_nid(page));
+	page->pt_owner_mm = NULL;
 	call_rcu(&page->rcu_head, hydra_chain_node_free_rcu);
 }
 
@@ -262,39 +265,4 @@ void hydra_break_chain(struct page *page)
 		WRITE_ONCE(cur_page->next_replica, NULL);
 		cur_page = next_page;
 	}
-}
-
-void hydra_unlink_single(struct page *anchor,
-			 struct page *target)
-{
-	struct page *cur;
-
-	if (!anchor || !target || anchor == target)
-		return;
-
-	hydra_chain_lock(anchor);
-
-	if (!anchor->next_replica)
-		goto out;
-
-	if (anchor->next_replica == target) {
-		anchor->next_replica = target->next_replica;
-		target->next_replica = NULL;
-		if (anchor->next_replica == anchor)
-			anchor->next_replica = NULL;
-		goto out;
-	}
-
-	cur = anchor->next_replica;
-	while (cur && cur != anchor) {
-		if (cur->next_replica == target) {
-			cur->next_replica = target->next_replica;
-			target->next_replica = NULL;
-			break;
-		}
-		cur = cur->next_replica;
-	}
-
-out:
-	hydra_chain_unlock(anchor);
 }

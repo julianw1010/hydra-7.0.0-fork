@@ -6390,7 +6390,8 @@ static vm_fault_t handle_pte_fault(struct vm_fault *vmf, int has_recursed)
 				pte_unmap(vmf->pte);
 			return hydra_repl_fault(vmf, fault_node);
 		}
-		if ((vmf->flags & FAULT_FLAG_WRITE) && !pte_write(vmf->orig_pte)) {
+		if ((vmf->flags & (FAULT_FLAG_WRITE|FAULT_FLAG_UNSHARE)) &&
+		    !pte_write(vmf->orig_pte)) {
 			pte_unmap(vmf->pte);
 			return hydra_repl_fault(vmf, fault_node);
 		}

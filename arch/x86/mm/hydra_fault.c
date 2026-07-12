@@ -303,7 +303,7 @@ static int hydra_repl_try_pmd(struct mm_struct *mm,
 			return -EAGAIN;
 	}
 
-	if ((flags & FAULT_FLAG_WRITE) && !pmd_write(m_pmdval)) {
+	if ((flags & (FAULT_FLAG_WRITE|FAULT_FLAG_UNSHARE)) && !pmd_write(m_pmdval)) {
 		ret = __handle_mm_fault(vma, address, flags, 1);
 		if (ret & (VM_FAULT_ERROR | VM_FAULT_NOPAGE | VM_FAULT_RETRY | VM_FAULT_COMPLETED))
 			return ret;
@@ -519,7 +519,9 @@ static int hydra_repl_try_pte(struct vm_fault *vmf, size_t repl_node,
 	int ret;
 
 	ret = hydra_find_master_pte(mm, address, master_node, &ptep, &pte_val);
-	if (ret || ((vmf->flags & FAULT_FLAG_WRITE) && !pte_write(pte_val)) ||
+	if (ret ||
+	    ((vmf->flags & (FAULT_FLAG_WRITE|FAULT_FLAG_UNSHARE)) &&
+	     !pte_write(pte_val)) ||
 	    pte_protnone(pte_val)) {
 		ret = __handle_mm_fault(vma, address, vmf->flags, 1);
 		if (ret & (VM_FAULT_ERROR | VM_FAULT_NOPAGE | VM_FAULT_RETRY | VM_FAULT_COMPLETED))
@@ -537,7 +539,8 @@ static int hydra_repl_try_pte(struct vm_fault *vmf, size_t repl_node,
 		if (pte_protnone(pte_val))
 			return 0;
 
-		if ((vmf->flags & FAULT_FLAG_WRITE) && !pte_write(pte_val))
+		if ((vmf->flags & (FAULT_FLAG_WRITE|FAULT_FLAG_UNSHARE)) &&
+		    !pte_write(pte_val))
 			return 0;
 	}
 

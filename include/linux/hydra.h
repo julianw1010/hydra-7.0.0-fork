@@ -129,7 +129,6 @@ static inline void hydra_chain_unlock(struct page *master)
 void hydra_link_page_to_replica_chain(struct page *existing_page,
 				      struct page *new_page);
 void hydra_break_chain(struct page *page);
-void hydra_unlink_single(struct page *anchor, struct page *target);
 
 struct mmu_gather;
 extern void hydra_free_replica_chain(struct page *primary, struct mmu_gather *tlb);
