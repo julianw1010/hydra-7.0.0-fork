@@ -26,10 +26,6 @@ void hydra_break_chain_range(struct mm_struct *mm,
 			     unsigned long start, unsigned long end,
 			     unsigned long floor, unsigned long ceiling);
 
-extern int sysctl_hydra_verify;
-void hydra_verify_fault_addr(struct mm_struct *mm, unsigned long address);
-
-
 #define HYDRA_WALK_NONE ((void *)0x1)
 
 #define HYDRA_WALK_BAD(r) (((unsigned long)(r) & 1) == 1)
@@ -153,17 +149,6 @@ enum hydra_pt_level {
 	HYDRA_PT_PTE,
 	HYDRA_PT_NR_LEVELS,
 };
-
-extern atomic_long_t hydra_pt_allocs[HYDRA_PT_NR_LEVELS];
-extern atomic_long_t hydra_pt_frees[HYDRA_PT_NR_LEVELS];
-
-struct seq_file;
-int hydra_audit_run(pid_t pid);
-void hydra_audit_seq_show(struct seq_file *m);
-int hydra_sweep_run(pid_t pid);
-void hydra_sweep_seq_show(struct seq_file *m);
-int hydra_walk_set(pid_t pid, unsigned long addr);
-void hydra_walk_seq_show(struct seq_file *m);
 
 struct hydra_stats {
 	struct list_head list;
