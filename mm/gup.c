@@ -3133,11 +3133,8 @@ static unsigned long gup_fast(unsigned long start, unsigned long end,
 	int nr_pinned = 0;
 	unsigned seq;
 
-	if (current->mm->lazy_repl_enabled) {
-		end = hydra_gup_fast_end(current->mm, start, end);
-		if (end == start)
-			return 0;
-	}
+	if (current->mm->lazy_repl_enabled)
+		return 0;
 
 	if (!IS_ENABLED(CONFIG_HAVE_GUP_FAST) ||
 	    !gup_fast_permitted(start, end))
