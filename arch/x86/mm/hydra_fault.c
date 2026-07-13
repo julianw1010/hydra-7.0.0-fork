@@ -58,9 +58,6 @@ int hydra_alloc_replica_pmd(struct mm_struct *mm, pud_t *pud,
 	spinlock_t *ptl;
 	pmd_t *new = pmd_alloc_one(mm, address, pud);
 	struct page *new_page, *master_pmd_page = NULL;
-	pgd_t *m_pgd;
-	p4d_t *m_p4d;
-	pud_t *m_pud;
 	pmd_t *m_pmd;
 
 	if (!new)
@@ -74,18 +71,9 @@ int hydra_alloc_replica_pmd(struct mm_struct *mm, pud_t *pud,
 		mm_inc_nr_pmds(mm);
 		pud_populate(mm, pud, new);
 
-		m_pgd = pgd_offset_pgd(mm->repl_pgd[owner_node], address);
-		if (!pgd_none(*m_pgd) && !pgd_bad(*m_pgd)) {
-			m_p4d = p4d_offset(m_pgd, address);
-			if (!p4d_none(*m_p4d) && !p4d_bad(*m_p4d)) {
-				m_pud = pud_offset(m_p4d, address);
-				if (!pud_none(*m_pud) && !pud_bad(*m_pud)) {
-					m_pmd = pmd_offset(m_pud, address);
-					if (virt_addr_valid(m_pmd))
-						master_pmd_page = virt_to_page(m_pmd);
-				}
-			}
-		}
+		m_pmd = hydra_walk_to_pmd(mm, address, owner_node);
+		if (!HYDRA_WALK_BAD(m_pmd))
+			master_pmd_page = virt_to_page(m_pmd);
 		if (master_pmd_page && master_pmd_page != new_page)
 			hydra_link_page_to_replica_chain(master_pmd_page, new_page);
 	} else {
@@ -384,8 +372,6 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 		if (!new_page)
 			return -ENOMEM;
 
-		repl_pte_base = (pte_t *)page_address(new_page);
-
 		master_pml = pmd_lock(mm, master_pmd);
 
 		if (unlikely(pmd_none(*master_pmd) || pmd_bad(*master_pmd) ||
@@ -399,24 +385,6 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 		master_pte_base = (pte_t *)((unsigned long)master_pte & PAGE_MASK);
 		master_pte_page = virt_to_page(master_pte_base);
 
-		master_ptl = pte_lockptr(mm, master_pmd);
-		if (master_ptl != master_pml)
-			spin_lock_nested(master_ptl, SINGLE_DEPTH_NESTING);
-
-		{
-			unsigned long i;
-			for (i = start_idx; i < start_idx + count; i++) {
-				pte_t val = master_pte_base[i];
-				if (!pte_present(val) || pte_protnone(val))
-					val = __pte(0);
-				else
-					copied++;
-				repl_pte_base[i] = val;
-			}
-		}
-
-		smp_wmb();
-
 		if (likely(pmd_none(*repl_pmd))) {
 			hydra_link_page_to_replica_chain(master_pte_page, new_page);
 			mm_inc_nr_ptes(mm);
@@ -427,17 +395,10 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 			new_page = NULL;
 		}
 
-		if (master_ptl != master_pml)
-			spin_unlock(master_ptl);
-
 		spin_unlock(master_pml);
 
-		if (unlikely(new_page)) {
+		if (unlikely(new_page))
 			hydra_free_chain_node_rcu(new_page);
-		} else {
-			hydra_stats_copied_pte(mm, copied);
-			return 0;
-		}
 	}
 
 	master_pml = pmd_lock(mm, master_pmd);
@@ -466,7 +427,6 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 	if (master_ptl != master_pml)
 		spin_lock_nested(master_ptl, SINGLE_DEPTH_NESTING);
 
-	copied = 0;
 	{
 		unsigned long i;
 		for (i = start_idx; i < start_idx + count; i++) {
