@@ -81,8 +81,6 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/migrate.h>
 
-#include <linux/hydra.h>
-
 #include "internal.h"
 #include "swap.h"
 
@@ -882,15 +880,14 @@ unsigned long page_address_in_vma(const struct folio *folio,
  * NULL if it doesn't exist.  No guarantees / checks on what the pmd_t*
  * represents.
  */
-pmd_t *mm_find_pmd(struct mm_struct *mm, unsigned long address,
-		   unsigned long master_node)
+pmd_t *mm_find_pmd(struct mm_struct *mm, unsigned long address)
 {
 	pgd_t *pgd;
 	p4d_t *p4d;
 	pud_t *pud;
 	pmd_t *pmd = NULL;
 
-	pgd = hydra_pgd_offset(mm, address, master_node);
+	pgd = pgd_offset(mm, address);
 	if (!pgd_present(*pgd))
 		goto out;
 

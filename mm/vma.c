@@ -3265,6 +3265,9 @@ int expand_downwards(struct vm_area_struct *vma, unsigned long address)
 	anon_vma_unlock_write(vma->anon_vma);
 	vma_iter_free(&vmi);
 	validate_mm(mm);
+	if (!error && mm->lazy_repl_enabled)
+		hydra_pud_owner_claim(mm, vma->vm_start, vma->vm_end,
+				      vma->master_pgd_node);
 	return error;
 }
 

@@ -4,7 +4,6 @@
 #include <linux/hugetlb.h>
 #include <linux/swap.h>
 #include <linux/leafops.h>
-#include <linux/hydra.h> 
 
 #include "internal.h"
 
@@ -219,7 +218,7 @@ bool page_vma_mapped_walk(struct page_vma_mapped_walk *pvmw)
 		goto next_pte;
 restart:
 	do {
-		pgd = hydra_pgd_offset(mm, pvmw->address, pvmw->vma->master_pgd_node);
+		pgd = pgd_offset(mm, pvmw->address);
 		if (!pgd_present(*pgd)) {
 			step_forward(pvmw, PGDIR_SIZE);
 			continue;

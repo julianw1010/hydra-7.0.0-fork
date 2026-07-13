@@ -574,8 +574,7 @@ static bool is_bad_page_map_ratelimited(void)
 	return false;
 }
 
-static void __print_bad_page_map_pgtable(struct mm_struct *mm, unsigned long addr,
-					 unsigned long master_node)
+static void __print_bad_page_map_pgtable(struct mm_struct *mm, unsigned long addr)
 {
 	unsigned long long pgdv, p4dv, pudv, pmdv;
 	p4d_t p4d, *p4dp;
@@ -587,7 +586,7 @@ static void __print_bad_page_map_pgtable(struct mm_struct *mm, unsigned long add
 	 * Although this looks like a fully lockless pgtable walk, it is not:
 	 * see locking requirements for print_bad_page_map().
 	 */
-	pgdp = hydra_pgd_offset(mm, addr, master_node);
+	pgdp = pgd_offset(mm, addr);
 	pgdv = pgd_val(*pgdp);
 
 	if (!pgd_present(*pgdp) || pgd_leaf(*pgdp)) {
@@ -654,7 +653,7 @@ static void print_bad_page_map(struct vm_area_struct *vma,
 
 	pr_alert("BUG: Bad page map in process %s  %s:%08llx", current->comm,
 		 pgtable_level_to_str(level), entry);
-	__print_bad_page_map_pgtable(vma->vm_mm, addr, vma->master_pgd_node);
+	__print_bad_page_map_pgtable(vma->vm_mm, addr);
 	if (page)
 		dump_page(page, "bad page map");
 	pr_alert("addr:%px vm_flags:%08lx anon_vma:%px mapping:%px index:%lx\n",
@@ -1586,8 +1585,8 @@ copy_page_range(struct vm_area_struct *dst_vma, struct vm_area_struct *src_vma)
 	}
 
 	ret = 0;
-	dst_pgd = hydra_pgd_offset(dst_mm, addr, dst_vma->master_pgd_node);
-	src_pgd = hydra_pgd_offset(src_mm, addr, src_vma->master_pgd_node);
+	dst_pgd = pgd_offset(dst_mm, addr);
+	src_pgd = pgd_offset(src_mm, addr);
 	do {
 		next = pgd_addr_end(addr, end);
 		if (pgd_none_or_clear_bad(src_pgd))
@@ -2129,7 +2128,7 @@ void unmap_page_range(struct mmu_gather *tlb,
 
 	BUG_ON(addr >= end);
 	tlb_start_vma(tlb, vma);
-	pgd = hydra_pgd_offset(vma->vm_mm, addr, vma->master_pgd_node);
+	pgd = pgd_offset(vma->vm_mm, addr);
 	do {
 		next = pgd_addr_end(addr, end);
 		if (pgd_none_or_clear_bad(pgd))
@@ -2310,14 +2309,14 @@ void zap_vma_ptes(struct vm_area_struct *vma, unsigned long address,
 }
 EXPORT_SYMBOL_GPL(zap_vma_ptes);
 
-static pmd_t *walk_to_pmd(struct mm_struct *mm, unsigned long addr, int master_node)
+static pmd_t *walk_to_pmd(struct mm_struct *mm, unsigned long addr)
 {
 	pgd_t *pgd;
 	p4d_t *p4d;
 	pud_t *pud;
 	pmd_t *pmd;
 
-	pgd = hydra_pgd_offset(mm, addr, master_node);
+	pgd = pgd_offset(mm, addr);
 	p4d = p4d_alloc(mm, pgd, addr);
 	if (!p4d)
 		return NULL;
@@ -2332,21 +2331,14 @@ static pmd_t *walk_to_pmd(struct mm_struct *mm, unsigned long addr, int master_n
 	return pmd;
 }
 
-static pte_t *hydra_get_locked_pte(struct mm_struct *mm, unsigned long addr,
-				   spinlock_t **ptl, int node)
+pte_t *get_locked_pte(struct mm_struct *mm, unsigned long addr,
+		      spinlock_t **ptl)
 {
-	pmd_t *pmd = walk_to_pmd(mm, addr, node);
+	pmd_t *pmd = walk_to_pmd(mm, addr);
 
 	if (!pmd)
 		return NULL;
 	return pte_alloc_map_lock(mm, pmd, addr, ptl);
-}
-
-pte_t *get_locked_pte(struct mm_struct *mm, unsigned long addr,
-		      spinlock_t **ptl)
-{
-	BUG_ON(mm->lazy_repl_enabled);
-	return hydra_get_locked_pte(mm, addr, ptl, 0);
 }
 
 static bool vm_mixed_zeropage_allowed(struct vm_area_struct *vma)
@@ -2449,7 +2441,7 @@ static int insert_page(struct vm_area_struct *vma, unsigned long addr,
 	if (retval)
 		goto out;
 	retval = -ENOMEM;
-	pte = hydra_get_locked_pte(vma->vm_mm, addr, &ptl, vma->master_pgd_node);
+	pte = get_locked_pte(vma->vm_mm, addr, &ptl);
 	if (!pte)
 		goto out;
 	retval = insert_page_into_pte_locked(vma, pte, addr, page, prot,
@@ -2486,7 +2478,7 @@ static int insert_pages(struct vm_area_struct *vma, unsigned long addr,
 	int ret;
 more:
 	ret = -EFAULT;
-	pmd = walk_to_pmd(mm, addr, vma->master_pgd_node);
+	pmd = walk_to_pmd(mm, addr);
 	if (!pmd)
 		goto out;
 
@@ -2689,7 +2681,7 @@ static vm_fault_t insert_pfn(struct vm_area_struct *vma, unsigned long addr,
 	pte_t *pte, entry;
 	spinlock_t *ptl;
 
-	pte = hydra_get_locked_pte(mm, addr, &ptl, vma->master_pgd_node);
+	pte = get_locked_pte(mm, addr, &ptl);
 	if (!pte)
 		return VM_FAULT_OOM;
 	entry = ptep_get(pte);
@@ -3051,7 +3043,7 @@ static int remap_pfn_range_internal(struct vm_area_struct *vma, unsigned long ad
 
 	BUG_ON(addr >= end);
 	pfn -= addr >> PAGE_SHIFT;
-	pgd = hydra_pgd_offset(mm, addr, vma->master_pgd_node);
+	pgd = pgd_offset(mm, addr);
 	flush_cache_range(vma, addr, end);
 	do {
 		next = pgd_addr_end(addr, end);
@@ -3437,7 +3429,6 @@ static int __apply_to_page_range(struct mm_struct *mm, unsigned long addr,
 	if (WARN_ON(addr >= end))
 		return -EINVAL;
 
-	BUG_ON(mm->lazy_repl_enabled);
 	pgd = pgd_offset(mm, addr);
 	do {
 		next = pgd_addr_end(addr, end);
@@ -7000,7 +6991,7 @@ int follow_pfnmap_start(struct follow_pfnmap_args *args)
 	if (!(vma->vm_flags & (VM_IO | VM_PFNMAP)))
 		goto out;
 retry:
-	pgdp = hydra_pgd_offset(mm, address, vma->master_pgd_node);
+	pgdp = pgd_offset(mm, address);
 	if (pgd_none(*pgdp) || unlikely(pgd_bad(*pgdp)))
 		goto out;
 
@@ -7686,10 +7677,4 @@ void vma_pgtable_walk_end(struct vm_area_struct *vma)
 {
 	if (is_vm_hugetlb_page(vma))
 		hugetlb_vma_unlock_read(vma);
-}
-
-pmd_t *pmd_off(struct mm_struct *mm, unsigned long va)
-{
-	BUG_ON(mm->lazy_repl_enabled);
-	return pmd_offset(pud_offset(p4d_offset(pgd_offset(mm, va), va), va), va);
 }

@@ -24,7 +24,6 @@
 
 #include <asm/mmu_context.h>
 #include <asm/tlbflush.h>
-#include <linux/hydra.h> 
 
 #include "internal.h"
 #include "swap.h"
@@ -1016,7 +1015,7 @@ static struct page *follow_page_mask(struct vm_area_struct *vma,
 	vma_pgtable_walk_begin(vma);
 
 	*page_mask = 0;
-	pgd = hydra_pgd_offset(mm, address, vma->master_pgd_node);
+	pgd = pgd_offset(mm, address);
 
 	if (pgd_none(*pgd) || unlikely(pgd_bad(*pgd)))
 		page = no_page_table(vma, flags, address);
@@ -1043,7 +1042,6 @@ static int get_gate_page(struct mm_struct *mm, unsigned long address,
 	/* user gate pages are read-only */
 	if (gup_flags & FOLL_WRITE)
 		return -EFAULT;
-	BUG_ON(mm->lazy_repl_enabled);
 	pgd = pgd_offset(mm, address);
 	if (pgd_none(*pgd))
 		return -EFAULT;
@@ -3135,8 +3133,11 @@ static unsigned long gup_fast(unsigned long start, unsigned long end,
 	int nr_pinned = 0;
 	unsigned seq;
 
-	if (current->mm->lazy_repl_enabled)
-		return 0;
+	if (current->mm->lazy_repl_enabled) {
+		end = hydra_gup_fast_end(current->mm, start, end);
+		if (end == start)
+			return 0;
+	}
 
 	if (!IS_ENABLED(CONFIG_HAVE_GUP_FAST) ||
 	    !gup_fast_permitted(start, end))

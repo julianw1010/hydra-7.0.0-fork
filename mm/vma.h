@@ -280,6 +280,9 @@ bool hydra_stack_expand_conflict(struct mm_struct *mm,
 				 struct vm_area_struct *vma,
 				 unsigned long start, unsigned long end);
 
+void hydra_pud_owner_claim(struct mm_struct *mm, unsigned long start,
+			   unsigned long end, int node);
+
 #ifdef CONFIG_DEBUG_VM_MAPLE_TREE
 void validate_mm(struct mm_struct *mm);
 #else
