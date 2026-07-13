@@ -4,15 +4,6 @@
 
 void hydra_vma_chown(struct vm_area_struct *vma, int node);
 
-pgd_t *hydra_master_pgd_offset(struct mm_struct *mm, unsigned long address)
-{
-	void *entry = xa_load(mm->hydra_pud_owner, address >> PUD_SHIFT);
-
-	if (entry)
-		return pgd_offset_pgd(mm->repl_pgd[xa_to_value(entry)], address);
-	return pgd_offset_pgd(mm->pgd, address);
-}
-
 void hydra_pud_owner_claim(struct mm_struct *mm, unsigned long start,
 			   unsigned long end, int node)
 {

@@ -145,7 +145,19 @@ static inline pgd_t *pgd_offset_pgd(pgd_t *pgd, unsigned long address)
 /*
  * a shortcut to get a pgd_t in a given mm
  */
-pgd_t *hydra_master_pgd_offset(struct mm_struct *mm, unsigned long address);
+struct xarray;
+extern void *xa_load(struct xarray *xa, unsigned long index);
+
+static inline pgd_t *hydra_master_pgd_offset(struct mm_struct *mm,
+					     unsigned long address)
+{
+	void *entry = xa_load(mm->hydra_pud_owner, address >> PUD_SHIFT);
+
+	if (entry)
+		return pgd_offset_pgd(mm->repl_pgd[(unsigned long)entry >> 1],
+				      address);
+	return pgd_offset_pgd(mm->pgd, address);
+}
 
 #ifndef pgd_offset
 #define pgd_offset(mm, address)						\
