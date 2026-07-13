@@ -9,6 +9,7 @@
 #include <linux/highmem.h>
 #include <linux/bitmap.h>
 #include <linux/jump_label.h>
+#include <linux/xarray.h>
 
 #include <asm/pgtable.h>
 #include <asm/tlbflush.h>
@@ -25,6 +26,10 @@ int hydra_repl_fault(struct vm_fault *vmf, int fault_node);
 void hydra_break_chain_range(struct mm_struct *mm,
 			     unsigned long start, unsigned long end,
 			     unsigned long floor, unsigned long ceiling);
+void hydra_pud_owner_claim(struct mm_struct *mm, unsigned long start,
+			   unsigned long end, int node);
+void hydra_pud_owner_stamp(struct mm_struct *mm, unsigned long start,
+			   unsigned long end, int node);
 
 #define HYDRA_WALK_NONE ((void *)0x1)
 

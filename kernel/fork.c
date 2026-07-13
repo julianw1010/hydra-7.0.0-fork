@@ -590,6 +590,12 @@ static inline void mm_free_pgd(struct mm_struct *mm)
 
 	BUG_ON(atomic_long_read(&mm->pgtables_bytes) != 0);
 
+	if (mm->hydra_pud_owner) {
+		xa_destroy(mm->hydra_pud_owner);
+		kfree(mm->hydra_pud_owner);
+		mm->hydra_pud_owner = NULL;
+	}
+
 	for (i = 0; i < NUMA_NODE_COUNT; i++) {
 		if (mm->repl_pgd[i] && mm->repl_pgd[i] != mm->pgd) {
 			pgd_free(mm, mm->repl_pgd[i]);
@@ -1101,6 +1107,7 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 	atomic64_set(&mm->pinned_vm, 0);
 	mm->lazy_repl_enabled = false;
 	mm->hydra_stats = NULL;
+	mm->hydra_pud_owner = NULL;
 	memset(&mm->rss_stat, 0, sizeof(mm->rss_stat));
 	spin_lock_init(&mm->page_table_lock);
 	spin_lock_init(&mm->arg_lock);

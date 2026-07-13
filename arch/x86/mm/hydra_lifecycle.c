@@ -44,6 +44,18 @@ int hydra_enable_replication(struct mm_struct *mm)
 	primary_node = page_to_nid(virt_to_page(mm->pgd));
 
 	{
+		struct xarray *xa = kzalloc(sizeof(*xa), GFP_KERNEL);
+
+		if (!xa) {
+			pr_emerg("HYDRA: pud owner map allocation failed for mm %px during enable\n",
+				 mm);
+			BUG();
+		}
+		xa_init(xa);
+		mm->hydra_pud_owner = xa;
+	}
+
+	{
 		struct vm_area_struct *vma;
 		VMA_ITERATOR(vmi, mm, 0);
 		for_each_vma(vmi, vma) {
