@@ -323,7 +323,7 @@ map_ldt_struct(struct mm_struct *mm, struct ldt_struct *ldt, int slot)
 		 * get_locked_pte() will allocate all needed pagetables
 		 * and account for them in this mm.
 		 */
-		ptep = get_locked_pte(mm, va, &ptl, 0);
+		ptep = get_locked_pte(mm, va, &ptl);
 		if (!ptep)
 			return -ENOMEM;
 		/*
@@ -366,7 +366,7 @@ static void unmap_ldt_struct(struct mm_struct *mm, struct ldt_struct *ldt)
 		pte_t *ptep;
 
 		va = (unsigned long)ldt_slot_va(ldt->slot) + offset;
-		ptep = get_locked_pte(mm, va, &ptl, 0);
+		ptep = get_locked_pte(mm, va, &ptl);
 		if (!WARN_ON_ONCE(!ptep)) {
 			pte_clear(mm, va, ptep);
 			pte_unmap_unlock(ptep, ptl);

@@ -2332,14 +2332,21 @@ static pmd_t *walk_to_pmd(struct mm_struct *mm, unsigned long addr, int master_n
 	return pmd;
 }
 
-pte_t *get_locked_pte(struct mm_struct *mm, unsigned long addr,
-		      spinlock_t **ptl, int node)
+static pte_t *hydra_get_locked_pte(struct mm_struct *mm, unsigned long addr,
+				   spinlock_t **ptl, int node)
 {
 	pmd_t *pmd = walk_to_pmd(mm, addr, node);
 
 	if (!pmd)
 		return NULL;
 	return pte_alloc_map_lock(mm, pmd, addr, ptl);
+}
+
+pte_t *get_locked_pte(struct mm_struct *mm, unsigned long addr,
+		      spinlock_t **ptl)
+{
+	BUG_ON(mm->lazy_repl_enabled);
+	return hydra_get_locked_pte(mm, addr, ptl, 0);
 }
 
 static bool vm_mixed_zeropage_allowed(struct vm_area_struct *vma)
@@ -2442,7 +2449,7 @@ static int insert_page(struct vm_area_struct *vma, unsigned long addr,
 	if (retval)
 		goto out;
 	retval = -ENOMEM;
-	pte = get_locked_pte(vma->vm_mm, addr, &ptl, vma->master_pgd_node);
+	pte = hydra_get_locked_pte(vma->vm_mm, addr, &ptl, vma->master_pgd_node);
 	if (!pte)
 		goto out;
 	retval = insert_page_into_pte_locked(vma, pte, addr, page, prot,
@@ -2682,7 +2689,7 @@ static vm_fault_t insert_pfn(struct vm_area_struct *vma, unsigned long addr,
 	pte_t *pte, entry;
 	spinlock_t *ptl;
 
-	pte = get_locked_pte(mm, addr, &ptl, vma->master_pgd_node);
+	pte = hydra_get_locked_pte(mm, addr, &ptl, vma->master_pgd_node);
 	if (!pte)
 		return VM_FAULT_OOM;
 	entry = ptep_get(pte);
