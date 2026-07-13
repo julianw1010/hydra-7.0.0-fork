@@ -30,6 +30,27 @@ void hydra_pud_owner_claim(struct mm_struct *mm, unsigned long start,
 	}
 }
 
+unsigned long hydra_gup_fast_end(struct mm_struct *mm, unsigned long start,
+				 unsigned long end)
+{
+	void *entry = xa_load(mm->hydra_pud_owner, start >> PUD_SHIFT);
+	unsigned long owner, addr;
+
+	if (!entry)
+		return start;
+
+	owner = xa_to_value(entry);
+	addr = (start & PUD_MASK) + PUD_SIZE;
+	while (addr < end) {
+		entry = xa_load(mm->hydra_pud_owner, addr >> PUD_SHIFT);
+		if (!entry || xa_to_value(entry) != owner)
+			return addr;
+		addr += PUD_SIZE;
+	}
+
+	return end;
+}
+
 void hydra_pud_owner_stamp(struct mm_struct *mm, unsigned long start,
 			   unsigned long end, int node)
 {

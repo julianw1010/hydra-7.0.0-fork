@@ -623,6 +623,9 @@ int user_proactive_reclaim(char *buf,
  */
 pmd_t *mm_find_pmd(struct mm_struct *mm, unsigned long address);
 
+unsigned long hydra_gup_fast_end(struct mm_struct *mm, unsigned long start,
+				 unsigned long end);
+
 /*
  * in mm/page_alloc.c
  */
