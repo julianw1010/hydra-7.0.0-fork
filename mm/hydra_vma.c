@@ -1,42 +1,7 @@
 #include "vma_internal.h"
 #include "vma.h"
-#include <linux/hydra.h>
 
 void hydra_vma_chown(struct vm_area_struct *vma, int node);
-
-void hydra_pud_owner_claim(struct mm_struct *mm, unsigned long start,
-			   unsigned long end, int node)
-{
-	unsigned long idx;
-	void *old;
-
-	for (idx = start >> PUD_SHIFT; idx <= (end - 1) >> PUD_SHIFT; idx++) {
-		old = xa_cmpxchg(mm->hydra_pud_owner, idx, NULL,
-				 xa_mk_value(node), GFP_KERNEL);
-		if (xa_is_err(old)) {
-			pr_emerg("HYDRA: pud owner claim failed for mm %px pud index %lx node %d\n",
-				 mm, idx, node);
-			BUG();
-		}
-	}
-}
-
-void hydra_pud_owner_stamp(struct mm_struct *mm, unsigned long start,
-			   unsigned long end, int node)
-{
-	unsigned long idx;
-	void *old;
-
-	for (idx = start >> PUD_SHIFT; idx <= (end - 1) >> PUD_SHIFT; idx++) {
-		old = xa_store(mm->hydra_pud_owner, idx, xa_mk_value(node),
-			       GFP_KERNEL);
-		if (xa_is_err(old)) {
-			pr_emerg("HYDRA: pud owner stamp failed for mm %px pud index %lx node %d\n",
-				 mm, idx, node);
-			BUG();
-		}
-	}
-}
 
 static int hydra_lookup_pud_owner(struct mm_struct *mm,
 				  unsigned long addr,
@@ -114,8 +79,6 @@ void hydra_fixup_pud_nodes(struct mm_struct *mm,
 			did_split = 1;
 			break;
 		}
-
-		hydra_pud_owner_stamp(mm, cur->vm_start, cur->vm_end, cur_owner);
 
 		if (!did_split)
 			break;

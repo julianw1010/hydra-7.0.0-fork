@@ -151,9 +151,6 @@ void hydra_vma_attach(struct vm_area_struct *vma)
 
 	if (!mm)
 		return;
-	if (mm->lazy_repl_enabled)
-		hydra_pud_owner_claim(mm, vma->vm_start, vma->vm_end,
-				      vma->master_pgd_node);
 	s = mm->hydra_stats;
 	if (!s)
 		return;
@@ -195,8 +192,6 @@ void hydra_vma_chown(struct vm_area_struct *vma, int node)
 			       atomic_long_inc_return(&s->vma_owner_cur[node]));
 	}
 	WRITE_ONCE(vma->master_pgd_node, node);
-	if (mm && mm->hydra_pud_owner)
-		hydra_pud_owner_stamp(mm, vma->vm_start, vma->vm_end, node);
 }
 
 static const char * const hydra_level_name[HYDRA_PT_NR_LEVELS] = {

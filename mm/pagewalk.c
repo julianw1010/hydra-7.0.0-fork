@@ -9,6 +9,8 @@
 
 #include <asm/tlbflush.h>
 
+#include <linux/hydra.h>
+
 #include "internal.h"
 
 /*
@@ -300,7 +302,8 @@ static int walk_pgd_range(unsigned long addr, unsigned long end,
 	if (walk->pgd)
 		pgd = walk->pgd + pgd_index(addr);
 	else
-		pgd = pgd_offset(walk->mm, addr);
+		pgd = hydra_pgd_offset(walk->mm, addr,
+				       walk->vma ? walk->vma->master_pgd_node : 0);
 	do {
 		next = pgd_addr_end(addr, end);
 		if (pgd_none_or_clear_bad(pgd)) {
@@ -919,7 +922,7 @@ struct folio *folio_walk_start(struct folio_walk *fw,
 	if (WARN_ON_ONCE(addr < vma->vm_start || addr >= vma->vm_end))
 		goto not_found;
 
-	pgdp = pgd_offset(vma->vm_mm, addr);
+	pgdp = hydra_pgd_offset(vma->vm_mm, addr, vma->master_pgd_node);
 	if (pgd_none_or_clear_bad(pgdp))
 		goto not_found;
 

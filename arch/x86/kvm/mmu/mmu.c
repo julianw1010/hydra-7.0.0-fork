@@ -57,6 +57,8 @@
 #include <asm/spec-ctrl.h>
 #include <asm/vmx.h>
 
+#include <linux/hydra.h>
+
 #include "trace.h"
 
 static bool nx_hugepage_mitigation_hard_disabled;
@@ -3263,6 +3265,7 @@ static int host_pfn_mapping_level(struct kvm *kvm, gfn_t gfn,
 	 * value) and then p*d_offset() walks into the target huge page instead
 	 * of the old page table (sees the new value).
 	 */
+	BUG_ON(kvm->mm->lazy_repl_enabled);
 	pgd = READ_ONCE(*pgd_offset(kvm->mm, hva));
 	if (pgd_none(pgd))
 		goto out;

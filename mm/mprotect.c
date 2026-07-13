@@ -35,6 +35,7 @@
 #include <asm/mmu_context.h>
 #include <asm/tlbflush.h>
 #include <asm/tlb.h>
+#include <linux/hydra.h> 
 
 #include "internal.h"
 
@@ -610,7 +611,7 @@ static long change_protection_range(struct mmu_gather *tlb,
 	long pages = 0, ret;
 
 	BUG_ON(addr >= end);
-	pgd = pgd_offset(mm, addr);
+	pgd = hydra_pgd_offset(mm, addr, vma->master_pgd_node);
 	tlb_start_vma(tlb, vma);
 	do {
 		next = pgd_addr_end(addr, end);

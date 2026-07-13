@@ -621,7 +621,8 @@ int user_proactive_reclaim(char *buf,
 /*
  * in mm/rmap.c:
  */
-pmd_t *mm_find_pmd(struct mm_struct *mm, unsigned long address);
+pmd_t *mm_find_pmd(struct mm_struct *mm, unsigned long address,
+		   unsigned long master_node);
 
 /*
  * in mm/page_alloc.c

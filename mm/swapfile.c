@@ -42,6 +42,7 @@
 #include <linux/suspend.h>
 #include <linux/zswap.h>
 #include <linux/plist.h>
+#include <linux/hydra.h> 
 
 #include <asm/tlbflush.h>
 #include <linux/leafops.h>
@@ -2325,7 +2326,7 @@ static int unuse_vma(struct vm_area_struct *vma, unsigned int type)
 	addr = vma->vm_start;
 	end = vma->vm_end;
 
-	pgd = pgd_offset(vma->vm_mm, addr);
+	pgd = hydra_pgd_offset(vma->vm_mm, addr, vma->master_pgd_node);
 	do {
 		next = pgd_addr_end(addr, end);
 		if (pgd_none_or_clear_bad(pgd))
