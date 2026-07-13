@@ -10,6 +10,80 @@ extern int sysctl_hydra_tlbflush_opt;
 
 static struct proc_dir_entry *hydra_dir;
 
+struct hydra_int_knob {
+	const char *name;
+	int *val;
+	int min;
+	int max;
+};
+
+static const struct hydra_int_knob hydra_repl_order_knob = {
+	"repl_order", &sysctl_hydra_repl_order, 0, 9,
+};
+
+static const struct hydra_int_knob hydra_tlbflush_opt_knob = {
+	"tlbflush_opt", &sysctl_hydra_tlbflush_opt, 0, 1,
+};
+
+static int hydra_proc_parse_long(const char __user *ubuf, size_t count,
+				 long *val)
+{
+	char buf[32];
+	size_t len;
+
+	len = min(count, sizeof(buf) - 1);
+	if (copy_from_user(buf, ubuf, len))
+		return -EFAULT;
+	buf[len] = '\0';
+
+	if (kstrtol(buf, 10, val))
+		return -EINVAL;
+
+	return 0;
+}
+
+static int hydra_knob_show(struct seq_file *m, void *v)
+{
+	const struct hydra_int_knob *knob = m->private;
+
+	seq_printf(m, "%d\n", *knob->val);
+	return 0;
+}
+
+static int hydra_knob_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, hydra_knob_show, pde_data(inode));
+}
+
+static ssize_t hydra_knob_write(struct file *file, const char __user *ubuf,
+				size_t count, loff_t *ppos)
+{
+	const struct hydra_int_knob *knob = pde_data(file_inode(file));
+	long val;
+	int ret;
+
+	ret = hydra_proc_parse_long(ubuf, count, &val);
+	if (ret)
+		return ret;
+
+	if (val < knob->min || val > knob->max)
+		return -EINVAL;
+
+	*knob->val = (int)val;
+
+	pr_info("HYDRA: %s set to %d\n", knob->name, *knob->val);
+
+	return count;
+}
+
+static const struct proc_ops hydra_knob_ops = {
+	.proc_open	= hydra_knob_open,
+	.proc_read	= seq_read,
+	.proc_write	= hydra_knob_write,
+	.proc_lseek	= seq_lseek,
+	.proc_release	= single_release,
+};
+
 static void hydra_cache_print_row(struct seq_file *m, const char *label,
 				  const long long *vals, long long total)
 {
@@ -90,18 +164,12 @@ static int hydra_cache_open(struct inode *inode, struct file *file)
 static ssize_t hydra_cache_write(struct file *file, const char __user *ubuf,
 				 size_t count, loff_t *ppos)
 {
-	char buf[32];
-	size_t len;
 	long val, added;
-	int node, drained;
+	int node, drained, ret;
 
-	len = min(count, sizeof(buf) - 1);
-	if (copy_from_user(buf, ubuf, len))
-		return -EFAULT;
-	buf[len] = '\0';
-
-	if (kstrtol(buf, 10, &val))
-		return -EINVAL;
+	ret = hydra_proc_parse_long(ubuf, count, &val);
+	if (ret)
+		return ret;
 
 	if (val == -1) {
 		drained = hydra_cache_drain_all();
@@ -148,94 +216,6 @@ static const struct proc_ops hydra_cache_ops = {
 	.proc_release	= single_release,
 };
 
-static int hydra_repl_order_show(struct seq_file *m, void *v)
-{
-	seq_printf(m, "%d\n", sysctl_hydra_repl_order);
-	return 0;
-}
-
-static int hydra_repl_order_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, hydra_repl_order_show, NULL);
-}
-
-static ssize_t hydra_repl_order_write(struct file *file, const char __user *ubuf,
-				      size_t count, loff_t *ppos)
-{
-	char buf[32];
-	size_t len;
-	long val;
-
-	len = min(count, sizeof(buf) - 1);
-	if (copy_from_user(buf, ubuf, len))
-		return -EFAULT;
-	buf[len] = '\0';
-
-	if (kstrtol(buf, 10, &val))
-		return -EINVAL;
-
-	if (val < 0 || val > 9)
-		return -EINVAL;
-
-	sysctl_hydra_repl_order = (int)val;
-
-	pr_info("HYDRA: repl_order set to %d\n", sysctl_hydra_repl_order);
-
-	return count;
-}
-
-static const struct proc_ops hydra_repl_order_ops = {
-	.proc_open	= hydra_repl_order_open,
-	.proc_read	= seq_read,
-	.proc_write	= hydra_repl_order_write,
-	.proc_lseek	= seq_lseek,
-	.proc_release	= single_release,
-};
-
-static int hydra_tlbflush_opt_show(struct seq_file *m, void *v)
-{
-	seq_printf(m, "%d\n", sysctl_hydra_tlbflush_opt);
-	return 0;
-}
-
-static int hydra_tlbflush_opt_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, hydra_tlbflush_opt_show, NULL);
-}
-
-static ssize_t hydra_tlbflush_opt_write(struct file *file, const char __user *ubuf,
-					size_t count, loff_t *ppos)
-{
-	char buf[32];
-	size_t len;
-	long val;
-
-	len = min(count, sizeof(buf) - 1);
-	if (copy_from_user(buf, ubuf, len))
-		return -EFAULT;
-	buf[len] = '\0';
-
-	if (kstrtol(buf, 10, &val))
-		return -EINVAL;
-
-	if (val < 0 || val > 1)
-		return -EINVAL;
-
-	sysctl_hydra_tlbflush_opt = (int)val;
-
-	pr_info("HYDRA: tlbflush_opt set to %d\n", sysctl_hydra_tlbflush_opt);
-
-	return count;
-}
-
-static const struct proc_ops hydra_tlbflush_opt_ops = {
-	.proc_open	= hydra_tlbflush_opt_open,
-	.proc_read	= seq_read,
-	.proc_write	= hydra_tlbflush_opt_write,
-	.proc_lseek	= seq_lseek,
-	.proc_release	= single_release,
-};
-
 static const struct proc_ops hydra_status_ops = {
 	.proc_open	= hydra_status_open,
 	.proc_read	= seq_read,
@@ -259,10 +239,12 @@ static int __init hydra_proc_init(void)
 	if (!proc_create("cache", 0644, hydra_dir, &hydra_cache_ops))
 		goto fail;
 
-	if (!proc_create("repl_order", 0644, hydra_dir, &hydra_repl_order_ops))
+	if (!proc_create_data("repl_order", 0644, hydra_dir, &hydra_knob_ops,
+			      (void *)&hydra_repl_order_knob))
 		goto fail;
 
-	if (!proc_create("tlbflush_opt", 0644, hydra_dir, &hydra_tlbflush_opt_ops))
+	if (!proc_create_data("tlbflush_opt", 0644, hydra_dir, &hydra_knob_ops,
+			      (void *)&hydra_tlbflush_opt_knob))
 		goto fail;
 
 	if (!proc_create("status", 0444, hydra_dir, &hydra_status_ops))
