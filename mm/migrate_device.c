@@ -16,7 +16,6 @@
 #include <linux/leafops.h>
 #include <linux/pgalloc.h>
 #include <asm/tlbflush.h>
-#include <linux/hydra.h> 
 #include "internal.h"
 
 static int migrate_vma_collect_skip(unsigned long start,
@@ -989,7 +988,7 @@ static void migrate_vma_insert_page(struct migrate_vma *migrate,
 	if (!vma_is_anonymous(vma))
 		goto abort;
 
-	pgdp = hydra_pgd_offset(mm, addr, vma->master_pgd_node);
+	pgdp = pgd_offset(mm, addr);
 	p4dp = p4d_alloc(mm, pgdp, addr);
 	if (!p4dp)
 		goto abort;

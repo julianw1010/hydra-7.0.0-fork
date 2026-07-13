@@ -73,29 +73,13 @@ struct vma_remap_struct {
 	bool vmi_needs_invalidate;	/* Is the VMA iterator invalidated? */
 };
 
-static unsigned long hydra_addr_owner(struct mm_struct *mm,
-				      struct vm_area_struct *vma,
-				      unsigned long addr)
-{
-	struct vm_area_struct *cover;
-
-	if (!mm->lazy_repl_enabled)
-		return vma->master_pgd_node;
-
-	cover = find_vma(mm, addr);
-	BUG_ON(!cover);
-	BUG_ON(cover->vm_start > addr &&
-	       (cover->vm_start & PUD_MASK) != (addr & PUD_MASK));
-	return cover->master_pgd_node;
-}
-
-static pud_t *get_old_pud(struct mm_struct *mm, struct vm_area_struct *vma, unsigned long addr)
+static pud_t *get_old_pud(struct mm_struct *mm, unsigned long addr)
 {
 	pgd_t *pgd;
 	p4d_t *p4d;
 	pud_t *pud;
 
-	pgd = hydra_pgd_offset(mm, addr, hydra_addr_owner(mm, vma, addr));
+	pgd = pgd_offset(mm, addr);
 	if (pgd_none_or_clear_bad(pgd))
 		return NULL;
 
@@ -110,12 +94,12 @@ static pud_t *get_old_pud(struct mm_struct *mm, struct vm_area_struct *vma, unsi
 	return pud;
 }
 
-static pmd_t *get_old_pmd(struct mm_struct *mm, struct vm_area_struct *vma, unsigned long addr)
+static pmd_t *get_old_pmd(struct mm_struct *mm, unsigned long addr)
 {
 	pud_t *pud;
 	pmd_t *pmd;
 
-	pud = get_old_pud(mm, vma, addr);
+	pud = get_old_pud(mm, addr);
 	if (!pud)
 		return NULL;
 
@@ -126,12 +110,12 @@ static pmd_t *get_old_pmd(struct mm_struct *mm, struct vm_area_struct *vma, unsi
 	return pmd;
 }
 
-static pud_t *alloc_new_pud(struct mm_struct *mm, struct vm_area_struct *vma, unsigned long addr)
+static pud_t *alloc_new_pud(struct mm_struct *mm, unsigned long addr)
 {
 	pgd_t *pgd;
 	p4d_t *p4d;
 
-	pgd = hydra_pgd_offset(mm, addr, hydra_addr_owner(mm, vma, addr));
+	pgd = pgd_offset(mm, addr);
 	p4d = p4d_alloc(mm, pgd, addr);
 	if (!p4d)
 		return NULL;
@@ -139,12 +123,12 @@ static pud_t *alloc_new_pud(struct mm_struct *mm, struct vm_area_struct *vma, un
 	return pud_alloc(mm, p4d, addr);
 }
 
-static pmd_t *alloc_new_pmd(struct mm_struct *mm, struct vm_area_struct *vma, unsigned long addr)
+static pmd_t *alloc_new_pmd(struct mm_struct *mm, unsigned long addr)
 {
 	pud_t *pud;
 	pmd_t *pmd;
 
-	pud = alloc_new_pud(mm, vma, addr);
+	pud = alloc_new_pud(mm, addr);
 	if (!pud)
 		return NULL;
 
@@ -847,10 +831,10 @@ unsigned long move_page_tables(struct pagetable_move_control *pmc)
 		 */
 		extent = get_extent(NORMAL_PUD, pmc);
 
-		old_pud = get_old_pud(mm, pmc->old, pmc->old_addr);
+		old_pud = get_old_pud(mm, pmc->old_addr);
 		if (!old_pud)
 			continue;
-		new_pud = alloc_new_pud(mm, pmc->new, pmc->new_addr);
+		new_pud = alloc_new_pud(mm, pmc->new_addr);
 		if (!new_pud)
 			break;
 		if (pud_trans_huge(*old_pud)) {
@@ -865,10 +849,10 @@ unsigned long move_page_tables(struct pagetable_move_control *pmc)
 		}
 
 		extent = get_extent(NORMAL_PMD, pmc);
-		old_pmd = get_old_pmd(mm, pmc->old, pmc->old_addr);
+		old_pmd = get_old_pmd(mm, pmc->old_addr);
 		if (!old_pmd)
 			continue;
-		new_pmd = alloc_new_pmd(mm, pmc->new, pmc->new_addr);
+		new_pmd = alloc_new_pmd(mm, pmc->new_addr);
 		if (!new_pmd)
 			break;
 again:

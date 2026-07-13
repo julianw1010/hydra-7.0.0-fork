@@ -61,7 +61,6 @@
 #include <linux/pagewalk.h>
 #include <linux/shmem_fs.h>
 #include <linux/sysctl.h>
-#include <linux/hydra.h> 
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/memory-failure.h>
@@ -347,7 +346,7 @@ static unsigned long dev_pagemap_mapping_shift(struct vm_area_struct *vma,
 	pte_t ptent;
 
 	VM_BUG_ON_VMA(address == -EFAULT, vma);
-	pgd = hydra_pgd_offset(vma->vm_mm, address, vma->master_pgd_node);
+	pgd = pgd_offset(vma->vm_mm, address);
 	if (!pgd_present(*pgd))
 		return 0;
 	p4d = p4d_offset(pgd, address);

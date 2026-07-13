@@ -4,7 +4,6 @@
 #include <linux/bitops.h>
 #include <linux/mmu_notifier.h>
 #include <linux/mm_inline.h>
-#include <linux/hydra.h>
 #include <asm/cacheflush.h>
 #include <asm/tlbflush.h>
 

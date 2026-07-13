@@ -20,8 +20,6 @@
 #include "internal.h"
 #include "swap.h"
 
-#include <linux/hydra.h>
-
 static __always_inline
 bool validate_dst_vma(struct vm_area_struct *dst_vma, unsigned long dst_end)
 {
@@ -464,13 +462,13 @@ out:
 	return ret;
 }
 
-static pmd_t *mm_alloc_pmd(struct mm_struct *mm, struct vm_area_struct *vma, unsigned long address)
+static pmd_t *mm_alloc_pmd(struct mm_struct *mm, unsigned long address)
 {
 	pgd_t *pgd;
 	p4d_t *p4d;
 	pud_t *pud;
 
-	pgd = hydra_pgd_offset(mm, address, vma->master_pgd_node);
+	pgd = pgd_offset(mm, address);
 	p4d = p4d_alloc(mm, pgd, address);
 	if (!p4d)
 		return NULL;
@@ -786,7 +784,7 @@ retry:
 
 		VM_WARN_ON_ONCE(dst_addr >= dst_start + len);
 
-		dst_pmd = mm_alloc_pmd(dst_mm, dst_vma, dst_addr);
+		dst_pmd = mm_alloc_pmd(dst_mm, dst_addr);
 		if (unlikely(!dst_pmd)) {
 			err = -ENOMEM;
 			break;
@@ -1825,19 +1823,19 @@ ssize_t move_pages(struct userfaultfd_ctx *ctx, unsigned long dst_start,
 		 * transparent huge PUD. If file-backed support is added,
 		 * that case would need to be handled here.
 		 */
-		src_pmd = mm_find_pmd(mm, src_addr, src_vma->master_pgd_node);
+		src_pmd = mm_find_pmd(mm, src_addr);
 		if (unlikely(!src_pmd)) {
 			if (!(mode & UFFDIO_MOVE_MODE_ALLOW_SRC_HOLES)) {
 				err = -ENOENT;
 				break;
 			}
-			src_pmd = mm_alloc_pmd(mm, src_vma, src_addr);
+			src_pmd = mm_alloc_pmd(mm, src_addr);
 			if (unlikely(!src_pmd)) {
 				err = -ENOMEM;
 				break;
 			}
 		}
-		dst_pmd = mm_alloc_pmd(mm, dst_vma, dst_addr);
+		dst_pmd = mm_alloc_pmd(mm, dst_addr);
 		if (unlikely(!dst_pmd)) {
 			err = -ENOMEM;
 			break;
