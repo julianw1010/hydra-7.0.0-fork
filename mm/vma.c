@@ -3121,12 +3121,6 @@ int expand_upwards(struct vm_area_struct *vma, unsigned long address)
 		return -ENOMEM;
 	address += PAGE_SIZE;
 
-	if (mm->lazy_repl_enabled &&
-	    hydra_stack_expand_conflict(mm, vma,
-					((vma->vm_end - 1) & PUD_MASK) + PUD_SIZE,
-					((address - 1) & PUD_MASK) + PUD_SIZE))
-		return -ENOMEM;
-
 	/* Enforce stack_guard_gap */
 	gap_addr = address + stack_guard_gap;
 

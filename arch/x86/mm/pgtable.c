@@ -199,7 +199,7 @@ static void free_pmds(struct mm_struct *mm, pmd_t *pmds[], int count)
 		}
 }
 
-int preallocate_pmds(struct mm_struct *mm, pmd_t *pmds[], int count)
+static int preallocate_pmds(struct mm_struct *mm, pmd_t *pmds[], int count)
 {
 	int i;
 	bool failed = false;
@@ -276,7 +276,7 @@ static void pgd_mop_up_pmds(struct mm_struct *mm, pgd_t *pgdp)
 #endif
 }
 
-void pgd_prepopulate_pmd(struct mm_struct *mm, pgd_t *pgd, pmd_t *pmds[])
+static void pgd_prepopulate_pmd(struct mm_struct *mm, pgd_t *pgd, pmd_t *pmds[])
 {
 	p4d_t *p4d;
 	pud_t *pud;

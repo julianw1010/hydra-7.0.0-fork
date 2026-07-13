@@ -29,7 +29,5 @@ void __init x86_numa_init(void);
 #endif
 
 void pgd_ctor(struct mm_struct *mm, pgd_t *pgd);
-int preallocate_pmds(struct mm_struct *mm, pmd_t *pmds[], int count);
-void pgd_prepopulate_pmd(struct mm_struct *mm, pgd_t *pgd, pmd_t *pmds[]);
 
 #endif	/* __X86_MM_INTERNAL_H */
