@@ -6425,17 +6425,12 @@ static vm_fault_t handle_pte_fault(struct vm_fault *vmf, int has_recursed)
 		int changed;
 
 		if (replica_side) {
-			pte_t current_replica = *vmf->pte;
+			pte_t expected = vmf->orig_pte;
 
-			if (!pte_present(current_replica) ||
-			    pte_pfn(current_replica) != pte_pfn(entry)) {
-				goto unlock;
-			}
-
-			changed = !pte_same(current_replica, entry);
+			changed = !pte_same(expected, entry);
 			if (changed &&
 			    !try_cmpxchg((long *)&vmf->pte->pte,
-					 (long *)&current_replica,
+					 (long *)&expected,
 					 *(long *)&entry))
 				goto unlock;
 		} else {
