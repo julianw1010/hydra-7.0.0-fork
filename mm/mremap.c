@@ -357,9 +357,6 @@ static bool move_normal_pmd(struct pagetable_move_control *pmc,
 	bool res = false;
 	pmd_t pmd;
 
-	if (mm->lazy_repl_enabled)
-		return false;
-
 	if (!arch_supports_page_table_move())
 		return false;
 	if (!uffd_supports_page_table_move(pmc))
@@ -389,6 +386,12 @@ static bool move_normal_pmd(struct pagetable_move_control *pmc,
 	 */
 	if (WARN_ON_ONCE(!pmd_none(*new_pmd)))
 		return false;
+
+	if (mm->lazy_repl_enabled) {
+		if (virt_to_page(old_pmd) != virt_to_page(new_pmd))
+			return false;
+		return hydra_move_normal_pmd(vma, pmc->old_addr, old_pmd, new_pmd);
+	}
 
 	/*
 	 * We don't have to worry about the ordering of src and dst

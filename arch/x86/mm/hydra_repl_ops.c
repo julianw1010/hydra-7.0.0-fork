@@ -454,3 +454,43 @@ pmd_t hydra_pmdp_establish(pmd_t *pmdp, pmd_t pmd)
 
 	return pmd_set_flags(old, flags);
 }
+
+bool hydra_move_normal_pmd(struct vm_area_struct *vma, unsigned long old_addr,
+			   pmd_t *old_pmd, pmd_t *new_pmd)
+{
+	struct mm_struct *mm = vma->vm_mm;
+	struct page *master_page = virt_to_page(old_pmd);
+	unsigned long old_off = (unsigned long)old_pmd & ~PAGE_MASK;
+	unsigned long new_off = (unsigned long)new_pmd & ~PAGE_MASK;
+	spinlock_t *ptl;
+	struct page *cur;
+	pmd_t pmd;
+	bool res = false;
+
+	ptl = pmd_lock(mm, old_pmd);
+
+	pmd = *old_pmd;
+	if (unlikely(!pmd_present(pmd) || pmd_leaf(pmd)))
+		goto out_unlock;
+
+	rcu_read_lock();
+	cur = master_page;
+	do {
+		pmd_t *k_old = (pmd_t *)(page_address(cur) + old_off);
+		pmd_t *k_new = (pmd_t *)(page_address(cur) + new_off);
+		pmd_t v = *k_old;
+
+		native_set_pmd(k_new, v);
+		native_set_pmd(k_old, __pmd(0));
+
+		cur = READ_ONCE(cur->next_replica);
+	} while (cur && cur != master_page);
+	rcu_read_unlock();
+
+	res = true;
+	flush_tlb_vma_range(vma, old_addr, old_addr + PMD_SIZE, PAGE_SHIFT, true);
+
+out_unlock:
+	spin_unlock(ptl);
+	return res;
+}
