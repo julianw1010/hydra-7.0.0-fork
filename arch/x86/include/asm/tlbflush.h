@@ -495,5 +495,6 @@ static inline void __native_tlb_flush_global(unsigned long cr4)
 }
 
 extern int sysctl_hydra_tlbflush_opt;
+extern int sysctl_hydra_invlpgb;
 
 #endif /* _ASM_X86_TLBFLUSH_H */
