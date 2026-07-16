@@ -452,7 +452,7 @@ static void consider_global_asid(struct mm_struct *mm)
 	if (!cpu_feature_enabled(X86_FEATURE_INVLPGB))
 		return;
 
-	if (mm->lazy_repl_enabled && !sysctl_hydra_invlpgb)
+	if (!sysctl_hydra_invlpgb)
 		return;
 
 	/* Check every once in a while. */
