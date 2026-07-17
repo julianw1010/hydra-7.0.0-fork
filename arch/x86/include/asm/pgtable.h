@@ -1736,6 +1736,10 @@ pmd_t hydra_get_pmd(pmd_t *pmdp);
 
 void hydra_set_pmd(pmd_t *pmdp, pmd_t pmd);
 
+void hydra_set_pud(pud_t *pudp, pud_t pudval);
+void hydra_set_p4d(p4d_t *p4dp, p4d_t p4dval);
+void hydra_set_pgd(pgd_t *pgdp, pgd_t pgdval);
+
 #endif	/* __ASSEMBLER__ */
 
 #endif /* _ASM_X86_PGTABLE_H */

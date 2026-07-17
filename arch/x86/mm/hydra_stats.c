@@ -4,6 +4,7 @@
 #include <linux/list.h>
 #include <linux/spinlock.h>
 #include <linux/seq_file.h>
+#include <linux/jiffies.h>
 #include <linux/hydra.h>
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
@@ -29,6 +30,7 @@ struct hydra_stats *hydra_stats_attach(struct mm_struct *mm)
 	get_task_comm(s->comm, current);
 	s->mm = mm;
 	s->master_node = -1;
+	s->start_jiffies = jiffies;
 
 	spin_lock(&hydra_stats_lock);
 	s->id = ++hydra_stats_next_id;
@@ -81,6 +83,8 @@ void hydra_stats_detach(struct mm_struct *mm)
 
 	printk(KERN_INFO "HYDRA: disabled page table replication for mm %px on %d nodes\n",
 	       mm, count);
+
+	s->end_jiffies = jiffies;
 
 	spin_lock(&hydra_stats_lock);
 	list_move_tail(&s->list, &hydra_hist_list);
@@ -330,6 +334,14 @@ static void hydra_stats_print(struct seq_file *m, struct hydra_stats *s,
 	seq_printf(m, "    %-40s %px\n", "mm", s->mm);
 	seq_printf(m, "    %-40s %d\n", "master node", s->master_node);
 
+	{
+		unsigned long endj = history ? s->end_jiffies : jiffies;
+		unsigned int ms = jiffies_to_msecs(endj - s->start_jiffies);
+
+		seq_printf(m, "    %-40s %u.%03u\n", "lifetime (s)",
+			   ms / 1000, ms % 1000);
+	}
+
 	hydra_print_section(m, "THP / page-table events");
 	hydra_print_kv(m, "THP splits", atomic_long_read(&s->thp_split));
 	hydra_print_kv(m, "THP collapses", atomic_long_read(&s->thp_collapse));
@@ -346,6 +358,7 @@ static void hydra_stats_print(struct seq_file *m, struct hydra_stats *s,
 		long rfw = atomic_long_read(&s->replica_faults_write);
 		long rfp = atomic_long_read(&s->replica_faults_present);
 		long rsm = atomic_long_read(&s->replica_serviced_on_master);
+		int node;
 
 		hydra_print_section(m, "Replication faults");
 		seq_puts(m,
@@ -365,6 +378,14 @@ static void hydra_stats_print(struct seq_file *m, struct hydra_stats *s,
 		hydra_print_sub2(m, "not-present (major/fill)", rf - rfp);
 		hydra_print_sub2(m, "present (permission/minor)", rfp);
 		hydra_print_sub_pct(m, "serviced on master", rsm, rf);
+
+		hydra_print_group(m, "by handling node");
+		hydra_print_node_header(m);
+		seq_printf(m, "    %-4s", "flts");
+		for (node = 0; node < NUMA_NODE_COUNT; node++)
+			seq_printf(m, " %7ld",
+				   atomic_long_read(&s->faults_node[node]));
+		seq_putc(m, '\n');
 	}
 
 	{
@@ -385,6 +406,18 @@ static void hydra_stats_print(struct seq_file *m, struct hydra_stats *s,
 		hydra_print_kv(m, "PMD copy faults", mff);
 		hydra_print_ratio(m, "PMD entries per copy fault", mc, mff);
 	}
+
+	hydra_print_section(m, "Page-table entry writes (all levels)");
+	hydra_print_kv(m, "PGD entry writes",
+		       atomic_long_read(&s->pt_writes[HYDRA_PT_PGD]));
+	hydra_print_kv(m, "P4D entry writes",
+		       atomic_long_read(&s->pt_writes[HYDRA_PT_P4D]));
+	hydra_print_kv(m, "PUD entry writes",
+		       atomic_long_read(&s->pt_writes[HYDRA_PT_PUD]));
+	hydra_print_kv(m, "PMD entry writes",
+		       atomic_long_read(&s->pt_writes[HYDRA_PT_PMD]));
+	hydra_print_kv(m, "PTE entry writes",
+		       atomic_long_read(&s->pt_writes[HYDRA_PT_PTE]));
 
 	{
 		long tlb_sent = atomic_long_read(&s->tlb_shootdowns);

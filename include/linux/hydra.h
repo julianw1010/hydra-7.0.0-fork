@@ -166,6 +166,9 @@ struct hydra_stats {
 	int master_node;
 	int ever_enabled;
 
+	unsigned long start_jiffies;
+	unsigned long end_jiffies;
+
 	atomic_long_t thp_split;
 	atomic_long_t thp_collapse;
 	atomic_long_t deposits;
@@ -179,12 +182,16 @@ struct hydra_stats {
 	atomic_long_t replica_faults_present;
 	atomic_long_t replica_serviced_on_master;
 
+	atomic_long_t faults_node[NUMA_NODE_COUNT];
+
 	atomic_long_t pte_entries_copied;
 	atomic_long_t pte_entries_prefetched;
 	atomic_long_t pte_copy_faults;
 	atomic_long_t pmd_entries_copied;
 	atomic_long_t pmd_entries_prefetched;
 	atomic_long_t pmd_copy_faults;
+
+	atomic_long_t pt_writes[HYDRA_PT_NR_LEVELS];
 
 	atomic_long_t tlb_shootdowns;
 	atomic_long_t tlb_shootdowns_saved;
@@ -210,6 +217,25 @@ void hydra_vma_chown(struct vm_area_struct *vma, int node);
 int hydra_status_open(struct inode *inode, struct file *file);
 int hydra_history_open(struct inode *inode, struct file *file);
 int hydra_stats_clear_history(void);
+
+static inline void hydra_stats_pt_write(void *tablep, int level)
+{
+	struct mm_struct *mm;
+	struct hydra_stats *s;
+
+	if (!static_branch_unlikely(&hydra_repl_ever_enabled))
+		return;
+	if (level < 0 || level >= HYDRA_PT_NR_LEVELS)
+		return;
+	if (!virt_addr_valid(tablep))
+		return;
+	mm = READ_ONCE(virt_to_page(tablep)->pt_owner_mm);
+	if (!mm)
+		return;
+	s = mm->hydra_stats;
+	if (s)
+		atomic_long_inc(&s->pt_writes[level]);
+}
 
 static inline void hydra_stats_copied_pte(struct mm_struct *mm, long copied)
 {
@@ -300,8 +326,12 @@ static inline struct hydra_fault_ctx hydra_stats_fault_begin(struct mm_struct *m
 	struct hydra_fault_ctx c = { .s = mm->hydra_stats };
 
 	if (c.s) {
+		int node = numa_node_id();
+
+		if (node >= 0 && node < NUMA_NODE_COUNT)
+			atomic_long_inc(&c.s->faults_node[node]);
 		c.replica = mm->lazy_repl_enabled &&
-			    (numa_node_id() != vma->master_pgd_node);
+			    (node != vma->master_pgd_node);
 		c.write = !!(flags & FAULT_FLAG_WRITE);
 		c.present = !!(flags & FAULT_FLAG_PROT);
 		if (c.replica) {
