@@ -219,12 +219,10 @@ int hydra_status_open(struct inode *inode, struct file *file);
 int hydra_history_open(struct inode *inode, struct file *file);
 int hydra_stats_clear_history(void);
 
-static inline void hydra_stats_pt_write(void *tablep, int level)
+static inline void hydra_stats_pt_write(void *tablep, int level, long pages)
 {
 	struct mm_struct *mm;
 	struct hydra_stats *s;
-	struct page *base, *cur;
-	long ring;
 
 	if (!static_branch_unlikely(&hydra_repl_ever_enabled))
 		return;
@@ -232,23 +230,14 @@ static inline void hydra_stats_pt_write(void *tablep, int level)
 		return;
 	if (!virt_addr_valid(tablep))
 		return;
-	base = virt_to_page(tablep);
-	mm = READ_ONCE(base->pt_owner_mm);
+	mm = READ_ONCE(virt_to_page(tablep)->pt_owner_mm);
 	if (!mm)
 		return;
 	s = mm->hydra_stats;
 	if (!s)
 		return;
-
-	ring = 1;
-	rcu_read_lock();
-	for (cur = READ_ONCE(base->next_replica); cur && cur != base;
-	     cur = READ_ONCE(cur->next_replica))
-		ring++;
-	rcu_read_unlock();
-
 	atomic_long_inc(&s->pt_writes[level]);
-	atomic_long_add(ring, &s->pt_pages[level]);
+	atomic_long_add(pages, &s->pt_pages[level]);
 }
 
 static inline void hydra_stats_copied_pte(struct mm_struct *mm, long copied)
