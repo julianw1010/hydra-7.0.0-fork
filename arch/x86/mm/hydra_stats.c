@@ -407,17 +407,26 @@ static void hydra_stats_print(struct seq_file *m, struct hydra_stats *s,
 		hydra_print_ratio(m, "PMD entries per copy fault", mc, mff);
 	}
 
-	hydra_print_section(m, "Page-table entry writes (all levels)");
-	hydra_print_kv(m, "PGD entry writes",
-		       atomic_long_read(&s->pt_writes[HYDRA_PT_PGD]));
-	hydra_print_kv(m, "P4D entry writes",
-		       atomic_long_read(&s->pt_writes[HYDRA_PT_P4D]));
-	hydra_print_kv(m, "PUD entry writes",
-		       atomic_long_read(&s->pt_writes[HYDRA_PT_PUD]));
-	hydra_print_kv(m, "PMD entry writes",
-		       atomic_long_read(&s->pt_writes[HYDRA_PT_PMD]));
-	hydra_print_kv(m, "PTE entry writes",
-		       atomic_long_read(&s->pt_writes[HYDRA_PT_PTE]));
+	{
+		char buf[24];
+		int lvl;
+
+		hydra_print_section(m,
+			"Page-table entry modifications + replica fan-out (all ops)  [rows = level]");
+		seq_puts(m,
+			 "  (writes = set/clear/wrprotect/young calls; pages = replica table pages touched)\n");
+		seq_printf(m, "    %-6s %14s %14s %16s\n",
+			   "level", "writes", "pages", "avg pages/write");
+		for (lvl = HYDRA_PT_PGD; lvl <= HYDRA_PT_PTE; lvl++) {
+			long writes = atomic_long_read(&s->pt_writes[lvl]);
+			long pages = atomic_long_read(&s->pt_pages[lvl]);
+			long h = writes ? (pages * 100 + writes / 2) / writes : 0;
+
+			scnprintf(buf, sizeof(buf), "%ld.%02ld", h / 100, h % 100);
+			seq_printf(m, "    %-6s %14ld %14ld %16s\n",
+				   hydra_level_name[lvl], writes, pages, buf);
+		}
+	}
 
 	{
 		long tlb_sent = atomic_long_read(&s->tlb_shootdowns);
