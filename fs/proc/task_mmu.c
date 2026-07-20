@@ -27,7 +27,6 @@
 #include <asm/elf.h>
 #include <asm/tlb.h>
 #include <asm/tlbflush.h>
-#include <linux/hydra.h>
 #include "internal.h"
 
 #define SENTINEL_VMA_END	-1

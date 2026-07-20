@@ -1765,10 +1765,10 @@ static int bprm_execve(struct linux_binprm *bprm)
 	user_events_execve(current);
 	acct_update_integrals(current);
 	task_numa_free(current, false);
-	
+
 	if (bprm->hydra_repl_enabled)
 		hydra_enable_replication(current->mm);
-	
+
 	return retval;
 
 out:

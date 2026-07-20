@@ -6307,7 +6307,6 @@ static void fix_spurious_fault(struct vm_fault *vmf,
 							 vmf->pmd);
 	}
 }
-
 /*
  * These routines also need to handle stuff like marking pages dirty
  * and/or accessed for architectures that don't do it in hardware (most
@@ -6503,6 +6502,7 @@ retry_pud:
 
 		barrier();
 		if (pud_trans_huge(orig_pud)) {
+
 			/*
 			 * TODO once we support anonymous PUDs: NUMA case and
 			 * FAULT_FLAG_UNSHARE handling.

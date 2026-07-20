@@ -5,22 +5,6 @@
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
 
-struct page *hydra_alloc_page_on_node(size_t nid, unsigned int order)
-{
-	nodemask_t nm = NODE_MASK_NONE;
-	struct page *p;
-
-	node_set(nid, nm);
-	p = __alloc_pages((GFP_KERNEL_ACCOUNT | __GFP_ZERO | __GFP_THISNODE), order, nid, &nm);
-
-	if (p) {
-		p->next_replica = NULL;
-		p->pt_owner_mm = NULL;
-	}
-
-	return p;
-}
-
 bool hydra_try_return_page(struct page *page)
 {
 	int nid = page_to_nid(page);

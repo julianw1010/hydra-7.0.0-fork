@@ -403,6 +403,7 @@ static bool move_normal_pmd(struct pagetable_move_control *pmc,
 		spin_lock_nested(new_ptl, SINGLE_DEPTH_NESTING);
 
 	pmd = *old_pmd;
+
 	/* Racing with collapse? */
 	if (unlikely(!pmd_present(pmd) || pmd_leaf(pmd)))
 		goto out_unlock;
@@ -418,6 +419,7 @@ out_unlock:
 	if (new_ptl != old_ptl)
 		spin_unlock(new_ptl);
 	spin_unlock(old_ptl);
+
 	return res;
 }
 #else
@@ -1940,14 +1942,12 @@ static unsigned long do_mremap(struct vma_remap_struct *vrm)
 
 	if (mmap_write_lock_killable(mm))
 		return -EINTR;
-
 	vrm->mmap_locked = true;
 
 	if (vrm_move_only(vrm)) {
 		res = remap_move(vrm);
 	} else {
 		vrm->vma = vma_lookup(current->mm, vrm->addr);
-
 		res = check_prep_vma(vrm);
 		if (res)
 			goto out;
