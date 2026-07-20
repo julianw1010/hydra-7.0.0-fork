@@ -198,6 +198,7 @@ struct hydra_stats {
 	atomic_long_t eager_pmd_tables;
 	atomic_long_t eager_pte_entries;
 	atomic_long_t eager_pmd_entries;
+	atomic_long_t eager_prop_hits;
 
 	atomic_long_t pt_writes[HYDRA_PT_NR_LEVELS];
 	atomic_long_t pt_pages[HYDRA_PT_NR_LEVELS];
@@ -290,6 +291,12 @@ static inline void hydra_stats_eager_pmd_table(struct mm_struct *mm)
 {
 	if (mm->hydra_stats)
 		atomic_long_inc(&mm->hydra_stats->eager_pmd_tables);
+}
+
+static inline void hydra_stats_eager_prop_hit(struct mm_struct *mm)
+{
+	if (mm->hydra_stats)
+		atomic_long_inc(&mm->hydra_stats->eager_prop_hits);
 }
 
 static inline void hydra_stats_tlb(struct mm_struct *mm, long sent,

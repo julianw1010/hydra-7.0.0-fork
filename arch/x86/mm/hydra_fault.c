@@ -76,6 +76,8 @@ int hydra_alloc_replica_pmd(struct mm_struct *mm, pud_t *pud,
 			master_pmd_page = virt_to_page(m_pmd);
 		if (master_pmd_page && master_pmd_page != new_page)
 			hydra_link_page_to_replica_chain(master_pmd_page, new_page);
+		if (current->hydra_eager_active)
+			hydra_stats_eager_pmd_table(mm);
 	} else {
 		pagetable_dtor(virt_to_ptdesc(new));
 		hydra_pt_account(new_page, -1);
@@ -166,6 +168,8 @@ static int hydra_repl_pmd_range(struct mm_struct *mm,
 			mm_inc_nr_pmds(mm);
 			pud_populate(mm, repl_pud, new_pmd);
 			new_pmd = NULL;
+			if (current->hydra_eager_active)
+				hydra_stats_eager_pmd_table(mm);
 		}
 		spin_unlock(pud_ptl);
 
@@ -387,6 +391,8 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 
 		if (likely(pmd_none(*repl_pmd))) {
 			hydra_link_page_to_replica_chain(master_pte_page, new_page);
+			if (current->hydra_eager_active)
+				hydra_stats_eager_pte_table(mm);
 			mm_inc_nr_ptes(mm);
 			paravirt_alloc_pte(mm, page_to_pfn(new_page));
 			native_set_pmd(repl_pmd,
@@ -502,6 +508,21 @@ static int hydra_repl_try_pte(struct vm_fault *vmf, size_t repl_node,
 		if ((vmf->flags & (FAULT_FLAG_WRITE|FAULT_FLAG_UNSHARE)) &&
 		    !pte_write(pte_val))
 			return 0;
+
+		if (sysctl_hydra_eager_alloc) {
+			pte_t *repl_ptep = hydra_walk_to_pte(mm, address, repl_node);
+
+			if (!HYDRA_WALK_BAD(repl_ptep)) {
+				pte_t repl_val = READ_ONCE(*repl_ptep);
+
+				if (pte_present(repl_val) && !pte_protnone(repl_val) &&
+				    (!(vmf->flags & (FAULT_FLAG_WRITE|FAULT_FLAG_UNSHARE)) ||
+				     pte_write(repl_val))) {
+					hydra_stats_eager_prop_hit(mm);
+					return 0;
+				}
+			}
+		}
 	}
 
 	if (sysctl_hydra_repl_order > 0) {
@@ -647,6 +668,16 @@ next_pgd_bc:
 	}
 }
 
+static bool hydra_eager_ring_complete(struct page *page)
+{
+	nodemask_t covered;
+
+	nodes_clear(covered);
+	hydra_collect_repl_nodes(page, &covered);
+
+	return nodes_equal(covered, node_online_map);
+}
+
 static int hydra_eager_cover_at(struct mm_struct *mm, struct vm_area_struct *vma,
 				unsigned long addr, int master_node)
 {
@@ -660,7 +691,7 @@ static int hydra_eager_cover_at(struct mm_struct *mm, struct vm_area_struct *vma
 
 	if (pmd_trans_huge(*master_pmd)) {
 		mp = virt_to_page(master_pmd);
-		if (READ_ONCE(mp->next_replica))
+		if (hydra_eager_ring_complete(mp))
 			return 0;
 
 		for (node = 0; node < NUMA_NODE_COUNT; node++) {
@@ -675,14 +706,12 @@ static int hydra_eager_cover_at(struct mm_struct *mm, struct vm_area_struct *vma
 						   master_node, &prefetched);
 			current->hydra_eager_active = 0;
 
-			if (ret == 0) {
-				hydra_stats_eager_pmd_table(mm);
+			if (ret == 0)
 				did = 1;
-			}
 		}
 	} else if (!pmd_bad(*master_pmd)) {
 		mp = virt_to_page(pte_offset_kernel(master_pmd, addr));
-		if (READ_ONCE(mp->next_replica))
+		if (hydra_eager_ring_complete(mp))
 			return 0;
 
 		for (node = 0; node < NUMA_NODE_COUNT; node++) {
@@ -697,10 +726,8 @@ static int hydra_eager_cover_at(struct mm_struct *mm, struct vm_area_struct *vma
 						   master_node, 0);
 			current->hydra_eager_active = 0;
 
-			if (ret == 0) {
-				hydra_stats_eager_pte_table(mm);
+			if (ret == 0)
 				did = 1;
-			}
 		}
 	}
 

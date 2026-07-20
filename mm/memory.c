@@ -6395,8 +6395,18 @@ static vm_fault_t handle_pte_fault(struct vm_fault *vmf, int has_recursed)
 		}
 	}
 
-	if (!vmf->pte)
-		return do_pte_missing(vmf);
+	if (!vmf->pte) {
+		vm_fault_t missing_ret = do_pte_missing(vmf);
+
+		if (sysctl_hydra_eager_alloc &&
+		    vmf->vma->vm_mm->lazy_repl_enabled &&
+		    fault_node == vmf->vma->master_pgd_node &&
+		    !(missing_ret & (VM_FAULT_RETRY | VM_FAULT_ERROR)))
+			hydra_eager_fanout(vmf->vma->vm_mm, vmf->vma,
+					   vmf->address);
+
+		return missing_ret;
+	}
 
 	if (!pte_present(vmf->orig_pte))
 		return do_swap_page(vmf);
