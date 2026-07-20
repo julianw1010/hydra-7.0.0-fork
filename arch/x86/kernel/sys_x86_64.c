@@ -19,6 +19,7 @@
 #include <linux/uaccess.h>
 #include <linux/elf.h>
 #include <linux/hugetlb.h>
+#include <linux/hydra.h>
 
 #include <asm/elf.h>
 #include <asm/ia32.h>
@@ -163,9 +164,10 @@ arch_get_unmapped_area(struct file *filp, unsigned long addr, unsigned long len,
 	if (mm->lazy_repl_enabled && info.align_mask < ((1UL << 30) - 1)) {
 		info.align_mask = (1UL << 30) - 1;
 		info.align_offset = 0;
+		return hydra_vm_unmapped_pud_area(&info);
 	}
 
-	return vm_unmapped_area(&info);	
+	return vm_unmapped_area(&info);
 }
 
 unsigned long
@@ -233,9 +235,10 @@ get_unmapped_area:
 	if (mm->lazy_repl_enabled && info.align_mask < ((1UL << 30) - 1)) {
 		info.align_mask = (1UL << 30) - 1;
 		info.align_offset = 0;
+		addr = hydra_vm_unmapped_pud_area(&info);
+	} else {
+		addr = vm_unmapped_area(&info);
 	}
-
-	addr = vm_unmapped_area(&info);
 
 	if (!(addr & ~PAGE_MASK))
 		return addr;
