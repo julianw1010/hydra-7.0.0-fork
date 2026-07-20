@@ -260,6 +260,48 @@ static const struct proc_ops hydra_history_ops = {
 	.proc_release	= seq_release,
 };
 
+static ssize_t hydra_shed_write(struct file *file, const char __user *ubuf,
+				size_t count, loff_t *ppos)
+{
+	long val;
+	int ret, freed;
+
+	ret = hydra_proc_parse_long(ubuf, count, &val);
+	if (ret)
+		return ret;
+
+	if (val <= 0)
+		return -EINVAL;
+
+	freed = hydra_shed_replicas((pid_t)val);
+	if (freed < 0)
+		return freed;
+
+	pr_info("HYDRA: shed pid %ld, freed %d replica page tables\n", val, freed);
+
+	return count;
+}
+
+static int hydra_shed_show(struct seq_file *m, void *v)
+{
+	seq_puts(m, " write a pid to drop every non-master replica page table of that mm\n");
+	seq_puts(m, " the mm stays replication-enabled; lazy faulting rebuilds what is touched\n");
+	return 0;
+}
+
+static int hydra_shed_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, hydra_shed_show, NULL);
+}
+
+static const struct proc_ops hydra_shed_ops = {
+	.proc_open	= hydra_shed_open,
+	.proc_read	= seq_read,
+	.proc_write	= hydra_shed_write,
+	.proc_lseek	= seq_lseek,
+	.proc_release	= single_release,
+};
+
 static int __init hydra_proc_init(void)
 {
 	hydra_dir = proc_mkdir("hydra", NULL);
@@ -289,6 +331,9 @@ static int __init hydra_proc_init(void)
 		goto fail;
 
 	if (!proc_create("history", 0644, hydra_dir, &hydra_history_ops))
+		goto fail;
+
+	if (!proc_create("shed", 0644, hydra_dir, &hydra_shed_ops))
 		goto fail;
 
 	return 0;

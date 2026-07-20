@@ -6556,8 +6556,12 @@ retry_pud:
 		ret = create_huge_pmd(&vmf);
 		if (ret & VM_FAULT_FALLBACK)
 			goto fallback;
-		else
-			return ret;
+
+		if (sysctl_hydra_eager_alloc && mm->lazy_repl_enabled &&
+		    !(ret & (VM_FAULT_RETRY | VM_FAULT_ERROR)))
+			hydra_eager_fanout(mm, vma, address);
+
+		return ret;
 	}
 
 	vmf.orig_pmd = pmdp_get_lockless(vmf.pmd);

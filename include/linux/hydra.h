@@ -25,6 +25,7 @@ int hydra_enable_replication(struct mm_struct *mm);
 int hydra_repl_fault(struct vm_fault *vmf, int fault_node);
 void hydra_eager_fanout(struct mm_struct *mm, struct vm_area_struct *vma,
 			unsigned long address);
+int hydra_shed_replicas(pid_t pid);
 extern int sysctl_hydra_eager_alloc;
 bool hydra_move_normal_pmd(struct vm_area_struct *vma, unsigned long old_addr,
 			   pmd_t *old_pmd, pmd_t *new_pmd);
@@ -199,6 +200,9 @@ struct hydra_stats {
 	atomic_long_t eager_pte_entries;
 	atomic_long_t eager_pmd_entries;
 	atomic_long_t eager_prop_hits;
+	atomic_long_t eager_huge_covers;
+	atomic_long_t shed_ops;
+	atomic_long_t shed_pages;
 
 	atomic_long_t pt_writes[HYDRA_PT_NR_LEVELS];
 	atomic_long_t pt_pages[HYDRA_PT_NR_LEVELS];
@@ -297,6 +301,23 @@ static inline void hydra_stats_eager_prop_hit(struct mm_struct *mm)
 {
 	if (mm->hydra_stats)
 		atomic_long_inc(&mm->hydra_stats->eager_prop_hits);
+}
+
+static inline void hydra_stats_eager_huge(struct mm_struct *mm)
+{
+	if (mm->hydra_stats)
+		atomic_long_inc(&mm->hydra_stats->eager_huge_covers);
+}
+
+static inline void hydra_stats_shed(struct mm_struct *mm, long pages)
+{
+	struct hydra_stats *s = mm->hydra_stats;
+
+	if (!s)
+		return;
+	atomic_long_inc(&s->shed_ops);
+	if (pages > 0)
+		atomic_long_add(pages, &s->shed_pages);
 }
 
 static inline void hydra_stats_tlb(struct mm_struct *mm, long sent,
