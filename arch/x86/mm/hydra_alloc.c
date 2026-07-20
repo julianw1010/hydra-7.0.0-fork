@@ -63,16 +63,8 @@ struct page *hydra_alloc_pt_page_near(struct mm_struct *mm, gfp_t gfp,
 
 	if (mm && READ_ONCE(mm->lazy_repl_enabled))
 		page = hydra_cache_pop(node, true);
-	if (!page) {
-		if (current->hydra_eager_active) {
-			page = alloc_pages_node(node,
-				GFP_ATOMIC | __GFP_NOWARN | __GFP_ZERO |
-				__GFP_THISNODE, 0);
-			BUG_ON(!page);
-		} else {
-			page = alloc_pages_node(node, gfp | __GFP_THISNODE, 0);
-		}
-	}
+	if (!page)
+		page = alloc_pages_node(node, gfp | __GFP_THISNODE, 0);
 	if (page)
 		page->pt_owner_mm = mm;
 

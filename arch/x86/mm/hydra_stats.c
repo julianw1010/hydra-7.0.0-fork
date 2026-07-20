@@ -443,25 +443,6 @@ static void hydra_stats_print(struct seq_file *m, struct hydra_stats *s,
 	hydra_print_kv(m, "Total INVLPGB instructions",
 		       atomic_long_read(&s->tlb_broadcasts));
 
-	hydra_print_section(m, "Eager replication (replicate-on-alloc)");
-	hydra_print_kv(m, "Replica PTE tables built eagerly",
-		       atomic_long_read(&s->eager_pte_tables));
-	hydra_print_kv(m, "Replica PMD tables built eagerly",
-		       atomic_long_read(&s->eager_pmd_tables));
-	hydra_print_kv(m, "PTE entries copied eagerly",
-		       atomic_long_read(&s->eager_pte_entries));
-	hydra_print_kv(m, "PMD entries copied eagerly",
-		       atomic_long_read(&s->eager_pmd_entries));
-	hydra_print_kv(m, "Replica faults satisfied by propagation",
-		       atomic_long_read(&s->eager_prop_hits));
-	hydra_print_kv(m, "Huge-PMD regions fanned out eagerly",
-		       atomic_long_read(&s->eager_huge_covers));
-
-	hydra_print_section(m, "Replica shed (/proc/hydra/eager mode 2)");
-	hydra_print_kv(m, "Shed operations", atomic_long_read(&s->shed_ops));
-	hydra_print_kv(m, "Replica page tables freed",
-		       atomic_long_read(&s->shed_pages));
-
 	hydra_print_section(m,
 		"autoNUMA migrations: 4KB base pages  [rows = source node, cols = dest node]");
 	hydra_print_node_matrix(m, s->numa_migrate_4k);

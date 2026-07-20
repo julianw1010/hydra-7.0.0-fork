@@ -255,61 +255,6 @@ static const struct proc_ops hydra_history_ops = {
 	.proc_release	= seq_release,
 };
 
-static ssize_t hydra_eager_write(struct file *file, const char __user *ubuf,
-				 size_t count, loff_t *ppos)
-{
-	char buf[32];
-	size_t len;
-	int pid, val, ret;
-
-	len = min(count, sizeof(buf) - 1);
-	if (copy_from_user(buf, ubuf, len))
-		return -EFAULT;
-	buf[len] = '\0';
-
-	if (sscanf(buf, "%d %d", &pid, &val) != 2)
-		return -EINVAL;
-
-	if (pid <= 0 || val < HYDRA_EAGER_OFF || val > HYDRA_EAGER_OFF_SHED)
-		return -EINVAL;
-
-	ret = hydra_set_eager((pid_t)pid, val);
-	if (ret < 0)
-		return ret;
-
-	if (val == HYDRA_EAGER_ON)
-		pr_info("HYDRA: eager replication enabled for pid %d\n", pid);
-	else if (val == HYDRA_EAGER_OFF_SHED)
-		pr_info("HYDRA: eager replication disabled for pid %d, shed %d replica page tables\n",
-			pid, ret);
-	else
-		pr_info("HYDRA: eager replication disabled for pid %d, replicas kept\n",
-			pid);
-
-	return count;
-}
-
-static int hydra_eager_show(struct seq_file *m, void *v)
-{
-	seq_puts(m, " write \"<pid> 1\" to enable eager replication for that mm\n");
-	seq_puts(m, " write \"<pid> 0\" to disable it, keeping the replicas\n");
-	seq_puts(m, " write \"<pid> 2\" to disable it and shed the mm's replica page tables\n");
-	return 0;
-}
-
-static int hydra_eager_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, hydra_eager_show, NULL);
-}
-
-static const struct proc_ops hydra_eager_ops = {
-	.proc_open	= hydra_eager_open,
-	.proc_read	= seq_read,
-	.proc_write	= hydra_eager_write,
-	.proc_lseek	= seq_lseek,
-	.proc_release	= single_release,
-};
-
 static int __init hydra_proc_init(void)
 {
 	hydra_dir = proc_mkdir("hydra", NULL);
@@ -335,9 +280,6 @@ static int __init hydra_proc_init(void)
 		goto fail;
 
 	if (!proc_create("history", 0644, hydra_dir, &hydra_history_ops))
-		goto fail;
-
-	if (!proc_create("eager", 0644, hydra_dir, &hydra_eager_ops))
 		goto fail;
 
 	return 0;

@@ -959,7 +959,6 @@ struct task_struct {
 	struct mm_struct		*active_mm;
 
 	unsigned int			hydra_master_serviced;
-	unsigned int			hydra_eager_active;
 
 	int				exit_state;
 	int				exit_code;
