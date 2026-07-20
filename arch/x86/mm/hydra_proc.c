@@ -91,44 +91,10 @@ static const struct proc_ops hydra_knob_ops = {
 
 static int hydra_cache_show(struct seq_file *m, void *v)
 {
-	long pages[NUMA_NODE_COUNT];
-	long total_pages = 0;
-	char buf[24];
-	long mib10;
 	int node;
 
-	for (node = 0; node < NUMA_NODE_COUNT; node++) {
-		pages[node] = atomic_read(&hydra_cache[node].count);
-		total_pages += pages[node];
-	}
-
-	seq_puts(m, " Hydra per-node page-table page cache\n");
-	seq_puts(m, " write N > 0: add N pages to the cache of every online node\n");
-	seq_puts(m, " write -1:    drain all nodes\n");
-	seq_puts(m, " rows = cache metric,  cols = NUMA node\n");
-	seq_puts(m, " --------------------------------------------------------------------------------------------------------------\n");
-
-	seq_printf(m, " %-11s", "");
-	for (node = 0; node < NUMA_NODE_COUNT; node++) {
-		scnprintf(buf, sizeof(buf), "n%d", node);
-		seq_printf(m, " %10s", buf);
-	}
-	seq_printf(m, " %10s\n", "TOTAL");
-
-	seq_printf(m, " %-11s", "pages");
 	for (node = 0; node < NUMA_NODE_COUNT; node++)
-		seq_printf(m, " %10ld", pages[node]);
-	seq_printf(m, " %10ld\n", total_pages);
-
-	seq_printf(m, " %-11s", "size (MiB)");
-	for (node = 0; node < NUMA_NODE_COUNT; node++) {
-		mib10 = pages[node] * (PAGE_SIZE / 1024) * 10 / 1024;
-		scnprintf(buf, sizeof(buf), "%ld.%ld", mib10 / 10, mib10 % 10);
-		seq_printf(m, " %10s", buf);
-	}
-	mib10 = total_pages * (PAGE_SIZE / 1024) * 10 / 1024;
-	scnprintf(buf, sizeof(buf), "%ld.%ld", mib10 / 10, mib10 % 10);
-	seq_printf(m, " %10s\n", buf);
+		seq_printf(m, "%d\n", atomic_read(&hydra_cache[node].count));
 
 	return 0;
 }
