@@ -89,46 +89,22 @@ static const struct proc_ops hydra_knob_ops = {
 	.proc_release	= single_release,
 };
 
-static void hydra_cache_print_row(struct seq_file *m, const char *label,
-				  const long long *vals, long long total)
-{
-	int node;
-
-	seq_printf(m, " %-11s", label);
-	for (node = 0; node < NUMA_NODE_COUNT; node++)
-		seq_printf(m, " %10lld", vals[node]);
-	seq_printf(m, " %10lld\n", total);
-}
-
 static int hydra_cache_show(struct seq_file *m, void *v)
 {
 	long pages[NUMA_NODE_COUNT];
-	long long hits[NUMA_NODE_COUNT], misses[NUMA_NODE_COUNT];
-	long long returns[NUMA_NODE_COUNT];
 	long total_pages = 0;
-	long long total_hits = 0, total_misses = 0, total_returns = 0;
 	char buf[24];
 	long mib10;
 	int node;
 
 	for (node = 0; node < NUMA_NODE_COUNT; node++) {
-		struct hydra_cache_head *c = &hydra_cache[node];
-
-		pages[node] = atomic_read(&c->count);
-		hits[node] = atomic64_read(&c->hits);
-		misses[node] = atomic64_read(&c->misses);
-		returns[node] = atomic64_read(&c->returns);
-
+		pages[node] = atomic_read(&hydra_cache[node].count);
 		total_pages += pages[node];
-		total_hits += hits[node];
-		total_misses += misses[node];
-		total_returns += returns[node];
 	}
 
 	seq_puts(m, " Hydra per-node page-table page cache\n");
 	seq_puts(m, " write N > 0: add N pages to the cache of every online node\n");
 	seq_puts(m, " write -1:    drain all nodes\n");
-	seq_puts(m, " hits/misses/returns count only mms with replication enabled\n");
 	seq_puts(m, " rows = cache metric,  cols = NUMA node\n");
 	seq_puts(m, " --------------------------------------------------------------------------------------------------------------\n");
 
@@ -153,10 +129,6 @@ static int hydra_cache_show(struct seq_file *m, void *v)
 	mib10 = total_pages * (PAGE_SIZE / 1024) * 10 / 1024;
 	scnprintf(buf, sizeof(buf), "%ld.%ld", mib10 / 10, mib10 % 10);
 	seq_printf(m, " %10s\n", buf);
-
-	hydra_cache_print_row(m, "hits", hits, total_hits);
-	hydra_cache_print_row(m, "misses", misses, total_misses);
-	hydra_cache_print_row(m, "returns", returns, total_returns);
 
 	return 0;
 }
@@ -202,7 +174,7 @@ static ssize_t hydra_cache_write(struct file *file, const char __user *ubuf,
 			page->next_replica = NULL;
 			page->pt_owner_mm = NULL;
 
-			if (!hydra_cache_push(page, node, false))
+			if (!hydra_cache_push(page, node))
 				BUG();
 		}
 	}
