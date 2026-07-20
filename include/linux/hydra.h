@@ -27,6 +27,7 @@ void hydra_eager_fanout(struct mm_struct *mm, struct vm_area_struct *vma,
 			unsigned long address);
 #define HYDRA_EAGER_OFF		0
 #define HYDRA_EAGER_ON		1
+#define HYDRA_EAGER_OFF_SHED	2
 
 int hydra_set_eager(pid_t pid, int mode);
 bool hydra_move_normal_pmd(struct vm_area_struct *vma, unsigned long old_addr,
@@ -204,6 +205,8 @@ struct hydra_stats {
 	atomic_long_t eager_pmd_entries;
 	atomic_long_t eager_prop_hits;
 	atomic_long_t eager_huge_covers;
+	atomic_long_t shed_ops;
+	atomic_long_t shed_pages;
 
 	atomic_long_t pt_writes[HYDRA_PT_NR_LEVELS];
 	atomic_long_t pt_pages[HYDRA_PT_NR_LEVELS];
@@ -308,6 +311,17 @@ static inline void hydra_stats_eager_huge(struct mm_struct *mm)
 {
 	if (mm->hydra_stats)
 		atomic_long_inc(&mm->hydra_stats->eager_huge_covers);
+}
+
+static inline void hydra_stats_shed(struct mm_struct *mm, long pages)
+{
+	struct hydra_stats *s = mm->hydra_stats;
+
+	if (!s)
+		return;
+	atomic_long_inc(&s->shed_ops);
+	if (pages > 0)
+		atomic_long_add(pages, &s->shed_pages);
 }
 
 static inline void hydra_stats_tlb(struct mm_struct *mm, long sent,

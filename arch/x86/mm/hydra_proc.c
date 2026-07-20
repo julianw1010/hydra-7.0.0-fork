@@ -270,7 +270,7 @@ static ssize_t hydra_eager_write(struct file *file, const char __user *ubuf,
 	if (sscanf(buf, "%d %d", &pid, &val) != 2)
 		return -EINVAL;
 
-	if (pid <= 0 || (val != HYDRA_EAGER_OFF && val != HYDRA_EAGER_ON))
+	if (pid <= 0 || val < HYDRA_EAGER_OFF || val > HYDRA_EAGER_OFF_SHED)
 		return -EINVAL;
 
 	ret = hydra_set_eager((pid_t)pid, val);
@@ -279,6 +279,9 @@ static ssize_t hydra_eager_write(struct file *file, const char __user *ubuf,
 
 	if (val == HYDRA_EAGER_ON)
 		pr_info("HYDRA: eager replication enabled for pid %d\n", pid);
+	else if (val == HYDRA_EAGER_OFF_SHED)
+		pr_info("HYDRA: eager replication disabled for pid %d, shed %d replica page tables\n",
+			pid, ret);
 	else
 		pr_info("HYDRA: eager replication disabled for pid %d, replicas kept\n",
 			pid);
@@ -290,6 +293,7 @@ static int hydra_eager_show(struct seq_file *m, void *v)
 {
 	seq_puts(m, " write \"<pid> 1\" to enable eager replication for that mm\n");
 	seq_puts(m, " write \"<pid> 0\" to disable it, keeping the replicas\n");
+	seq_puts(m, " write \"<pid> 2\" to disable it and shed the mm's replica page tables\n");
 	return 0;
 }
 
