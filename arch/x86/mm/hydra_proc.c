@@ -8,6 +8,7 @@
 extern int sysctl_hydra_repl_order;
 extern int sysctl_hydra_tlbflush_opt;
 extern int sysctl_hydra_invlpgb;
+extern int sysctl_hydra_eager_alloc;
 
 static struct proc_dir_entry *hydra_dir;
 
@@ -28,6 +29,10 @@ static const struct hydra_int_knob hydra_tlbflush_opt_knob = {
 
 static const struct hydra_int_knob hydra_invlpgb_knob = {
 	"invlpgb", &sysctl_hydra_invlpgb, 0, 1,
+};
+
+static const struct hydra_int_knob hydra_eager_alloc_knob = {
+	"eager_alloc", &sysctl_hydra_eager_alloc, 0, 1,
 };
 
 static int hydra_proc_parse_long(const char __user *ubuf, size_t count,
@@ -274,6 +279,10 @@ static int __init hydra_proc_init(void)
 
 	if (!proc_create_data("invlpgb", 0644, hydra_dir, &hydra_knob_ops,
 			      (void *)&hydra_invlpgb_knob))
+		goto fail;
+
+	if (!proc_create_data("eager_alloc", 0644, hydra_dir, &hydra_knob_ops,
+			      (void *)&hydra_eager_alloc_knob))
 		goto fail;
 
 	if (!proc_create("status", 0444, hydra_dir, &hydra_status_ops))

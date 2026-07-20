@@ -6608,6 +6608,10 @@ retry_pud:
 			return 0;
 		}
 
+		if (sysctl_hydra_eager_alloc && mm->lazy_repl_enabled &&
+		    !on_replica)
+			hydra_eager_fanout(mm, vma, address);
+
 		if (pmd_protnone(vmf.orig_pmd) && vma_is_accessible(vma))
 			return do_huge_pmd_numa_page(&vmf);
 
@@ -6626,6 +6630,9 @@ retry_pud:
 	}
 
 fallback:
+	if (sysctl_hydra_eager_alloc && mm->lazy_repl_enabled && !on_replica)
+		hydra_eager_fanout(mm, vma, address);
+
 	return handle_pte_fault(&vmf, use_master);
 }
 

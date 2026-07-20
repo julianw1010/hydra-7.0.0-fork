@@ -23,6 +23,9 @@ DECLARE_STATIC_KEY_FALSE(hydra_repl_ever_enabled);
 void hydra_reload_cr3(void *info);
 int hydra_enable_replication(struct mm_struct *mm);
 int hydra_repl_fault(struct vm_fault *vmf, int fault_node);
+void hydra_eager_fanout(struct mm_struct *mm, struct vm_area_struct *vma,
+			unsigned long address);
+extern int sysctl_hydra_eager_alloc;
 bool hydra_move_normal_pmd(struct vm_area_struct *vma, unsigned long old_addr,
 			   pmd_t *old_pmd, pmd_t *new_pmd);
 void hydra_break_chain_range(struct mm_struct *mm,
@@ -191,6 +194,11 @@ struct hydra_stats {
 	atomic_long_t pmd_entries_prefetched;
 	atomic_long_t pmd_copy_faults;
 
+	atomic_long_t eager_pte_tables;
+	atomic_long_t eager_pmd_tables;
+	atomic_long_t eager_pte_entries;
+	atomic_long_t eager_pmd_entries;
+
 	atomic_long_t pt_writes[HYDRA_PT_NR_LEVELS];
 	atomic_long_t pt_pages[HYDRA_PT_NR_LEVELS];
 
@@ -246,6 +254,10 @@ static inline void hydra_stats_copied_pte(struct mm_struct *mm, long copied)
 
 	if (!s || copied <= 0)
 		return;
+	if (current->hydra_eager_active) {
+		atomic_long_add(copied, &s->eager_pte_entries);
+		return;
+	}
 	atomic_long_add(copied, &s->pte_entries_copied);
 	if (copied > 1)
 		atomic_long_add(copied - 1, &s->pte_entries_prefetched);
@@ -258,10 +270,26 @@ static inline void hydra_stats_copied_pmd(struct mm_struct *mm, long copied)
 
 	if (!s || copied <= 0)
 		return;
+	if (current->hydra_eager_active) {
+		atomic_long_add(copied, &s->eager_pmd_entries);
+		return;
+	}
 	atomic_long_add(copied, &s->pmd_entries_copied);
 	if (copied > 1)
 		atomic_long_add(copied - 1, &s->pmd_entries_prefetched);
 	atomic_long_inc(&s->pmd_copy_faults);
+}
+
+static inline void hydra_stats_eager_pte_table(struct mm_struct *mm)
+{
+	if (mm->hydra_stats)
+		atomic_long_inc(&mm->hydra_stats->eager_pte_tables);
+}
+
+static inline void hydra_stats_eager_pmd_table(struct mm_struct *mm)
+{
+	if (mm->hydra_stats)
+		atomic_long_inc(&mm->hydra_stats->eager_pmd_tables);
 }
 
 static inline void hydra_stats_tlb(struct mm_struct *mm, long sent,

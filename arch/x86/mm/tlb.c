@@ -1908,3 +1908,5 @@ late_initcall(create_tlb_single_page_flush_ceiling);
 int sysctl_hydra_tlbflush_opt __read_mostly = 1;
 
 int sysctl_hydra_invlpgb __read_mostly = 1;
+
+int sysctl_hydra_eager_alloc __read_mostly = 0;
