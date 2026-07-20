@@ -8,7 +8,6 @@
 extern int sysctl_hydra_repl_order;
 extern int sysctl_hydra_tlbflush_opt;
 extern int sysctl_hydra_invlpgb;
-extern int sysctl_hydra_eager_alloc;
 
 static struct proc_dir_entry *hydra_dir;
 
@@ -29,10 +28,6 @@ static const struct hydra_int_knob hydra_tlbflush_opt_knob = {
 
 static const struct hydra_int_knob hydra_invlpgb_knob = {
 	"invlpgb", &sysctl_hydra_invlpgb, 0, 1,
-};
-
-static const struct hydra_int_knob hydra_eager_alloc_knob = {
-	"eager_alloc", &sysctl_hydra_eager_alloc, 0, 1,
 };
 
 static int hydra_proc_parse_long(const char __user *ubuf, size_t count,
@@ -260,44 +255,54 @@ static const struct proc_ops hydra_history_ops = {
 	.proc_release	= seq_release,
 };
 
-static ssize_t hydra_shed_write(struct file *file, const char __user *ubuf,
-				size_t count, loff_t *ppos)
+static ssize_t hydra_eager_write(struct file *file, const char __user *ubuf,
+				 size_t count, loff_t *ppos)
 {
-	long val;
-	int ret, freed;
+	char buf[32];
+	size_t len;
+	int pid, val, ret;
 
-	ret = hydra_proc_parse_long(ubuf, count, &val);
-	if (ret)
-		return ret;
+	len = min(count, sizeof(buf) - 1);
+	if (copy_from_user(buf, ubuf, len))
+		return -EFAULT;
+	buf[len] = '\0';
 
-	if (val <= 0)
+	if (sscanf(buf, "%d %d", &pid, &val) != 2)
 		return -EINVAL;
 
-	freed = hydra_shed_replicas((pid_t)val);
-	if (freed < 0)
-		return freed;
+	if (pid <= 0 || (val != 0 && val != 1))
+		return -EINVAL;
 
-	pr_info("HYDRA: shed pid %ld, freed %d replica page tables\n", val, freed);
+	ret = hydra_set_eager((pid_t)pid, val);
+	if (ret < 0)
+		return ret;
+
+	if (val)
+		pr_info("HYDRA: eager replication enabled for pid %d, fanned out %d tables\n",
+			pid, ret);
+	else
+		pr_info("HYDRA: eager replication disabled for pid %d, shed %d replica page tables\n",
+			pid, ret);
 
 	return count;
 }
 
-static int hydra_shed_show(struct seq_file *m, void *v)
+static int hydra_eager_show(struct seq_file *m, void *v)
 {
-	seq_puts(m, " write a pid to drop every non-master replica page table of that mm\n");
-	seq_puts(m, " the mm stays replication-enabled; lazy faulting rebuilds what is touched\n");
+	seq_puts(m, " write \"<pid> 1\" to enable eager replication for that mm\n");
+	seq_puts(m, " write \"<pid> 0\" to disable it and shed the mm's replica page tables\n");
 	return 0;
 }
 
-static int hydra_shed_open(struct inode *inode, struct file *file)
+static int hydra_eager_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, hydra_shed_show, NULL);
+	return single_open(file, hydra_eager_show, NULL);
 }
 
-static const struct proc_ops hydra_shed_ops = {
-	.proc_open	= hydra_shed_open,
+static const struct proc_ops hydra_eager_ops = {
+	.proc_open	= hydra_eager_open,
 	.proc_read	= seq_read,
-	.proc_write	= hydra_shed_write,
+	.proc_write	= hydra_eager_write,
 	.proc_lseek	= seq_lseek,
 	.proc_release	= single_release,
 };
@@ -323,17 +328,13 @@ static int __init hydra_proc_init(void)
 			      (void *)&hydra_invlpgb_knob))
 		goto fail;
 
-	if (!proc_create_data("eager_alloc", 0644, hydra_dir, &hydra_knob_ops,
-			      (void *)&hydra_eager_alloc_knob))
-		goto fail;
-
 	if (!proc_create("status", 0444, hydra_dir, &hydra_status_ops))
 		goto fail;
 
 	if (!proc_create("history", 0644, hydra_dir, &hydra_history_ops))
 		goto fail;
 
-	if (!proc_create("shed", 0644, hydra_dir, &hydra_shed_ops))
+	if (!proc_create("eager", 0644, hydra_dir, &hydra_eager_ops))
 		goto fail;
 
 	return 0;

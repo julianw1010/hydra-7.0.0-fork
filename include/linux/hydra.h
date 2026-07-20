@@ -25,8 +25,7 @@ int hydra_enable_replication(struct mm_struct *mm);
 int hydra_repl_fault(struct vm_fault *vmf, int fault_node);
 void hydra_eager_fanout(struct mm_struct *mm, struct vm_area_struct *vma,
 			unsigned long address);
-int hydra_shed_replicas(pid_t pid);
-extern int sysctl_hydra_eager_alloc;
+int hydra_set_eager(pid_t pid, int enable);
 bool hydra_move_normal_pmd(struct vm_area_struct *vma, unsigned long old_addr,
 			   pmd_t *old_pmd, pmd_t *new_pmd);
 void hydra_break_chain_range(struct mm_struct *mm,

@@ -10,6 +10,9 @@
 #include <asm/pgalloc.h>
 #include <asm/tlbflush.h>
 
+static int hydra_eager_cover_at(struct mm_struct *mm, struct vm_area_struct *vma,
+				unsigned long addr, int master_node);
+
 static int hydra_find_master_pmd(struct mm_struct *mm, unsigned long address,
 				 int master_node, pmd_t **pmdpp,
 				 pmd_t *pmd_valp)
@@ -511,7 +514,7 @@ static int hydra_repl_try_pte(struct vm_fault *vmf, size_t repl_node,
 		    !pte_write(pte_val))
 			return 0;
 
-		if (sysctl_hydra_eager_alloc) {
+		if (mm->eager_repl_enabled) {
 			pte_t *repl_ptep = hydra_walk_to_pte(mm, address, repl_node);
 
 			if (!HYDRA_WALK_BAD(repl_ptep)) {
@@ -573,10 +576,13 @@ int hydra_repl_fault(struct vm_fault *vmf, int fault_node)
 
 	ret = hydra_repl_try_pmd(mm, vmf->vma, vmf->address, vmf->flags,
 				      repl_node, master_node);
-	if (ret != -EAGAIN)
-		return ret;
+	if (ret == -EAGAIN)
+		ret = hydra_repl_try_pte(vmf, repl_node, master_node);
 
-	return hydra_repl_try_pte(vmf, repl_node, master_node);
+	if (ret == 0 && mm->eager_repl_enabled)
+		hydra_eager_cover_at(mm, vmf->vma, vmf->address, master_node);
+
+	return ret;
 }
 
 static bool hydra_pud_pmd_will_free(unsigned long pud_base, unsigned long pud_end,
@@ -747,6 +753,31 @@ void hydra_eager_fanout(struct mm_struct *mm, struct vm_area_struct *vma,
 	hydra_eager_cover_at(mm, vma, address, vma->master_pgd_node);
 }
 
+static long hydra_eager_sweep_mm(struct mm_struct *mm)
+{
+	struct vm_area_struct *vma;
+	long covered = 0;
+
+	mmap_read_lock(mm);
+
+	{
+		VMA_ITERATOR(vmi, mm, 0);
+
+		for_each_vma(vmi, vma) {
+			unsigned long addr;
+
+			for (addr = vma->vm_start & PMD_MASK;
+			     addr < vma->vm_end; addr += PMD_SIZE)
+				covered += hydra_eager_cover_at(mm, vma, addr,
+						vma->master_pgd_node);
+		}
+	}
+
+	mmap_read_unlock(mm);
+
+	return covered;
+}
+
 static void hydra_shed_clear_pte_parent(struct mm_struct *mm, unsigned long addr,
 					int nid, struct page *page)
 {
@@ -903,14 +934,10 @@ static void hydra_shed_ring(struct mm_struct *mm, pmd_t *master_pmd,
 	}
 }
 
-int hydra_shed_replicas(pid_t pid)
+static struct mm_struct *hydra_get_repl_mm(pid_t pid)
 {
 	struct task_struct *task;
 	struct mm_struct *mm;
-	struct vm_area_struct *vma;
-	struct page *page, *tmp;
-	LIST_HEAD(sink);
-	long freed = 0;
 
 	rcu_read_lock();
 	task = pid ? find_task_by_vpid(pid) : current;
@@ -918,17 +945,92 @@ int hydra_shed_replicas(pid_t pid)
 		get_task_struct(task);
 	rcu_read_unlock();
 	if (!task)
-		return -ESRCH;
+		return ERR_PTR(-ESRCH);
 
 	mm = get_task_mm(task);
 	put_task_struct(task);
 	if (!mm)
-		return -EINVAL;
+		return ERR_PTR(-EINVAL);
 
 	if (!mm->lazy_repl_enabled) {
 		mmput(mm);
-		return -EINVAL;
+		return ERR_PTR(-EINVAL);
 	}
+
+	return mm;
+}
+
+static void hydra_shed_prune_tree(struct mm_struct *mm, pgd_t *pgd_base,
+				  struct list_head *sink, long *freed)
+{
+	unsigned long addr, pgd_start, next_pgd, next_p4d;
+	pgd_t *pgd;
+	p4d_t *p4d;
+	pud_t *pud_base;
+	bool empty;
+	int i;
+
+	addr = 0;
+	pgd = pgd_offset_pgd(pgd_base, addr);
+
+	do {
+		next_pgd = pgd_addr_end(addr, TASK_SIZE_MAX);
+		if (pgd_none(*pgd) || pgd_bad(*pgd))
+			goto next_pgd_pr;
+
+		pgd_start = addr;
+		p4d = p4d_offset(pgd, addr);
+
+		do {
+			next_p4d = p4d_addr_end(addr, next_pgd);
+			if (p4d_none(*p4d) || p4d_bad(*p4d))
+				goto next_p4d_pr;
+
+			pud_base = pud_offset(p4d, addr);
+			empty = true;
+			for (i = 0; i < PTRS_PER_PUD; i++) {
+				if (!pud_none(pud_base[i])) {
+					empty = false;
+					break;
+				}
+			}
+			if (empty) {
+				native_set_p4d(p4d, __p4d(0));
+				mm_dec_nr_puds(mm);
+				list_add(&virt_to_page(pud_base)->lru, sink);
+				(*freed)++;
+			}
+next_p4d_pr:
+			addr = next_p4d;
+		} while (p4d++, addr != next_pgd);
+
+		if (pgtable_l5_enabled()) {
+			p4d_t *p4d_base = p4d_offset(pgd, pgd_start);
+
+			empty = true;
+			for (i = 0; i < PTRS_PER_P4D; i++) {
+				if (!p4d_none(p4d_base[i])) {
+					empty = false;
+					break;
+				}
+			}
+			if (empty) {
+				native_set_pgd(pgd, __pgd(0));
+				list_add(&virt_to_page(p4d_base)->lru, sink);
+				(*freed)++;
+			}
+		}
+next_pgd_pr:
+		addr = next_pgd;
+	} while (pgd++, addr != TASK_SIZE_MAX);
+}
+
+static long hydra_shed_mm(struct mm_struct *mm)
+{
+	struct vm_area_struct *vma;
+	struct page *page, *tmp;
+	LIST_HEAD(sink);
+	long freed = 0;
 
 	mmap_write_lock(mm);
 
@@ -982,6 +1084,17 @@ int hydra_shed_replicas(pid_t pid)
 		}
 	}
 
+	{
+		int node;
+
+		for (node = 0; node < NUMA_NODE_COUNT; node++) {
+			if (!mm->repl_pgd[node])
+				continue;
+			hydra_shed_prune_tree(mm, mm->repl_pgd[node], &sink,
+					      &freed);
+		}
+	}
+
 	flush_tlb_mm(mm);
 
 	list_for_each_entry_safe(page, tmp, &sink, lru) {
@@ -992,7 +1105,27 @@ int hydra_shed_replicas(pid_t pid)
 	mmap_write_unlock(mm);
 
 	hydra_stats_shed(mm, freed);
+
+	return freed;
+}
+
+int hydra_set_eager(pid_t pid, int enable)
+{
+	struct mm_struct *mm = hydra_get_repl_mm(pid);
+	long count;
+
+	if (IS_ERR(mm))
+		return PTR_ERR(mm);
+
+	if (enable) {
+		WRITE_ONCE(mm->eager_repl_enabled, true);
+		count = hydra_eager_sweep_mm(mm);
+	} else {
+		WRITE_ONCE(mm->eager_repl_enabled, false);
+		count = hydra_shed_mm(mm);
+	}
+
 	mmput(mm);
 
-	return (int)freed;
+	return (int)count;
 }

@@ -1106,6 +1106,7 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 	mm->locked_vm = 0;
 	atomic64_set(&mm->pinned_vm, 0);
 	mm->lazy_repl_enabled = false;
+	mm->eager_repl_enabled = false;
 	mm->hydra_stats = NULL;
 	mm->hydra_pud_owner = NULL;
 	memset(&mm->rss_stat, 0, sizeof(mm->rss_stat));
@@ -1620,6 +1621,7 @@ static int copy_mm(u64 clone_flags, struct task_struct *tsk)
 			hydra_enable_replication(mm);
 		else if (sysctl_hydra_auto_enable && !(tsk->flags & PF_KTHREAD) && num_online_nodes() >= 2)
 			hydra_enable_replication(mm);
+		mm->eager_repl_enabled = oldmm->eager_repl_enabled;
 	}
 
 	tsk->mm = mm;

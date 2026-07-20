@@ -457,7 +457,7 @@ static void hydra_stats_print(struct seq_file *m, struct hydra_stats *s,
 	hydra_print_kv(m, "Huge-PMD regions fanned out eagerly",
 		       atomic_long_read(&s->eager_huge_covers));
 
-	hydra_print_section(m, "Replica shed (/proc/hydra/shed)");
+	hydra_print_section(m, "Replica shed (/proc/hydra/eager)");
 	hydra_print_kv(m, "Shed operations", atomic_long_read(&s->shed_ops));
 	hydra_print_kv(m, "Replica page tables freed",
 		       atomic_long_read(&s->shed_pages));

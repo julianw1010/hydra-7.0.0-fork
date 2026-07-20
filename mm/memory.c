@@ -6398,7 +6398,7 @@ static vm_fault_t handle_pte_fault(struct vm_fault *vmf, int has_recursed)
 	if (!vmf->pte) {
 		vm_fault_t missing_ret = do_pte_missing(vmf);
 
-		if (sysctl_hydra_eager_alloc &&
+		if (vmf->vma->vm_mm->eager_repl_enabled &&
 		    vmf->vma->vm_mm->lazy_repl_enabled &&
 		    fault_node == vmf->vma->master_pgd_node &&
 		    !(missing_ret & (VM_FAULT_RETRY | VM_FAULT_ERROR)))
@@ -6557,7 +6557,7 @@ retry_pud:
 		if (ret & VM_FAULT_FALLBACK)
 			goto fallback;
 
-		if (sysctl_hydra_eager_alloc && mm->lazy_repl_enabled &&
+		if (mm->eager_repl_enabled && mm->lazy_repl_enabled &&
 		    !(ret & (VM_FAULT_RETRY | VM_FAULT_ERROR)))
 			hydra_eager_fanout(mm, vma, address);
 
@@ -6622,7 +6622,7 @@ retry_pud:
 			return 0;
 		}
 
-		if (sysctl_hydra_eager_alloc && mm->lazy_repl_enabled &&
+		if (mm->eager_repl_enabled && mm->lazy_repl_enabled &&
 		    !on_replica)
 			hydra_eager_fanout(mm, vma, address);
 
@@ -6644,7 +6644,7 @@ retry_pud:
 	}
 
 fallback:
-	if (sysctl_hydra_eager_alloc && mm->lazy_repl_enabled && !on_replica)
+	if (mm->eager_repl_enabled && mm->lazy_repl_enabled && !on_replica)
 		hydra_eager_fanout(mm, vma, address);
 
 	return handle_pte_fault(&vmf, use_master);
