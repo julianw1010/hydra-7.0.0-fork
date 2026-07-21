@@ -319,7 +319,6 @@ void hydra_scope_enter(struct hydra_scope *scope, struct mm_struct *mm)
 		scope->max[s] = 0;
 	}
 	scope->pool = NULL;
-	scope->dispatch_span = PMD_SIZE;
 	if (sysctl_hydra_extended && hydra_wrprot_delegation_ready &&
 	    mm && mm->lazy_repl_enabled) {
 		struct hydra_scope_pool *p =
@@ -395,7 +394,6 @@ void hydra_scope_dispatch(struct hydra_scope *scope, int socket)
 	kthread_queue_work(hydra_appliers[socket], &w->work);
 	p->used[idx] = 1;
 	p->dispatched++;
-	scope->dispatch_span <<= 1;
 
 	scope->min[socket] = ULONG_MAX;
 	scope->max[socket] = 0;
