@@ -55,24 +55,11 @@ void hydra_backfill_range(struct mm_struct *mm, struct vm_area_struct *vma,
 			  const int *dst_nodes, int ndst,
 			  size_t src_node, size_t master_node);
 
-static inline void hydra_scope_enter(struct hydra_scope *scope,
-				     struct mm_struct *mm)
-{
-	int s;
+#define HYDRA_SCOPE_DISPATCH_SPAN (16UL << 20)
 
-	scope->mm = mm;
-	for (s = 0; s < NUMA_NODE_COUNT; s++) {
-		scope->min[s] = ULONG_MAX;
-		scope->max[s] = 0;
-	}
-	scope->prev = current->hydra_scope;
-	current->hydra_scope = scope;
-}
-
-static inline void hydra_scope_exit(struct hydra_scope *scope)
-{
-	current->hydra_scope = scope->prev;
-}
+void hydra_scope_enter(struct hydra_scope *scope, struct mm_struct *mm);
+void hydra_scope_exit(struct hydra_scope *scope);
+void hydra_scope_dispatch(struct hydra_scope *scope, int socket);
 
 static inline void hydra_scope_note(struct hydra_scope *scope, int socket,
 				    unsigned long addr, unsigned long size)
@@ -81,6 +68,9 @@ static inline void hydra_scope_note(struct hydra_scope *scope, int socket,
 		scope->min[socket] = addr;
 	if (scope->max[socket] < addr + size)
 		scope->max[socket] = addr + size;
+	if (scope->pool &&
+	    scope->max[socket] - scope->min[socket] >= HYDRA_SCOPE_DISPATCH_SPAN)
+		hydra_scope_dispatch(scope, socket);
 }
 
 extern int hydra_nr_sockets;

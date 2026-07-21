@@ -15,6 +15,18 @@ struct hydra_apply_work {
 	unsigned long end;
 	int socket;
 	long applied;
+	int done;
+};
+
+#define HYDRA_SCOPE_SLOTS 4
+
+struct hydra_scope_pool {
+	struct hydra_apply_work slot[HYDRA_SCOPE_SLOTS];
+	unsigned long tot_min[NUMA_NODE_COUNT];
+	unsigned long tot_max[NUMA_NODE_COUNT];
+	int used[HYDRA_SCOPE_SLOTS];
+	long applied;
+	long dispatched;
 };
 
 struct hydra_backfill_work {
@@ -293,15 +305,108 @@ static void hydra_reconcile_fn(struct kthread_work *work)
 							w->socket);
 		cond_resched();
 	}
+
+	smp_store_release(&w->done, 1);
+}
+
+void hydra_scope_enter(struct hydra_scope *scope, struct mm_struct *mm)
+{
+	int s;
+
+	scope->mm = mm;
+	for (s = 0; s < NUMA_NODE_COUNT; s++) {
+		scope->min[s] = ULONG_MAX;
+		scope->max[s] = 0;
+	}
+	scope->pool = NULL;
+	if (sysctl_hydra_extended && hydra_wrprot_delegation_ready &&
+	    mm && mm->lazy_repl_enabled) {
+		struct hydra_scope_pool *p =
+			kzalloc(sizeof(*p), GFP_KERNEL | __GFP_NOWARN);
+
+		if (p) {
+			for (s = 0; s < NUMA_NODE_COUNT; s++) {
+				p->tot_min[s] = ULONG_MAX;
+				p->tot_max[s] = 0;
+			}
+			scope->pool = p;
+		}
+	}
+	scope->prev = current->hydra_scope;
+	current->hydra_scope = scope;
+}
+
+void hydra_scope_exit(struct hydra_scope *scope)
+{
+	struct hydra_scope_pool *p = scope->pool;
+
+	if (p) {
+		int i;
+
+		for (i = 0; i < HYDRA_SCOPE_SLOTS; i++) {
+			if (p->used[i])
+				kthread_flush_work(&p->slot[i].work);
+		}
+		kfree(p);
+		scope->pool = NULL;
+	}
+	current->hydra_scope = scope->prev;
+}
+
+void hydra_scope_dispatch(struct hydra_scope *scope, int socket)
+{
+	struct hydra_scope_pool *p = scope->pool;
+	struct hydra_apply_work *w = NULL;
+	int i, idx = -1;
+
+	if (!hydra_wrprot_delegation_ready || !scope->mm ||
+	    !scope->mm->lazy_repl_enabled)
+		return;
+
+	for (i = 0; i < HYDRA_SCOPE_SLOTS; i++) {
+		if (!p->used[i]) {
+			idx = i;
+			break;
+		}
+		if (smp_load_acquire(&p->slot[i].done)) {
+			p->applied += p->slot[i].applied;
+			p->used[i] = 0;
+			idx = i;
+			break;
+		}
+	}
+	if (idx < 0)
+		return;
+
+	if (p->tot_min[socket] > scope->min[socket])
+		p->tot_min[socket] = scope->min[socket];
+	if (p->tot_max[socket] < scope->max[socket])
+		p->tot_max[socket] = scope->max[socket];
+
+	w = &p->slot[idx];
+	w->mm = scope->mm;
+	w->start = scope->min[socket];
+	w->end = scope->max[socket];
+	w->socket = socket;
+	w->applied = 0;
+	w->done = 0;
+	kthread_init_work(&w->work, hydra_reconcile_fn);
+	kthread_queue_work(hydra_appliers[socket], &w->work);
+	p->used[idx] = 1;
+	p->dispatched++;
+
+	scope->min[socket] = ULONG_MAX;
+	scope->max[socket] = 0;
 }
 
 bool hydra_scope_drain(struct hydra_scope *scope, unsigned long *lo_out,
 		       unsigned long *hi_out)
 {
 	struct mm_struct *mm = scope->mm;
+	struct hydra_scope_pool *p = scope->pool;
 	struct hydra_apply_work works[NUMA_NODE_COUNT];
 	unsigned long lo = ULONG_MAX, hi = 0;
-	long applied = 0;
+	long applied = 0, items = 0;
 	int s, n = 0, i;
 
 	if (!hydra_wrprot_delegation_ready || !mm || !mm->lazy_repl_enabled)
@@ -327,12 +432,37 @@ bool hydra_scope_drain(struct hydra_scope *scope, unsigned long *lo_out,
 		works[n].end = whi;
 		works[n].socket = s;
 		works[n].applied = 0;
+		works[n].done = 0;
 		kthread_init_work(&works[n].work, hydra_reconcile_fn);
 		kthread_queue_work(hydra_appliers[s], &works[n].work);
 		n++;
 	}
 
-	if (!n)
+	if (p) {
+		for (i = 0; i < HYDRA_SCOPE_SLOTS; i++) {
+			if (!p->used[i])
+				continue;
+			kthread_flush_work(&p->slot[i].work);
+			p->applied += p->slot[i].applied;
+			p->used[i] = 0;
+		}
+		applied += p->applied;
+		items = p->dispatched;
+		p->applied = 0;
+		p->dispatched = 0;
+		for (s = 0; s < hydra_nr_sockets; s++) {
+			if (p->tot_min[s] < p->tot_max[s]) {
+				if (lo > p->tot_min[s])
+					lo = p->tot_min[s];
+				if (hi < p->tot_max[s])
+					hi = p->tot_max[s];
+			}
+			p->tot_min[s] = ULONG_MAX;
+			p->tot_max[s] = 0;
+		}
+	}
+
+	if (!n && !items)
 		return false;
 
 	for (i = 0; i < n; i++) {
@@ -341,7 +471,7 @@ bool hydra_scope_drain(struct hydra_scope *scope, unsigned long *lo_out,
 	}
 
 	hydra_stats_sibling_reconciled(mm, applied);
-	hydra_stats_scope_drain(mm, n);
+	hydra_stats_scope_drain(mm, n + items);
 
 	if (lo_out)
 		*lo_out = lo;
