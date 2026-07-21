@@ -30,6 +30,7 @@ struct hydra_stream_work {
 
 struct hydra_scope_pool {
 	struct hydra_stream_work stream[NUMA_NODE_COUNT];
+	unsigned long published[NUMA_NODE_COUNT];
 	int started[NUMA_NODE_COUNT];
 };
 
@@ -389,9 +390,13 @@ void hydra_scope_feed(struct hydra_scope *scope, int socket)
 {
 	struct hydra_scope_pool *p = scope->pool;
 	struct hydra_stream_work *w = &p->stream[socket];
+	unsigned long fr = scope->max[socket] & PMD_MASK;
 
 	if (p->started[socket]) {
-		smp_store_release(&w->frontier, scope->max[socket]);
+		if (fr != p->published[socket]) {
+			p->published[socket] = fr;
+			smp_store_release(&w->frontier, fr);
+		}
 		return;
 	}
 
@@ -404,9 +409,10 @@ void hydra_scope_feed(struct hydra_scope *scope, int socket)
 	w->mm = scope->mm;
 	w->socket = socket;
 	w->start = scope->min[socket];
-	w->frontier = scope->max[socket];
+	w->frontier = fr;
 	w->closed = 0;
 	w->applied = 0;
+	p->published[socket] = fr;
 	kthread_init_work(&w->work, hydra_stream_fn);
 	kthread_queue_work(hydra_appliers[socket], &w->work);
 	p->started[socket] = 1;
@@ -425,53 +431,65 @@ bool hydra_scope_drain(struct hydra_scope *scope, unsigned long *lo_out,
 	if (!hydra_wrprot_delegation_ready || !mm || !mm->lazy_repl_enabled)
 		return false;
 
-	if (p) {
+	{
+		unsigned long smin[NUMA_NODE_COUNT], smax[NUMA_NODE_COUNT];
+
 		for (s = 0; s < hydra_nr_sockets; s++) {
-			if (p->started[s])
-				smp_store_release(&p->stream[s].closed, 1);
+			smin[s] = scope->min[s];
+			smax[s] = scope->max[s];
+			scope->min[s] = ULONG_MAX;
+			scope->max[s] = 0;
 		}
-	}
 
-	for (s = 0; s < hydra_nr_sockets; s++) {
-		unsigned long wlo = scope->min[s];
-		unsigned long whi = scope->max[s];
+		if (p) {
+			for (s = 0; s < hydra_nr_sockets; s++) {
+				if (p->started[s])
+					smp_store_release(&p->stream[s].closed, 1);
+			}
+		}
 
-		if (wlo >= whi)
-			continue;
-
-		if (p && p->started[s])
-			whi = p->stream[s].start;
-
-		if (lo > scope->min[s])
-			lo = scope->min[s];
-		if (hi < scope->max[s])
-			hi = scope->max[s];
-
-		scope->min[s] = ULONG_MAX;
-		scope->max[s] = 0;
-
-		if (wlo >= whi)
-			continue;
-
-		works[n].mm = mm;
-		works[n].start = wlo;
-		works[n].end = whi;
-		works[n].socket = s;
-		works[n].applied = 0;
-		works[n].done = 0;
-		kthread_init_work(&works[n].work, hydra_reconcile_fn);
-		kthread_queue_work(hydra_appliers[s], &works[n].work);
-		n++;
-	}
-
-	if (p) {
 		for (s = 0; s < hydra_nr_sockets; s++) {
-			if (!p->started[s])
+			unsigned long wlo = smin[s];
+			unsigned long whi = smax[s];
+
+			if (wlo >= whi)
 				continue;
-			kthread_flush_work(&p->stream[s].work);
-			applied += p->stream[s].applied;
-			p->started[s] = 0;
-			items++;
+
+			if (lo > wlo)
+				lo = wlo;
+			if (hi < whi)
+				hi = whi;
+
+			if (p && p->started[s])
+				whi = p->stream[s].start;
+
+			if (wlo >= whi)
+				continue;
+
+			works[n].mm = mm;
+			works[n].start = wlo;
+			works[n].end = whi;
+			works[n].socket = s;
+			works[n].applied = 0;
+			works[n].done = 0;
+			kthread_init_work(&works[n].work, hydra_reconcile_fn);
+			kthread_queue_work(hydra_appliers[s], &works[n].work);
+			n++;
+		}
+
+		if (p) {
+			for (s = 0; s < hydra_nr_sockets; s++) {
+				if (!p->started[s])
+					continue;
+				kthread_flush_work(&p->stream[s].work);
+				applied += p->stream[s].applied;
+				if (p->stream[s].frontier < smax[s])
+					applied += hydra_reconcile_range(mm,
+							p->stream[s].frontier,
+							smax[s], s);
+				p->started[s] = 0;
+				items++;
+			}
 		}
 	}
 
