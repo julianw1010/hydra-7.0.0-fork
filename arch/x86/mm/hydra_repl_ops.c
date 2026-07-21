@@ -189,7 +189,15 @@ void hydra_set_pte(pte_t *ptep, pte_t pteval)
 	pte_page = virt_to_page(ptep);
 
 	if (READ_ONCE(pte_page->next_replica)) {
+		struct mm_struct *mm = READ_ONCE(pte_page->pt_owner_mm);
+		struct hydra_scope *scope = hydra_scope_of(mm);
 		int master_nid = page_to_nid(pte_page);
+
+		if (scope && scope->note_page == pte_page) {
+			hydra_stats_sibling_delegated(mm, scope->note_members);
+			hydra_stats_pt_write(ptep, HYDRA_PT_PTE, pages);
+			return;
+		}
 
 		offset = ((unsigned long)ptep) & ~PAGE_MASK;
 		repl_val = (pte_val(pteval) & _PAGE_PRESENT) ? pteval : __pte(0);
@@ -391,7 +399,15 @@ void hydra_set_pmd(pmd_t *pmdp, pmd_t pmd)
 	page = virt_to_page(pmdp);
 
 	if (READ_ONCE(page->next_replica)) {
+		struct mm_struct *mm = READ_ONCE(page->pt_owner_mm);
+		struct hydra_scope *scope = hydra_scope_of(mm);
 		int master_nid = page_to_nid(page);
+
+		if (scope && scope->note_page == page) {
+			hydra_stats_sibling_delegated(mm, scope->note_members);
+			hydra_stats_pt_write(pmdp, HYDRA_PT_PMD, pages);
+			return;
+		}
 
 		offset = ((unsigned long)pmdp) & ~PAGE_MASK;
 
