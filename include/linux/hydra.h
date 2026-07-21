@@ -39,6 +39,22 @@ bool hydra_scope_drain(struct hydra_scope *scope, unsigned long *lo_out,
 		       unsigned long *hi_out);
 extern int hydra_wrprot_delegation_ready;
 
+struct hydra_fill_info {
+	int level;
+	int order;
+	unsigned long address;
+	unsigned long start;
+	unsigned long end;
+};
+
+bool hydra_queue_backfill(struct mm_struct *mm, int socket, size_t src_node,
+			  size_t master_node, const nodemask_t *targets,
+			  const struct hydra_fill_info *info);
+void hydra_backfill_range(struct mm_struct *mm, struct vm_area_struct *vma,
+			  const struct hydra_fill_info *info,
+			  const int *dst_nodes, int ndst,
+			  size_t src_node, size_t master_node);
+
 static inline void hydra_scope_enter(struct hydra_scope *scope,
 				     struct mm_struct *mm)
 {
@@ -240,6 +256,9 @@ struct hydra_stats {
 	atomic_long_t sibling_delegated;
 	atomic_long_t sibling_reconciled;
 	atomic_long_t wr_grants;
+	atomic_long_t sweep_deferred;
+	atomic_long_t promotions;
+	atomic_long_t spec_dirty;
 	atomic_long_t fill_pulls;
 	atomic_long_t fill_local;
 	atomic_long_t fill_sweeps;
@@ -304,6 +323,24 @@ static inline void hydra_stats_wr_grant(struct mm_struct *mm)
 {
 	if (mm->hydra_stats)
 		atomic_long_inc(&mm->hydra_stats->wr_grants);
+}
+
+static inline void hydra_stats_sweep_deferred(struct mm_struct *mm)
+{
+	if (mm->hydra_stats)
+		atomic_long_inc(&mm->hydra_stats->sweep_deferred);
+}
+
+static inline void hydra_stats_promotion(struct mm_struct *mm)
+{
+	if (mm->hydra_stats)
+		atomic_long_inc(&mm->hydra_stats->promotions);
+}
+
+static inline void hydra_stats_spec_dirty(struct mm_struct *mm, long n)
+{
+	if (mm->hydra_stats && n > 0)
+		atomic_long_add(n, &mm->hydra_stats->spec_dirty);
 }
 
 static inline void hydra_stats_sibling_delegated(struct mm_struct *mm, long n)

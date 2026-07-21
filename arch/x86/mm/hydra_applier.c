@@ -1,8 +1,10 @@
 #include <linux/mm.h>
 #include <linux/mm_types.h>
 #include <linux/sched.h>
+#include <linux/sched/mm.h>
 #include <linux/kthread.h>
 #include <linux/spinlock.h>
+#include <linux/slab.h>
 #include <linux/hydra.h>
 #include <asm/pgtable.h>
 
@@ -15,8 +17,87 @@ struct hydra_apply_work {
 	long applied;
 };
 
+struct hydra_backfill_work {
+	struct kthread_work work;
+	struct mm_struct *mm;
+	struct hydra_fill_info info;
+	nodemask_t targets;
+	size_t src_node;
+	size_t master_node;
+};
+
 static struct kthread_worker *hydra_appliers[NUMA_NODE_COUNT];
+static struct kthread_worker *hydra_backfillers[NUMA_NODE_COUNT];
 int hydra_wrprot_delegation_ready;
+
+static void hydra_backfill_fn(struct kthread_work *work)
+{
+	struct hydra_backfill_work *w =
+		container_of(work, struct hydra_backfill_work, work);
+	struct mm_struct *mm = w->mm;
+	struct vm_area_struct *vma;
+	int dsts[NUMA_NODE_COUNT];
+	unsigned long start;
+	int node, n = 0, i;
+
+	if (!sysctl_hydra_extended || !READ_ONCE(mm->lazy_repl_enabled))
+		goto out;
+
+	start = w->info.level == HYDRA_PT_PMD ? w->info.address : w->info.start;
+
+	mmap_read_lock(mm);
+
+	if (!mm->lazy_repl_enabled)
+		goto unlock;
+
+	vma = find_vma(mm, start);
+	if (!vma || vma->vm_start > start ||
+	    vma->master_pgd_node != w->master_node)
+		goto unlock;
+	if (w->info.level != HYDRA_PT_PMD && w->info.end > vma->vm_end)
+		goto unlock;
+
+	for_each_node_mask(node, w->targets)
+		dsts[n++] = node;
+	if (!n)
+		goto unlock;
+
+	hydra_backfill_range(mm, vma, &w->info, dsts, n, w->src_node,
+			     w->master_node);
+
+	for (i = 0; i < n; i++)
+		hydra_stats_fill_sweep(mm);
+
+unlock:
+	mmap_read_unlock(mm);
+out:
+	mmput_async(mm);
+	kfree(w);
+}
+
+bool hydra_queue_backfill(struct mm_struct *mm, int socket, size_t src_node,
+			  size_t master_node, const nodemask_t *targets,
+			  const struct hydra_fill_info *info)
+{
+	struct hydra_backfill_work *w;
+
+	if (!hydra_wrprot_delegation_ready)
+		return false;
+
+	w = kmalloc(sizeof(*w), GFP_KERNEL);
+	if (!w)
+		return false;
+
+	w->mm = mm;
+	w->info = *info;
+	w->targets = *targets;
+	w->src_node = src_node;
+	w->master_node = master_node;
+	mmget(mm);
+	kthread_init_work(&w->work, hydra_backfill_fn);
+	kthread_queue_work(hydra_backfillers[socket], &w->work);
+	return true;
+}
 
 static long hydra_reconcile_pmd_entry(struct mm_struct *mm, pmd_t *pmd,
 				      int socket)
@@ -285,6 +366,16 @@ static int __init hydra_applier_init(void)
 		kthread_bind_mask(worker->task, &hydra_socket_cpumask[s]);
 		wake_up_process(worker->task);
 		hydra_appliers[s] = worker;
+
+		worker = kthread_create_worker(0, "hydra_backfill/%d", s);
+		if (IS_ERR(worker)) {
+			pr_emerg("HYDRA: backfill worker creation failed for socket %d\n",
+				 s);
+			BUG();
+		}
+		kthread_bind_mask(worker->task, &hydra_socket_cpumask[s]);
+		wake_up_process(worker->task);
+		hydra_backfillers[s] = worker;
 	}
 	smp_wmb();
 	hydra_wrprot_delegation_ready = 1;

@@ -420,10 +420,16 @@ static void hydra_stats_print(struct seq_file *m, struct hydra_stats *s,
 			atomic_long_read(&s->fill_local));
 	hydra_print_val(m, 4, "Eager sweep sibling fills",
 			atomic_long_read(&s->fill_sweeps));
+	hydra_print_val(m, 4, "Sweep promotions (backfills queued)",
+			atomic_long_read(&s->promotions));
+	hydra_print_val(m, 4, "Sweeps deferred (no sharing observed)",
+			atomic_long_read(&s->sweep_deferred));
 	hydra_print_val(m, 4, "Entries copied cross-socket",
 			atomic_long_read(&s->copied_cross));
 	hydra_print_val(m, 4, "Clean-writable copies installed RO",
 			atomic_long_read(&s->ro_installs));
+	hydra_print_val(m, 4, "Write-intent speculative dirty installs",
+			atomic_long_read(&s->spec_dirty));
 	hydra_print_val(m, 4, "Sync stores to present remote entries",
 			atomic_long_read(&s->remote_stores));
 	hydra_print_val(m, 4, "Remote sibling stores skipped (empty)",
