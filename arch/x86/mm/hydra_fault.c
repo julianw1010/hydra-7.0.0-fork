@@ -844,7 +844,8 @@ int hydra_repl_fault(struct vm_fault *vmf, int fault_node)
 	rep_node = hydra_socket_rep[socket];
 
 	if (hydra_same_socket(repl_node, master_node) ||
-	    (int)repl_node == rep_node) {
+	    (int)repl_node == rep_node ||
+	    (vmf->flags & FAULT_FLAG_WRITE)) {
 		dsts[0] = (int)repl_node;
 		ndst = 1;
 	} else {
