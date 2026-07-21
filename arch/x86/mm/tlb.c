@@ -28,6 +28,7 @@
 
 #include <linux/signal.h>
 #include <linux/sched/signal.h>
+#include <linux/slab.h>
 #include <linux/hydra.h>
 
 #ifdef CONFIG_PARAVIRT
@@ -1471,6 +1472,130 @@ static void put_flush_tlb_info(void)
 #endif
 }
 
+int sysctl_hydra_flush_relay __read_mostly = 1;
+
+struct hydra_relay_desc {
+	struct flush_tlb_info *info;
+	atomic_t pending;
+};
+
+struct hydra_relay_socket_arg {
+	struct hydra_relay_desc *desc;
+	cpumask_t leaves;
+	int initiator_cpu;
+};
+
+static DEFINE_PER_CPU(call_single_data_t, hydra_leader_csd[NUMA_NODE_COUNT]);
+static DEFINE_PER_CPU(struct hydra_relay_socket_arg, hydra_relay_sarg[NUMA_NODE_COUNT]);
+static DEFINE_PER_CPU(call_single_data_t *, hydra_leaf_csds);
+
+static void hydra_relay_leaf_fn(void *arg)
+{
+	struct hydra_relay_desc *desc = arg;
+
+	flush_tlb_func(desc->info);
+	atomic_dec(&desc->pending);
+}
+
+static void hydra_relay_leader_fn(void *arg)
+{
+	struct hydra_relay_socket_arg *sarg = arg;
+	struct hydra_relay_desc *desc = sarg->desc;
+	call_single_data_t *csds = per_cpu(hydra_leaf_csds, sarg->initiator_cpu);
+	int leaf;
+
+	for_each_cpu(leaf, &sarg->leaves)
+		BUG_ON(smp_call_function_single_async(leaf, &csds[leaf]));
+
+	flush_tlb_func(desc->info);
+	atomic_dec(&desc->pending);
+}
+
+static void hydra_flush_tlb_relay(struct mm_struct *mm, cpumask_t *flush_mask,
+				  struct flush_tlb_info *info, int cpu)
+{
+	struct hydra_relay_desc desc = {
+		.info = info,
+		.pending = ATOMIC_INIT(0),
+	};
+	cpumask_t local_mask;
+	call_single_data_t *leaf_csds = per_cpu(hydra_leaf_csds, cpu);
+	int my_socket = hydra_node_to_socket(cpu_to_node(cpu));
+	int s, relays = 0;
+
+	cpumask_and(&local_mask, flush_mask, &hydra_socket_cpumask[my_socket]);
+
+	for (s = 0; s < hydra_nr_sockets; s++) {
+		struct hydra_relay_socket_arg *sarg;
+		call_single_data_t *csd;
+		cpumask_t sock_cpus;
+		int leader, leaf;
+
+		if (s == my_socket)
+			continue;
+		cpumask_and(&sock_cpus, flush_mask, &hydra_socket_cpumask[s]);
+		if (cpumask_empty(&sock_cpus))
+			continue;
+
+		leader = cpumask_first(&sock_cpus);
+
+		sarg = per_cpu_ptr(&hydra_relay_sarg[s], cpu);
+		sarg->desc = &desc;
+		sarg->initiator_cpu = cpu;
+		cpumask_copy(&sarg->leaves, &sock_cpus);
+		cpumask_clear_cpu(leader, &sarg->leaves);
+
+		for_each_cpu(leaf, &sarg->leaves)
+			leaf_csds[leaf].info = &desc;
+
+		atomic_add(cpumask_weight(&sock_cpus), &desc.pending);
+
+		csd = per_cpu_ptr(&hydra_leader_csd[s], cpu);
+		csd->info = sarg;
+		BUG_ON(smp_call_function_single_async(leader, csd));
+		relays++;
+	}
+
+	if (cpumask_any_but(&local_mask, cpu) < nr_cpu_ids) {
+		flush_tlb_multi(&local_mask, info);
+	} else if (mm == this_cpu_read(cpu_tlbstate.loaded_mm)) {
+		lockdep_assert_irqs_enabled();
+		local_irq_disable();
+		flush_tlb_func(info);
+		local_irq_enable();
+	}
+
+	while (atomic_read(&desc.pending))
+		cpu_relax();
+
+	hydra_stats_tlb_relay(mm, relays);
+}
+
+static int __init hydra_flush_relay_init(void)
+{
+	int cpu, i;
+
+	for_each_possible_cpu(cpu) {
+		call_single_data_t *arr;
+
+		arr = kcalloc(nr_cpu_ids, sizeof(*arr), GFP_KERNEL);
+		if (!arr) {
+			pr_emerg("HYDRA: relay csd allocation failed for cpu %d\n",
+				 cpu);
+			BUG();
+		}
+		for (i = 0; i < (int)nr_cpu_ids; i++)
+			INIT_CSD(&arr[i], hydra_relay_leaf_fn, NULL);
+		per_cpu(hydra_leaf_csds, cpu) = arr;
+
+		for (i = 0; i < NUMA_NODE_COUNT; i++)
+			INIT_CSD(per_cpu_ptr(&hydra_leader_csd[i], cpu),
+				 hydra_relay_leader_fn, NULL);
+	}
+	return 0;
+}
+late_initcall(hydra_flush_relay_init);
+
 void flush_tlb_mm_node_range(struct mm_struct *mm,
 		unsigned long start, unsigned long end, unsigned int stride_shift,
 		bool freed_tables, nodemask_t *nodemask)
@@ -1530,7 +1655,11 @@ void flush_tlb_mm_node_range(struct mm_struct *mm,
 		broadcast_tlb_flush(info);
 	} else if (cpumask_any_but(&flush_mask, cpu) < nr_cpu_ids) {
 		info->trim_cpumask = should_trim_cpumask(mm);
-		flush_tlb_multi(&flush_mask, info);
+		if (sysctl_hydra_extended && sysctl_hydra_flush_relay &&
+		    mm->lazy_repl_enabled && hydra_nr_sockets > 1)
+			hydra_flush_tlb_relay(mm, &flush_mask, info, cpu);
+		else
+			flush_tlb_multi(&flush_mask, info);
 		consider_global_asid(mm);
 	} else if (mm == this_cpu_read(cpu_tlbstate.loaded_mm)) {
 		lockdep_assert_irqs_enabled();

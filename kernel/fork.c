@@ -598,8 +598,14 @@ static inline void mm_free_pgd(struct mm_struct *mm)
 
 	for (i = 0; i < NUMA_NODE_COUNT; i++) {
 		if (mm->repl_pgd[i] && mm->repl_pgd[i] != mm->pgd) {
-			pgd_free(mm, mm->repl_pgd[i]);
-			mm->repl_pgd[i] = NULL;
+			pgd_t *pgd = mm->repl_pgd[i];
+			int j;
+
+			pgd_free(mm, pgd);
+			for (j = i; j < NUMA_NODE_COUNT; j++) {
+				if (mm->repl_pgd[j] == pgd)
+					mm->repl_pgd[j] = NULL;
+			}
 		}
 	}
 
@@ -2210,6 +2216,7 @@ __latent_entropy struct task_struct *copy_process(
 #endif
 
 	p->pagefault_disabled = 0;
+	p->hydra_scope = NULL;
 
 	lockdep_init_task(p);
 

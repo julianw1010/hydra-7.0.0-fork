@@ -4,11 +4,92 @@
 #include <linux/syscalls.h>
 #include <linux/cpumask.h>
 #include <linux/nodemask.h>
+#include <linux/topology.h>
 #include <linux/hydra.h>
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
 #include <asm/tlbflush.h>
 #include <asm/mmu_context.h>
+
+int hydra_nr_sockets;
+int hydra_node_socket[NUMA_NODE_COUNT];
+int hydra_socket_rep[NUMA_NODE_COUNT];
+nodemask_t hydra_socket_nodes[NUMA_NODE_COUNT];
+cpumask_t hydra_socket_cpumask[NUMA_NODE_COUNT];
+
+static int __init hydra_topology_init(void)
+{
+	int pkg_of[NUMA_NODE_COUNT];
+	int seen_pkg[NUMA_NODE_COUNT];
+	int node, other, cpu, s;
+
+	for (node = 0; node < NUMA_NODE_COUNT; node++) {
+		pkg_of[node] = -1;
+		hydra_node_socket[node] = -1;
+		hydra_socket_rep[node] = -1;
+	}
+
+	for_each_online_node(node) {
+		BUG_ON(node >= NUMA_NODE_COUNT);
+		for_each_cpu(cpu, cpumask_of_node(node)) {
+			pkg_of[node] = topology_physical_package_id(cpu);
+			break;
+		}
+	}
+
+	for_each_online_node(node) {
+		int best = -1, best_dist = INT_MAX;
+
+		if (pkg_of[node] >= 0)
+			continue;
+		for_each_online_node(other) {
+			if (pkg_of[other] < 0)
+				continue;
+			if (node_distance(node, other) < best_dist) {
+				best_dist = node_distance(node, other);
+				best = other;
+			}
+		}
+		if (best < 0) {
+			pr_emerg("HYDRA: topology: no socket resolvable for node %d\n",
+				 node);
+			BUG();
+		}
+		pkg_of[node] = pkg_of[best];
+	}
+
+	hydra_nr_sockets = 0;
+	for_each_online_node(node) {
+		for (s = 0; s < hydra_nr_sockets; s++) {
+			if (seen_pkg[s] == pkg_of[node])
+				break;
+		}
+		if (s == hydra_nr_sockets) {
+			seen_pkg[s] = pkg_of[node];
+			hydra_socket_rep[s] = node;
+			hydra_nr_sockets++;
+		}
+		hydra_node_socket[node] = s;
+		node_set(node, hydra_socket_nodes[s]);
+	}
+
+	for (s = 0; s < hydra_nr_sockets; s++) {
+		cpumask_clear(&hydra_socket_cpumask[s]);
+		for_each_node_mask(node, hydra_socket_nodes[s])
+			cpumask_or(&hydra_socket_cpumask[s],
+				   &hydra_socket_cpumask[s],
+				   cpumask_of_node(node));
+	}
+
+	pr_info("HYDRA: topology: %d socket(s)\n", hydra_nr_sockets);
+	for (s = 0; s < hydra_nr_sockets; s++)
+		pr_info("HYDRA: socket %d: rep node %d nodes %*pbl\n",
+			s, hydra_socket_rep[s],
+			nodemask_pr_args(&hydra_socket_nodes[s]));
+
+	return 0;
+}
+late_initcall(hydra_topology_init);
 
 void hydra_reload_cr3(void *info)
 {
@@ -86,11 +167,11 @@ int hydra_enable_replication(struct mm_struct *mm)
 	{
 		int count = 0;
 		for (i = 0; i < NUMA_NODE_COUNT; i++) {
-			if (mm->repl_pgd[i] && mm->repl_pgd[i] != mm->pgd)
+			if (hydra_repl_pgd_first(mm, i))
 				count++;
 		}
 		count++;
-		printk(KERN_INFO "HYDRA: enabled page table replication for mm %px on %d nodes\n", mm, count);
+		printk(KERN_INFO "HYDRA: enabled page table replication for mm %px on %d trees\n", mm, count);
 	}
 
 	mmap_write_unlock(mm);

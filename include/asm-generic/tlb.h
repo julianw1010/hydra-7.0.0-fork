@@ -388,6 +388,7 @@ struct mmu_gather {
 
 	struct vm_area_struct *vma;
 	nodemask_t nodemask;
+	struct hydra_scope hydra_scope;
 
 #ifndef CONFIG_MMU_GATHER_NO_GATHER
 	struct mmu_gather_batch *active;

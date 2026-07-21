@@ -76,12 +76,12 @@ void hydra_stats_detach(struct mm_struct *mm)
 	}
 
 	for (i = 0; i < NUMA_NODE_COUNT; i++) {
-		if (mm->repl_pgd[i] && mm->repl_pgd[i] != mm->pgd)
+		if (hydra_repl_pgd_first(mm, i))
 			count++;
 	}
 	count++;
 
-	printk(KERN_INFO "HYDRA: disabled page table replication for mm %px on %d nodes\n",
+	printk(KERN_INFO "HYDRA: disabled page table replication for mm %px on %d trees\n",
 	       mm, count);
 
 	s->end_jiffies = jiffies;
@@ -413,12 +413,22 @@ static void hydra_stats_print(struct seq_file *m, struct hydra_stats *s,
 		seq_printf(m, "    %-6s %14ld %14ld %16s\n",
 			   hydra_level_name[lvl], writes, pages, buf);
 	}
+	hydra_print_val(m, 4, "Remote sibling stores skipped (empty)",
+			atomic_long_read(&s->sibling_skips));
+	hydra_print_val(m, 4, "Sibling writes delegated to appliers",
+			atomic_long_read(&s->sibling_delegated));
+	hydra_print_val(m, 4, "Siblings reconciled by appliers",
+			atomic_long_read(&s->sibling_reconciled));
+	hydra_print_val(m, 4, "Write grants (dirty centralization)",
+			atomic_long_read(&s->wr_grants));
 
 	hydra_print_section(m, "TLB shootdowns (remote-CPU IPIs)");
 	hydra_print_val(m, 4, "Total shootdowns (with optimization)", tlb_sent);
 	hydra_print_val(m, 4, "Shootdowns saved by node-scoping", tlb_saved);
 	hydra_print_val(m, 4, "Shootdowns without optimization (est)",
 			tlb_sent + tlb_saved);
+	hydra_print_val(m, 4, "Cross-socket relay IPIs (leaders)",
+			atomic_long_read(&s->tlb_relays));
 
 	hydra_print_section(m, "TLB broadcasts (INVLPGB, no IPIs)");
 	hydra_print_val(m, 4, "Total INVLPGB instructions",

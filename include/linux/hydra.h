@@ -33,6 +33,68 @@ void hydra_pud_owner_claim(struct mm_struct *mm, unsigned long start,
 void hydra_pud_owner_stamp(struct mm_struct *mm, unsigned long start,
 			   unsigned long end, int node);
 unsigned long hydra_vm_unmapped_pud_area(struct vm_unmapped_area_info *info);
+void hydra_wrprotect_pte_one(pte_t *ptep);
+void hydra_wrprotect_pmd_one(pmd_t *pmdp);
+bool hydra_scope_drain(struct hydra_scope *scope, unsigned long *lo_out,
+		       unsigned long *hi_out);
+extern int hydra_wrprot_delegation_ready;
+
+static inline void hydra_scope_enter(struct hydra_scope *scope,
+				     struct mm_struct *mm)
+{
+	int s;
+
+	scope->mm = mm;
+	for (s = 0; s < NUMA_NODE_COUNT; s++) {
+		scope->min[s] = ULONG_MAX;
+		scope->max[s] = 0;
+	}
+	scope->prev = current->hydra_scope;
+	current->hydra_scope = scope;
+}
+
+static inline void hydra_scope_exit(struct hydra_scope *scope)
+{
+	current->hydra_scope = scope->prev;
+}
+
+static inline void hydra_scope_note(struct hydra_scope *scope, int socket,
+				    unsigned long addr, unsigned long size)
+{
+	if (scope->min[socket] > addr)
+		scope->min[socket] = addr;
+	if (scope->max[socket] < addr + size)
+		scope->max[socket] = addr + size;
+}
+
+extern int hydra_nr_sockets;
+extern int hydra_node_socket[NUMA_NODE_COUNT];
+extern int hydra_socket_rep[NUMA_NODE_COUNT];
+extern nodemask_t hydra_socket_nodes[NUMA_NODE_COUNT];
+extern cpumask_t hydra_socket_cpumask[NUMA_NODE_COUNT];
+
+static inline int hydra_node_to_socket(int node)
+{
+	return hydra_node_socket[node];
+}
+
+static inline bool hydra_same_socket(int node_a, int node_b)
+{
+	return hydra_node_socket[node_a] == hydra_node_socket[node_b];
+}
+
+static inline bool hydra_repl_pgd_first(struct mm_struct *mm, int node)
+{
+	int i;
+
+	if (!mm->repl_pgd[node] || mm->repl_pgd[node] == mm->pgd)
+		return false;
+	for (i = 0; i < node; i++) {
+		if (mm->repl_pgd[i] == mm->repl_pgd[node])
+			return false;
+	}
+	return true;
+}
 
 #define HYDRA_WALK_NONE ((void *)0x1)
 
@@ -174,10 +236,15 @@ struct hydra_stats {
 
 	atomic_long_t pt_writes[HYDRA_PT_NR_LEVELS];
 	atomic_long_t pt_pages[HYDRA_PT_NR_LEVELS];
+	atomic_long_t sibling_skips;
+	atomic_long_t sibling_delegated;
+	atomic_long_t sibling_reconciled;
+	atomic_long_t wr_grants;
 
 	atomic_long_t tlb_shootdowns;
 	atomic_long_t tlb_shootdowns_saved;
 	atomic_long_t tlb_broadcasts;
+	atomic_long_t tlb_relays;
 
 	atomic_long_t numa_migrate_4k[NUMA_NODE_COUNT][NUMA_NODE_COUNT];
 	atomic_long_t numa_migrate_2m[NUMA_NODE_COUNT][NUMA_NODE_COUNT];
@@ -219,6 +286,46 @@ static inline void hydra_stats_pt_write(void *tablep, int level, long pages)
 		return;
 	atomic_long_inc(&s->pt_writes[level]);
 	atomic_long_add(pages, &s->pt_pages[level]);
+}
+
+static inline void hydra_stats_wr_grant(struct mm_struct *mm)
+{
+	if (mm->hydra_stats)
+		atomic_long_inc(&mm->hydra_stats->wr_grants);
+}
+
+static inline void hydra_stats_sibling_delegated(struct mm_struct *mm, long n)
+{
+	struct hydra_stats *s = mm ? mm->hydra_stats : NULL;
+
+	if (s && n > 0)
+		atomic_long_add(n, &s->sibling_delegated);
+}
+
+static inline void hydra_stats_sibling_reconciled(struct mm_struct *mm, long n)
+{
+	struct hydra_stats *s = mm->hydra_stats;
+
+	if (s && n > 0)
+		atomic_long_add(n, &s->sibling_reconciled);
+}
+
+static inline void hydra_stats_sibling_skips(void *tablep, long count)
+{
+	struct mm_struct *mm;
+	struct hydra_stats *s;
+
+	if (count <= 0)
+		return;
+	if (!virt_addr_valid(tablep))
+		return;
+	mm = READ_ONCE(virt_to_page(tablep)->pt_owner_mm);
+	if (!mm)
+		return;
+	s = mm->hydra_stats;
+	if (!s)
+		return;
+	atomic_long_add(count, &s->sibling_skips);
 }
 
 static inline void hydra_stats_copied_pte(struct mm_struct *mm, long copied)
@@ -264,6 +371,14 @@ static inline void hydra_stats_tlb_broadcast(struct mm_struct *mm, long count)
 
 	if (s && count > 0)
 		atomic_long_add(count, &s->tlb_broadcasts);
+}
+
+static inline void hydra_stats_tlb_relay(struct mm_struct *mm, long count)
+{
+	struct hydra_stats *s = mm->hydra_stats;
+
+	if (s && count > 0)
+		atomic_long_add(count, &s->tlb_relays);
 }
 
 static inline void hydra_stats_thp_split(struct mm_struct *mm)
