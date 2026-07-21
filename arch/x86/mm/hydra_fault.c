@@ -256,10 +256,15 @@ static int hydra_repl_pmd_range(struct mm_struct *mm,
 			pmd_t repl_val = dst_pmd_base[j][i];
 
 			if (pmd_present(repl_val) && pmd_trans_huge(repl_val)) {
-				unsigned long diff = (pmd_val(repl_val) ^ pmd_val(src_val)) &
+				unsigned long diff;
+
+				if (!fault_flags)
+					continue;
+
+				diff = (pmd_val(repl_val) ^ pmd_val(src_val)) &
 				    ~(_PAGE_ACCESSED | _PAGE_DIRTY | _PAGE_SAVED_DIRTY);
 
-				if ((diff & ~_PAGE_RW) || (diff && pmd_write(repl_val))) {
+				if (diff & ~_PAGE_RW) {
 					struct page *m_pg = virt_to_page(src_pmd_base);
 					struct page *r_pg = virt_to_page(dst_pmd_base[j]);
 
@@ -270,6 +275,10 @@ static int hydra_repl_pmd_range(struct mm_struct *mm,
 						 r_pg, page_to_nid(r_pg),
 						 r_pg->next_replica);
 					BUG();
+				}
+				if (diff && pmd_write(repl_val)) {
+					hydra_wrprotect_pmd_one(&dst_pmd_base[j][i]);
+					continue;
 				}
 				if (diff && i == fault_idx &&
 				    (fault_flags & FAULT_FLAG_WRITE) &&
@@ -574,10 +583,11 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 
 					if (!usable)
 						continue;
+					if (!fault_flags)
+						continue;
 					diff = (pte_val(repl_cur) ^ pte_val(val)) &
 					       ~(_PAGE_ACCESSED | _PAGE_DIRTY | _PAGE_SAVED_DIRTY);
-					if ((diff & ~_PAGE_RW) ||
-					    (diff && pte_write(repl_cur))) {
+					if (diff & ~_PAGE_RW) {
 						struct page *m_pg = virt_to_page(src_pte_base);
 						struct page *r_pg = virt_to_page(dst_pte_base[j]);
 
@@ -588,6 +598,10 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 							 r_pg, page_to_nid(r_pg),
 							 r_pg->next_replica);
 						BUG();
+					}
+					if (diff && pte_write(repl_cur)) {
+						hydra_wrprotect_pte_one(&dst_pte_base[j][i]);
+						continue;
 					}
 					if (diff && i == fault_idx &&
 					    (fault_flags & FAULT_FLAG_WRITE) &&
