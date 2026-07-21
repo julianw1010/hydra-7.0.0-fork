@@ -60,10 +60,11 @@ static long hydra_reconcile_pmd_entry(struct mm_struct *mm, pmd_t *pmd,
 			}
 			if (!pmd_write(v) && pmd_write(m) && !pmd_dirty(m))
 				continue;
-			new = __pmd((pmd_val(m) &
-				     ~(_PAGE_ACCESSED | _PAGE_DIRTY)) |
-				    (pmd_val(v) &
-				     (_PAGE_ACCESSED | _PAGE_DIRTY)));
+			new = m;
+			if (pmd_young(v))
+				new = pmd_mkyoung(new);
+			if (pmd_dirty(v))
+				new = pmd_mkdirty(new);
 			if (pmd_write(new) && !pmd_dirty(m))
 				new = pmd_wrprotect(new);
 		} else if (pmd_present(m) && pmd_trans_huge(m) &&
@@ -132,10 +133,11 @@ static long hydra_reconcile_pte_range(struct mm_struct *mm, pmd_t *pmd,
 				if (!pte_write(v) && pte_write(m) &&
 				    !pte_dirty(m))
 					continue;
-				new = __pte((pte_val(m) &
-					     ~(_PAGE_ACCESSED | _PAGE_DIRTY)) |
-					    (pte_val(v) &
-					     (_PAGE_ACCESSED | _PAGE_DIRTY)));
+				new = m;
+				if (pte_young(v))
+					new = pte_mkyoung(new);
+				if (pte_dirty(v))
+					new = pte_mkdirty(new);
 				if (pte_write(new) && !pte_dirty(m))
 					new = pte_wrprotect(new);
 			} else if (pte_present(m) && !pte_protnone(m)) {
