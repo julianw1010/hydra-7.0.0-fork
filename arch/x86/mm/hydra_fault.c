@@ -239,7 +239,7 @@ static int hydra_repl_pmd_range(struct mm_struct *mm,
 		if (write_intent && pmd_write(src_val) && !pmd_dirty(src_val)) {
 			pmd_t newv = pmd_mkdirty(src_val);
 
-			hydra_set_pmd(&src_pmd_base[i], newv);
+			native_set_pmd(&src_pmd_base[i], newv);
 			src_val = newv;
 			spec++;
 			hydra_stats_wr_grant(mm);
@@ -280,7 +280,7 @@ static int hydra_repl_pmd_range(struct mm_struct *mm,
 					hydra_wrprotect_pmd_one(&dst_pmd_base[j][i]);
 					continue;
 				}
-				if (diff && i == fault_idx &&
+				if (diff && (i == fault_idx || write_intent) &&
 				    (fault_flags & FAULT_FLAG_WRITE) &&
 				    pmd_write(src_val) && pmd_dirty(src_val)) {
 					native_set_pmd(&dst_pmd_base[j][i], src_val);
@@ -558,7 +558,7 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 			    !pte_dirty(val)) {
 				pte_t newv = pte_mkdirty(val);
 
-				hydra_set_pte(&src_pte_base[i], newv);
+				native_set_pte(&src_pte_base[i], newv);
 				val = newv;
 				spec++;
 				hydra_stats_wr_grant(mm);
@@ -603,7 +603,7 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 						hydra_wrprotect_pte_one(&dst_pte_base[j][i]);
 						continue;
 					}
-					if (diff && i == fault_idx &&
+					if (diff && (i == fault_idx || write_intent) &&
 					    (fault_flags & FAULT_FLAG_WRITE) &&
 					    pte_write(val) && pte_dirty(val)) {
 						if (try_cmpxchg((long *)&dst_pte_base[j][i].pte,
