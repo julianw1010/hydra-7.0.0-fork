@@ -86,6 +86,7 @@ struct hydra_scope {
 	struct mm_struct *mm;
 	struct hydra_scope *prev;
 	void *pool;
+	unsigned long published[NUMA_NODE_COUNT];
 	unsigned long min[NUMA_NODE_COUNT];
 	unsigned long max[NUMA_NODE_COUNT];
 };

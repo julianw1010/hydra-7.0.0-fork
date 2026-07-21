@@ -30,7 +30,6 @@ struct hydra_stream_work {
 
 struct hydra_scope_pool {
 	struct hydra_stream_work stream[NUMA_NODE_COUNT];
-	unsigned long published[NUMA_NODE_COUNT];
 	int started[NUMA_NODE_COUNT];
 };
 
@@ -357,6 +356,7 @@ void hydra_scope_enter(struct hydra_scope *scope, struct mm_struct *mm)
 	for (s = 0; s < NUMA_NODE_COUNT; s++) {
 		scope->min[s] = ULONG_MAX;
 		scope->max[s] = 0;
+		scope->published[s] = 0;
 	}
 	scope->pool = NULL;
 	if (sysctl_hydra_extended && hydra_wrprot_delegation_ready &&
@@ -393,10 +393,8 @@ void hydra_scope_feed(struct hydra_scope *scope, int socket)
 	unsigned long fr = scope->max[socket] & PMD_MASK;
 
 	if (p->started[socket]) {
-		if (fr != p->published[socket]) {
-			p->published[socket] = fr;
-			smp_store_release(&w->frontier, fr);
-		}
+		scope->published[socket] = fr;
+		smp_store_release(&w->frontier, fr);
 		return;
 	}
 
@@ -412,7 +410,7 @@ void hydra_scope_feed(struct hydra_scope *scope, int socket)
 	w->frontier = fr;
 	w->closed = 0;
 	w->applied = 0;
-	p->published[socket] = fr;
+	scope->published[socket] = fr;
 	kthread_init_work(&w->work, hydra_stream_fn);
 	kthread_queue_work(hydra_appliers[socket], &w->work);
 	p->started[socket] = 1;
@@ -439,6 +437,7 @@ bool hydra_scope_drain(struct hydra_scope *scope, unsigned long *lo_out,
 			smax[s] = scope->max[s];
 			scope->min[s] = ULONG_MAX;
 			scope->max[s] = 0;
+			scope->published[s] = 0;
 		}
 
 		if (p) {

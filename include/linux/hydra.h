@@ -66,7 +66,8 @@ static inline void hydra_scope_note(struct hydra_scope *scope, int socket,
 		scope->min[socket] = addr;
 	if (scope->max[socket] < addr + size)
 		scope->max[socket] = addr + size;
-	if (scope->pool)
+	if (scope->pool &&
+	    (scope->max[socket] & PMD_MASK) != scope->published[socket])
 		hydra_scope_feed(scope, socket);
 }
 
