@@ -358,6 +358,8 @@ void hydra_scope_enter(struct hydra_scope *scope, struct mm_struct *mm)
 		scope->max[s] = 0;
 		scope->published[s] = 0;
 	}
+	scope->note_page = NULL;
+	scope->note_members = 0;
 	scope->pool = NULL;
 	if (sysctl_hydra_extended && hydra_wrprot_delegation_ready &&
 	    mm && mm->lazy_repl_enabled)
@@ -439,6 +441,7 @@ bool hydra_scope_drain(struct hydra_scope *scope, unsigned long *lo_out,
 			scope->max[s] = 0;
 			scope->published[s] = 0;
 		}
+		scope->note_page = NULL;
 
 		if (p) {
 			for (s = 0; s < NUMA_NODE_COUNT; s++) {

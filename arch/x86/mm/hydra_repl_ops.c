@@ -66,18 +66,31 @@ static long hydra_set_wrprotect_pte_entry(struct mm_struct *mm,
 	offset = ((unsigned long)ptep) & ~PAGE_MASK;
 	scope = hydra_scope_of(mm);
 
+	if (scope) {
+		if (scope->note_page != page) {
+			long members = 0;
+
+			rcu_read_lock();
+			for (cur = page->next_replica; cur && cur != page;
+			     cur = cur->next_replica) {
+				hydra_scope_note(scope, page_to_nid(cur),
+						 addr & PMD_MASK, PMD_SIZE);
+				members++;
+			}
+			rcu_read_unlock();
+			scope->note_page = page;
+			scope->note_members = members;
+		}
+		hydra_stats_sibling_delegated(mm, scope->note_members);
+		return pages;
+	}
+
 	rcu_read_lock();
 	for (cur = page->next_replica; cur && cur != page; cur = cur->next_replica) {
 		pte_t *replica_entry =
 			(pte_t *)(page_address(cur) + offset);
 		int cur_nid = page_to_nid(cur);
 
-		if (scope) {
-			hydra_scope_note(scope, cur_nid,
-					 addr, PAGE_SIZE);
-			delegated++;
-			continue;
-		}
 		if (!hydra_same_socket(cur_nid, page_to_nid(page)))
 			rstores++;
 		if (pte_val(READ_ONCE(*replica_entry)) & _PAGE_PRESENT)
@@ -119,18 +132,31 @@ static long hydra_set_wrprotect_pmd_entry(struct mm_struct *mm,
 	offset = ((unsigned long)pmdp) & ~PAGE_MASK;
 	scope = hydra_scope_of(mm);
 
+	if (scope) {
+		if (scope->note_page != page) {
+			long members = 0;
+
+			rcu_read_lock();
+			for (cur = page->next_replica; cur && cur != page;
+			     cur = cur->next_replica) {
+				hydra_scope_note(scope, page_to_nid(cur),
+						 addr & PUD_MASK, PUD_SIZE);
+				members++;
+			}
+			rcu_read_unlock();
+			scope->note_page = page;
+			scope->note_members = members;
+		}
+		hydra_stats_sibling_delegated(mm, scope->note_members);
+		return pages;
+	}
+
 	rcu_read_lock();
 	for (cur = page->next_replica; cur && cur != page; cur = cur->next_replica) {
 		pmd_t *replica_entry =
 			(pmd_t *)(page_address(cur) + offset);
 		int cur_nid = page_to_nid(cur);
 
-		if (scope) {
-			hydra_scope_note(scope, cur_nid,
-					 addr, PMD_SIZE);
-			delegated++;
-			continue;
-		}
 		if (!hydra_same_socket(cur_nid, page_to_nid(page)))
 			rstores++;
 		if (pmd_val(READ_ONCE(*replica_entry)) & _PAGE_PRESENT)
@@ -253,17 +279,30 @@ pte_t hydra_ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
 	offset = ((unsigned long)ptep) & ~PAGE_MASK;
 	scope = hydra_scope_of(mm);
 
+	if (scope) {
+		if (scope->note_page != page) {
+			long members = 0;
+
+			rcu_read_lock();
+			for (cur = page->next_replica; cur && cur != page;
+			     cur = cur->next_replica) {
+				hydra_scope_note(scope, page_to_nid(cur),
+						 addr & PMD_MASK, PMD_SIZE);
+				members++;
+			}
+			rcu_read_unlock();
+			scope->note_page = page;
+			scope->note_members = members;
+		}
+		delegated = scope->note_members;
+		goto out;
+	}
+
 	rcu_read_lock();
 	for (cur = page->next_replica; cur && cur != page; cur = cur->next_replica) {
 		int cur_nid = page_to_nid(cur);
 		pte_t old;
 
-		if (scope) {
-			hydra_scope_note(scope, cur_nid,
-					 addr, PAGE_SIZE);
-			delegated++;
-			continue;
-		}
 		if (!hydra_same_socket(cur_nid, page_to_nid(page)))
 			rstores++;
 		old = native_ptep_get_and_clear(
@@ -448,17 +487,30 @@ pmd_t hydra_pmdp_get_and_clear(struct mm_struct *mm, unsigned long addr,
 	offset = ((unsigned long)pmdp) & ~PAGE_MASK;
 	scope = hydra_scope_of(mm);
 
+	if (scope) {
+		if (scope->note_page != page) {
+			long members = 0;
+
+			rcu_read_lock();
+			for (cur = page->next_replica; cur && cur != page;
+			     cur = cur->next_replica) {
+				hydra_scope_note(scope, page_to_nid(cur),
+						 addr & PUD_MASK, PUD_SIZE);
+				members++;
+			}
+			rcu_read_unlock();
+			scope->note_page = page;
+			scope->note_members = members;
+		}
+		delegated = scope->note_members;
+		goto out;
+	}
+
 	rcu_read_lock();
 	for (cur = page->next_replica; cur && cur != page; cur = cur->next_replica) {
 		int cur_nid = page_to_nid(cur);
 		pmd_t old;
 
-		if (scope) {
-			hydra_scope_note(scope, cur_nid,
-					 addr, PMD_SIZE);
-			delegated++;
-			continue;
-		}
 		if (!hydra_same_socket(cur_nid, page_to_nid(page)))
 			rstores++;
 		old = native_pmdp_get_and_clear(
