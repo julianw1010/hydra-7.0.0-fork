@@ -1507,6 +1507,9 @@ static void hydra_relay_leader_fn(void *arg)
 	for_each_cpu(leaf, &sarg->leaves)
 		BUG_ON(smp_call_function_single_async(leaf, &csds[leaf]));
 
+	hydra_stats_tlb_relay_leaves(desc->info->mm,
+				     cpumask_weight(&sarg->leaves));
+
 	flush_tlb_func(desc->info);
 	atomic_dec(&desc->pending);
 }

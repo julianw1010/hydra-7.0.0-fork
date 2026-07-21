@@ -55,6 +55,7 @@ static long hydra_reconcile_pmd_entry(struct mm_struct *mm, pmd_t *pmd,
 				continue;
 			if (diff == _PAGE_RW && pmd_write(v)) {
 				hydra_wrprotect_pmd_one(rp);
+				hydra_stats_rec_wrprot(mm);
 				applied++;
 				continue;
 			}
@@ -75,8 +76,13 @@ static long hydra_reconcile_pmd_entry(struct mm_struct *mm, pmd_t *pmd,
 		} else {
 			new = __pmd(0);
 		}
-		if (try_cmpxchg((long *)rp, (long *)&v, *(long *)&new))
+		if (try_cmpxchg((long *)rp, (long *)&v, *(long *)&new)) {
+			if (pmd_val(new))
+				hydra_stats_rec_synced(mm);
+			else
+				hydra_stats_rec_cleared(mm);
 			applied++;
+		}
 	}
 	rcu_read_unlock();
 
@@ -127,6 +133,7 @@ static long hydra_reconcile_pte_range(struct mm_struct *mm, pmd_t *pmd,
 					continue;
 				if (diff == _PAGE_RW && pte_write(v)) {
 					hydra_wrprotect_pte_one(rp);
+					hydra_stats_rec_wrprot(mm);
 					applied++;
 					continue;
 				}
@@ -148,8 +155,13 @@ static long hydra_reconcile_pte_range(struct mm_struct *mm, pmd_t *pmd,
 				new = __pte(0);
 			}
 			if (try_cmpxchg((long *)&rp->pte, (long *)&v,
-					*(long *)&new))
+					*(long *)&new)) {
+				if (pte_val(new))
+					hydra_stats_rec_synced(mm);
+				else
+					hydra_stats_rec_cleared(mm);
 				applied++;
+			}
 		}
 	}
 	rcu_read_unlock();
@@ -248,6 +260,7 @@ bool hydra_scope_drain(struct hydra_scope *scope, unsigned long *lo_out,
 	}
 
 	hydra_stats_sibling_reconciled(mm, applied);
+	hydra_stats_scope_drain(mm, n);
 
 	if (lo_out)
 		*lo_out = lo;

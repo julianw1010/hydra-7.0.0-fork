@@ -45,7 +45,7 @@ static long hydra_set_wrprotect_pte_entry(struct mm_struct *mm,
 	struct page *page, *cur;
 	struct hydra_scope *scope;
 	unsigned long offset;
-	long pages = 1, delegated = 0;
+	long pages = 1, delegated = 0, rstores = 0;
 
 	if (!ptep)
 		return 0;
@@ -73,13 +73,14 @@ static long hydra_set_wrprotect_pte_entry(struct mm_struct *mm,
 		int cur_nid = page_to_nid(cur);
 
 		if (scope &&
-		    !hydra_same_socket(cur_nid, page_to_nid(page)) &&
-		    cur_nid != hydra_socket_rep[hydra_node_to_socket(cur_nid)]) {
+		    !hydra_same_socket(cur_nid, page_to_nid(page))) {
 			hydra_scope_note(scope, hydra_node_to_socket(cur_nid),
 					 addr, PAGE_SIZE);
 			delegated++;
 			continue;
 		}
+		if (!hydra_same_socket(cur_nid, page_to_nid(page)))
+			rstores++;
 		if (pte_val(READ_ONCE(*replica_entry)) & _PAGE_PRESENT)
 			hydra_wrprotect_pte_one(replica_entry);
 		pages++;
@@ -87,6 +88,7 @@ static long hydra_set_wrprotect_pte_entry(struct mm_struct *mm,
 	rcu_read_unlock();
 
 	hydra_stats_sibling_delegated(mm, delegated);
+	hydra_stats_remote_stores(mm, rstores);
 
 	return pages;
 }
@@ -97,7 +99,7 @@ static long hydra_set_wrprotect_pmd_entry(struct mm_struct *mm,
 	struct page *page, *cur;
 	struct hydra_scope *scope;
 	unsigned long offset;
-	long pages = 1, delegated = 0;
+	long pages = 1, delegated = 0, rstores = 0;
 
 	if (!pmdp)
 		return 0;
@@ -125,13 +127,14 @@ static long hydra_set_wrprotect_pmd_entry(struct mm_struct *mm,
 		int cur_nid = page_to_nid(cur);
 
 		if (scope &&
-		    !hydra_same_socket(cur_nid, page_to_nid(page)) &&
-		    cur_nid != hydra_socket_rep[hydra_node_to_socket(cur_nid)]) {
+		    !hydra_same_socket(cur_nid, page_to_nid(page))) {
 			hydra_scope_note(scope, hydra_node_to_socket(cur_nid),
 					 addr, PMD_SIZE);
 			delegated++;
 			continue;
 		}
+		if (!hydra_same_socket(cur_nid, page_to_nid(page)))
+			rstores++;
 		if (pmd_val(READ_ONCE(*replica_entry)) & _PAGE_PRESENT)
 			hydra_wrprotect_pmd_one(replica_entry);
 		pages++;
@@ -139,6 +142,7 @@ static long hydra_set_wrprotect_pmd_entry(struct mm_struct *mm,
 	rcu_read_unlock();
 
 	hydra_stats_sibling_delegated(mm, delegated);
+	hydra_stats_remote_stores(mm, rstores);
 
 	return pages;
 }
@@ -148,7 +152,7 @@ void hydra_set_pte(pte_t *ptep, pte_t pteval)
 	struct page *pte_page, *cur;
 	unsigned long offset;
 	pte_t repl_val;
-	long pages = 1, skipped = 0;
+	long pages = 1, skipped = 0, rstores = 0;
 
 	native_set_pte(ptep, pteval);
 
@@ -166,8 +170,10 @@ void hydra_set_pte(pte_t *ptep, pte_t pteval)
 		offset = ((unsigned long)ptep) & ~PAGE_MASK;
 		repl_val = (pte_val(pteval) & _PAGE_PRESENT) ? pteval : __pte(0);
 		if (sysctl_hydra_extended && pte_write(repl_val) &&
-		    !pte_dirty(repl_val))
+		    !pte_dirty(repl_val)) {
 			repl_val = pte_wrprotect(repl_val);
+			hydra_stats_ro_install_table(ptep);
+		}
 
 		rcu_read_lock();
 		for (cur = pte_page->next_replica; cur && cur != pte_page; cur = cur->next_replica) {
@@ -176,11 +182,12 @@ void hydra_set_pte(pte_t *ptep, pte_t pteval)
 
 			if (sysctl_hydra_extended &&
 			    !hydra_same_socket(cur_nid, master_nid) &&
-			    cur_nid != hydra_socket_rep[hydra_node_to_socket(cur_nid)] &&
 			    !(pte_val(READ_ONCE(*rp)) & _PAGE_PRESENT)) {
 				skipped++;
 				continue;
 			}
+			if (!hydra_same_socket(cur_nid, master_nid))
+				rstores++;
 			native_set_pte(rp, repl_val);
 			pages++;
 		}
@@ -189,6 +196,7 @@ void hydra_set_pte(pte_t *ptep, pte_t pteval)
 
 	hydra_stats_pt_write(ptep, HYDRA_PT_PTE, pages);
 	hydra_stats_sibling_skips(ptep, skipped);
+	hydra_stats_remote_stores_table(ptep, rstores);
 }
 
 pte_t hydra_get_pte(pte_t *ptep)
@@ -235,7 +243,7 @@ pte_t hydra_ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
 	struct hydra_scope *scope;
 	unsigned long offset;
 	pte_t val;
-	long pages = 1, delegated = 0;
+	long pages = 1, delegated = 0, rstores = 0;
 
 	if (!ptep)
 		return __pte(0);
@@ -259,13 +267,14 @@ pte_t hydra_ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
 		int cur_nid = page_to_nid(cur);
 		pte_t old;
 
-		if (scope && !hydra_same_socket(cur_nid, page_to_nid(page)) &&
-		    cur_nid != hydra_socket_rep[hydra_node_to_socket(cur_nid)]) {
+		if (scope && !hydra_same_socket(cur_nid, page_to_nid(page))) {
 			hydra_scope_note(scope, hydra_node_to_socket(cur_nid),
 					 addr, PAGE_SIZE);
 			delegated++;
 			continue;
 		}
+		if (!hydra_same_socket(cur_nid, page_to_nid(page)))
+			rstores++;
 		old = native_ptep_get_and_clear(
 			(pte_t *)(page_address(cur) + offset));
 		if (pte_val(old) & _PAGE_PRESENT)
@@ -277,6 +286,7 @@ pte_t hydra_ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
 out:
 	hydra_stats_pt_write(ptep, HYDRA_PT_PTE, pages);
 	hydra_stats_sibling_delegated(mm, delegated);
+	hydra_stats_remote_stores(mm, rstores);
 	return val;
 }
 
@@ -338,7 +348,7 @@ void hydra_set_pmd(pmd_t *pmdp, pmd_t pmd)
 	struct page *page, *cur;
 	unsigned long offset;
 	pmd_t repl_val;
-	long pages = 1, skipped = 0;
+	long pages = 1, skipped = 0, rstores = 0;
 
 	native_set_pmd(pmdp, pmd);
 
@@ -362,8 +372,10 @@ void hydra_set_pmd(pmd_t *pmdp, pmd_t pmd)
 			repl_val = __pmd(0);
 
 		if (sysctl_hydra_extended && pmd_val(repl_val) &&
-		    pmd_write(repl_val) && !pmd_dirty(repl_val))
+		    pmd_write(repl_val) && !pmd_dirty(repl_val)) {
 			repl_val = pmd_wrprotect(repl_val);
+			hydra_stats_ro_install_table(pmdp);
+		}
 
 		rcu_read_lock();
 		for (cur = page->next_replica; cur && cur != page; cur = cur->next_replica) {
@@ -372,11 +384,12 @@ void hydra_set_pmd(pmd_t *pmdp, pmd_t pmd)
 
 			if (sysctl_hydra_extended &&
 			    !hydra_same_socket(cur_nid, master_nid) &&
-			    cur_nid != hydra_socket_rep[hydra_node_to_socket(cur_nid)] &&
 			    !(pmd_val(READ_ONCE(*rp)) & _PAGE_PRESENT)) {
 				skipped++;
 				continue;
 			}
+			if (!hydra_same_socket(cur_nid, master_nid))
+				rstores++;
 			native_set_pmd(rp, repl_val);
 			pages++;
 		}
@@ -385,6 +398,7 @@ void hydra_set_pmd(pmd_t *pmdp, pmd_t pmd)
 
 	hydra_stats_pt_write(pmdp, HYDRA_PT_PMD, pages);
 	hydra_stats_sibling_skips(pmdp, skipped);
+	hydra_stats_remote_stores_table(pmdp, rstores);
 }
 
 pmd_t hydra_get_pmd(pmd_t *pmdp)
@@ -431,7 +445,7 @@ pmd_t hydra_pmdp_get_and_clear(struct mm_struct *mm, unsigned long addr,
 	struct hydra_scope *scope;
 	unsigned long offset;
 	pmd_t val;
-	long pages = 1, delegated = 0;
+	long pages = 1, delegated = 0, rstores = 0;
 
 	if (!pmdp)
 		return __pmd(0);
@@ -455,13 +469,14 @@ pmd_t hydra_pmdp_get_and_clear(struct mm_struct *mm, unsigned long addr,
 		int cur_nid = page_to_nid(cur);
 		pmd_t old;
 
-		if (scope && !hydra_same_socket(cur_nid, page_to_nid(page)) &&
-		    cur_nid != hydra_socket_rep[hydra_node_to_socket(cur_nid)]) {
+		if (scope && !hydra_same_socket(cur_nid, page_to_nid(page))) {
 			hydra_scope_note(scope, hydra_node_to_socket(cur_nid),
 					 addr, PMD_SIZE);
 			delegated++;
 			continue;
 		}
+		if (!hydra_same_socket(cur_nid, page_to_nid(page)))
+			rstores++;
 		old = native_pmdp_get_and_clear(
 			(pmd_t *)(page_address(cur) + offset));
 		if (pmd_val(old) & _PAGE_PRESENT)
@@ -473,6 +488,7 @@ pmd_t hydra_pmdp_get_and_clear(struct mm_struct *mm, unsigned long addr,
 out:
 	hydra_stats_pt_write(pmdp, HYDRA_PT_PMD, pages);
 	hydra_stats_sibling_delegated(mm, delegated);
+	hydra_stats_remote_stores(mm, rstores);
 	return val;
 }
 
@@ -535,7 +551,7 @@ pmd_t hydra_pmdp_establish(pmd_t *pmdp, pmd_t pmd)
 	unsigned long offset;
 	pmd_t old, repl_val;
 	pmdval_t flags = 0;
-	long pages = 1;
+	long pages = 1, rstores = 0;
 
 	if (IS_ENABLED(CONFIG_SMP))
 		old = xchg(pmdp, pmd);
@@ -562,13 +578,18 @@ pmd_t hydra_pmdp_establish(pmd_t *pmdp, pmd_t pmd)
 		repl_val = __pmd(0);
 
 	if (sysctl_hydra_extended && pmd_val(repl_val) && pmd_write(repl_val) &&
-	    !pmd_dirty(repl_val))
+	    !pmd_dirty(repl_val)) {
 		repl_val = pmd_wrprotect(repl_val);
+		hydra_stats_ro_install_table(pmdp);
+	}
 
 	rcu_read_lock();
 	for (cur = pmd_page->next_replica; cur && cur != pmd_page; cur = cur->next_replica) {
 		pmd_t *rp = (pmd_t *)(page_address(cur) + offset);
 		pmd_t old_repl;
+
+		if (!hydra_same_socket(page_to_nid(cur), page_to_nid(pmd_page)))
+			rstores++;
 
 		if (IS_ENABLED(CONFIG_SMP))
 			old_repl = xchg(rp, repl_val);
@@ -587,6 +608,7 @@ pmd_t hydra_pmdp_establish(pmd_t *pmdp, pmd_t pmd)
 
 out:
 	hydra_stats_pt_write(pmdp, HYDRA_PT_PMD, pages);
+	hydra_stats_remote_stores_table(pmdp, rstores);
 	return old;
 }
 

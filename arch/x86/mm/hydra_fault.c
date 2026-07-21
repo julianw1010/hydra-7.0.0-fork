@@ -108,6 +108,7 @@ static int hydra_repl_pmd_range(struct mm_struct *mm,
 	unsigned long prefetch_count;
 	unsigned long start_idx, end_idx, fault_idx, i;
 	unsigned long copied = 0;
+	long ro = 0;
 
 	*prefetched_out = 0;
 
@@ -259,8 +260,10 @@ static int hydra_repl_pmd_range(struct mm_struct *mm,
 			pmd_t ins = src_val;
 
 			if (sysctl_hydra_extended && pmd_write(ins) &&
-			    !pmd_dirty(ins))
+			    !pmd_dirty(ins)) {
 				ins = pmd_wrprotect(ins);
+				ro++;
+			}
 			native_set_pmd(&repl_pmd_base[i], ins);
 		}
 
@@ -269,6 +272,9 @@ static int hydra_repl_pmd_range(struct mm_struct *mm,
 
 	*prefetched_out = copied;
 	hydra_stats_copied_pmd(mm, copied);
+	if (!hydra_same_socket(repl_node, src_node))
+		hydra_stats_copied_cross(mm, copied);
+	hydra_stats_ro_installs(mm, ro);
 
 unlock:
 	if (repl_ptl && repl_ptl != master_ptl) {
@@ -486,6 +492,7 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 		unsigned long i;
 		unsigned long fault_idx = (fault_addr >> PAGE_SHIFT) &
 					  (PTRS_PER_PTE - 1);
+		long ro = 0;
 
 		for (i = start_idx; i < start_idx + count; i++) {
 			pte_t val = src_pte_base[i];
@@ -524,12 +531,15 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 				val = __pte(0);
 			} else {
 				if (sysctl_hydra_extended && pte_write(val) &&
-				    !pte_dirty(val))
+				    !pte_dirty(val)) {
 					val = pte_wrprotect(val);
+					ro++;
+				}
 				copied++;
 			}
 			repl_pte_base[i] = val;
 		}
+		hydra_stats_ro_installs(mm, ro);
 	}
 
 	if (master_ptl != master_pml)
@@ -538,6 +548,8 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 	spin_unlock(master_pml);
 
 	hydra_stats_copied_pte(mm, copied);
+	if (!hydra_same_socket(repl_node, src_node))
+		hydra_stats_copied_cross(mm, copied);
 
 	return 0;
 }
@@ -636,6 +648,13 @@ static int hydra_repl_fill_node(struct vm_fault *vmf, size_t dst_node,
 	if (ret == -EAGAIN)
 		ret = hydra_repl_try_pte(vmf, dst_node, src_node, master_node);
 
+	if (ret == 0) {
+		if (hydra_same_socket(dst_node, src_node))
+			hydra_stats_fill_local(mm);
+		else
+			hydra_stats_fill_pull(mm);
+	}
+
 	return ret;
 }
 
@@ -685,6 +704,7 @@ int hydra_repl_fault(struct vm_fault *vmf, int fault_node)
 			continue;
 
 		r = hydra_repl_fill_node(vmf, sib, sib_src, master_node);
+		hydra_stats_fill_sweep(mm);
 		if (r & (VM_FAULT_RETRY | VM_FAULT_COMPLETED))
 			return r;
 	}

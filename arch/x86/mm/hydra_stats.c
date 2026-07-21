@@ -413,12 +413,32 @@ static void hydra_stats_print(struct seq_file *m, struct hydra_stats *s,
 		seq_printf(m, "    %-6s %14ld %14ld %16s\n",
 			   hydra_level_name[lvl], writes, pages, buf);
 	}
+	hydra_print_section(m, "Socket hierarchy (extended)");
+	hydra_print_val(m, 4, "Fills sourced cross-socket (pulls)",
+			atomic_long_read(&s->fill_pulls));
+	hydra_print_val(m, 4, "Fills sourced intra-socket",
+			atomic_long_read(&s->fill_local));
+	hydra_print_val(m, 4, "Eager sweep sibling fills",
+			atomic_long_read(&s->fill_sweeps));
+	hydra_print_val(m, 4, "Entries copied cross-socket",
+			atomic_long_read(&s->copied_cross));
+	hydra_print_val(m, 4, "Clean-writable copies installed RO",
+			atomic_long_read(&s->ro_installs));
+	hydra_print_val(m, 4, "Sync stores to present remote entries",
+			atomic_long_read(&s->remote_stores));
 	hydra_print_val(m, 4, "Remote sibling stores skipped (empty)",
 			atomic_long_read(&s->sibling_skips));
 	hydra_print_val(m, 4, "Sibling writes delegated to appliers",
 			atomic_long_read(&s->sibling_delegated));
+	hydra_print_val(m, 4, "Scope drains",
+			atomic_long_read(&s->scope_drains));
+	hydra_print_val(m, 4, "Reconcile work items dispatched",
+			atomic_long_read(&s->scope_works));
 	hydra_print_val(m, 4, "Siblings reconciled by appliers",
 			atomic_long_read(&s->sibling_reconciled));
+	hydra_print_val(m, 6, "cleared", atomic_long_read(&s->rec_cleared));
+	hydra_print_val(m, 6, "wrprotected", atomic_long_read(&s->rec_wrprot));
+	hydra_print_val(m, 6, "value-synced", atomic_long_read(&s->rec_synced));
 	hydra_print_val(m, 4, "Write grants (dirty centralization)",
 			atomic_long_read(&s->wr_grants));
 
@@ -429,6 +449,8 @@ static void hydra_stats_print(struct seq_file *m, struct hydra_stats *s,
 			tlb_sent + tlb_saved);
 	hydra_print_val(m, 4, "Cross-socket relay IPIs (leaders)",
 			atomic_long_read(&s->tlb_relays));
+	hydra_print_val(m, 4, "Relayed leaf IPIs (intra-socket)",
+			atomic_long_read(&s->tlb_relay_leaves));
 
 	hydra_print_section(m, "TLB broadcasts (INVLPGB, no IPIs)");
 	hydra_print_val(m, 4, "Total INVLPGB instructions",
