@@ -73,7 +73,7 @@ static long hydra_set_wrprotect_pte_entry(struct mm_struct *mm,
 		int cur_nid = page_to_nid(cur);
 
 		if (scope) {
-			hydra_scope_note(scope, hydra_node_to_socket(cur_nid),
+			hydra_scope_note(scope, cur_nid,
 					 addr, PAGE_SIZE);
 			delegated++;
 			continue;
@@ -126,7 +126,7 @@ static long hydra_set_wrprotect_pmd_entry(struct mm_struct *mm,
 		int cur_nid = page_to_nid(cur);
 
 		if (scope) {
-			hydra_scope_note(scope, hydra_node_to_socket(cur_nid),
+			hydra_scope_note(scope, cur_nid,
 					 addr, PMD_SIZE);
 			delegated++;
 			continue;
@@ -259,7 +259,7 @@ pte_t hydra_ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
 		pte_t old;
 
 		if (scope) {
-			hydra_scope_note(scope, hydra_node_to_socket(cur_nid),
+			hydra_scope_note(scope, cur_nid,
 					 addr, PAGE_SIZE);
 			delegated++;
 			continue;
@@ -454,7 +454,7 @@ pmd_t hydra_pmdp_get_and_clear(struct mm_struct *mm, unsigned long addr,
 		pmd_t old;
 
 		if (scope) {
-			hydra_scope_note(scope, hydra_node_to_socket(cur_nid),
+			hydra_scope_note(scope, cur_nid,
 					 addr, PMD_SIZE);
 			delegated++;
 			continue;

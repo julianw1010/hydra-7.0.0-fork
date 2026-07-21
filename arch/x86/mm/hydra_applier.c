@@ -13,7 +13,7 @@ struct hydra_apply_work {
 	struct mm_struct *mm;
 	unsigned long start;
 	unsigned long end;
-	int socket;
+	int nid;
 	long applied;
 	int done;
 };
@@ -21,7 +21,7 @@ struct hydra_apply_work {
 struct hydra_stream_work {
 	struct kthread_work work;
 	struct mm_struct *mm;
-	int socket;
+	int nid;
 	unsigned long start;
 	unsigned long frontier;
 	int closed;
@@ -116,7 +116,7 @@ bool hydra_queue_backfill(struct mm_struct *mm, int socket, size_t src_node,
 }
 
 static long hydra_reconcile_pmd_entry(struct mm_struct *mm, pmd_t *pmd,
-				      int socket)
+				      int nid)
 {
 	spinlock_t *ptl;
 	struct page *master_page, *cur;
@@ -136,7 +136,7 @@ static long hydra_reconcile_pmd_entry(struct mm_struct *mm, pmd_t *pmd,
 		pmd_t *rp;
 		pmd_t v, new;
 
-		if (hydra_node_to_socket(page_to_nid(cur)) != socket)
+		if (page_to_nid(cur) != nid)
 			continue;
 		rp = (pmd_t *)(page_address(cur) + offset);
 		v = READ_ONCE(*rp);
@@ -189,7 +189,7 @@ static long hydra_reconcile_pmd_entry(struct mm_struct *mm, pmd_t *pmd,
 
 static long hydra_reconcile_pte_range(struct mm_struct *mm, pmd_t *pmd,
 				      unsigned long addr, unsigned long end,
-				      int socket)
+				      int nid)
 {
 	spinlock_t *ptl;
 	pte_t *pte, *base;
@@ -209,7 +209,7 @@ static long hydra_reconcile_pte_range(struct mm_struct *mm, pmd_t *pmd,
 	rcu_read_lock();
 	for (cur = master_page->next_replica; cur && cur != master_page;
 	     cur = cur->next_replica) {
-		if (hydra_node_to_socket(page_to_nid(cur)) != socket)
+		if (page_to_nid(cur) != nid)
 			continue;
 		for (i = start_idx; i < end_idx; i++) {
 			pte_t m = base[i];
@@ -268,7 +268,7 @@ static long hydra_reconcile_pte_range(struct mm_struct *mm, pmd_t *pmd,
 }
 
 static long hydra_reconcile_range(struct mm_struct *mm, unsigned long start,
-				  unsigned long end, int socket)
+				  unsigned long end, int nid)
 {
 	unsigned long addr, next;
 	long applied = 0;
@@ -298,13 +298,13 @@ static long hydra_reconcile_range(struct mm_struct *mm, unsigned long start,
 		}
 		pmd = pmd_offset(pud, addr);
 		if (pmd_none(*pmd) || pmd_trans_huge(*pmd)) {
-			applied += hydra_reconcile_pmd_entry(mm, pmd, socket);
+			applied += hydra_reconcile_pmd_entry(mm, pmd, nid);
 			continue;
 		}
 		if (pmd_bad(*pmd))
 			continue;
 		applied += hydra_reconcile_pte_range(mm, pmd, addr, next,
-						     socket);
+						     nid);
 		cond_resched();
 	}
 
@@ -316,7 +316,7 @@ static void hydra_reconcile_fn(struct kthread_work *work)
 	struct hydra_apply_work *w =
 		container_of(work, struct hydra_apply_work, work);
 
-	w->applied = hydra_reconcile_range(w->mm, w->start, w->end, w->socket);
+	w->applied = hydra_reconcile_range(w->mm, w->start, w->end, w->nid);
 	smp_store_release(&w->done, 1);
 }
 
@@ -331,7 +331,7 @@ static void hydra_stream_fn(struct kthread_work *work)
 
 		if (pos < f) {
 			w->applied += hydra_reconcile_range(w->mm, pos, f,
-							    w->socket);
+							    w->nid);
 			pos = f;
 			continue;
 		}
@@ -340,7 +340,7 @@ static void hydra_stream_fn(struct kthread_work *work)
 			if (pos < f)
 				w->applied += hydra_reconcile_range(w->mm, pos,
 								    f,
-								    w->socket);
+								    w->nid);
 			break;
 		}
 		cond_resched();
@@ -374,7 +374,7 @@ void hydra_scope_exit(struct hydra_scope *scope)
 	if (p) {
 		int s;
 
-		for (s = 0; s < hydra_nr_sockets; s++) {
+		for (s = 0; s < NUMA_NODE_COUNT; s++) {
 			if (p->started[s]) {
 				smp_store_release(&p->stream[s].closed, 1);
 				kthread_flush_work(&p->stream[s].work);
@@ -386,34 +386,34 @@ void hydra_scope_exit(struct hydra_scope *scope)
 	current->hydra_scope = scope->prev;
 }
 
-void hydra_scope_feed(struct hydra_scope *scope, int socket)
+void hydra_scope_feed(struct hydra_scope *scope, int node)
 {
 	struct hydra_scope_pool *p = scope->pool;
-	struct hydra_stream_work *w = &p->stream[socket];
-	unsigned long fr = scope->max[socket] & PMD_MASK;
+	struct hydra_stream_work *w = &p->stream[node];
+	unsigned long fr = scope->max[node] & PMD_MASK;
 
-	if (p->started[socket]) {
-		scope->published[socket] = fr;
+	if (p->started[node]) {
+		scope->published[node] = fr;
 		smp_store_release(&w->frontier, fr);
 		return;
 	}
 
-	if (scope->max[socket] - scope->min[socket] < PMD_SIZE)
+	if (scope->max[node] - scope->min[node] < PMD_SIZE)
 		return;
-	if (!hydra_wrprot_delegation_ready || !scope->mm ||
-	    !scope->mm->lazy_repl_enabled)
+	if (!hydra_wrprot_delegation_ready || !hydra_appliers[node] ||
+	    !scope->mm || !scope->mm->lazy_repl_enabled)
 		return;
 
 	w->mm = scope->mm;
-	w->socket = socket;
-	w->start = scope->min[socket];
+	w->nid = node;
+	w->start = scope->min[node];
 	w->frontier = fr;
 	w->closed = 0;
 	w->applied = 0;
-	scope->published[socket] = fr;
+	scope->published[node] = fr;
 	kthread_init_work(&w->work, hydra_stream_fn);
-	kthread_queue_work(hydra_appliers[socket], &w->work);
-	p->started[socket] = 1;
+	kthread_queue_work(hydra_appliers[node], &w->work);
+	p->started[node] = 1;
 }
 
 bool hydra_scope_drain(struct hydra_scope *scope, unsigned long *lo_out,
@@ -432,7 +432,7 @@ bool hydra_scope_drain(struct hydra_scope *scope, unsigned long *lo_out,
 	{
 		unsigned long smin[NUMA_NODE_COUNT], smax[NUMA_NODE_COUNT];
 
-		for (s = 0; s < hydra_nr_sockets; s++) {
+		for (s = 0; s < NUMA_NODE_COUNT; s++) {
 			smin[s] = scope->min[s];
 			smax[s] = scope->max[s];
 			scope->min[s] = ULONG_MAX;
@@ -441,13 +441,13 @@ bool hydra_scope_drain(struct hydra_scope *scope, unsigned long *lo_out,
 		}
 
 		if (p) {
-			for (s = 0; s < hydra_nr_sockets; s++) {
+			for (s = 0; s < NUMA_NODE_COUNT; s++) {
 				if (p->started[s])
 					smp_store_release(&p->stream[s].closed, 1);
 			}
 		}
 
-		for (s = 0; s < hydra_nr_sockets; s++) {
+		for (s = 0; s < NUMA_NODE_COUNT; s++) {
 			unsigned long wlo = smin[s];
 			unsigned long whi = smax[s];
 
@@ -465,10 +465,11 @@ bool hydra_scope_drain(struct hydra_scope *scope, unsigned long *lo_out,
 			if (wlo >= whi)
 				continue;
 
+			BUG_ON(!hydra_appliers[s]);
 			works[n].mm = mm;
 			works[n].start = wlo;
 			works[n].end = whi;
-			works[n].socket = s;
+			works[n].nid = s;
 			works[n].applied = 0;
 			works[n].done = 0;
 			kthread_init_work(&works[n].work, hydra_reconcile_fn);
@@ -477,7 +478,7 @@ bool hydra_scope_drain(struct hydra_scope *scope, unsigned long *lo_out,
 		}
 
 		if (p) {
-			for (s = 0; s < hydra_nr_sockets; s++) {
+			for (s = 0; s < NUMA_NODE_COUNT; s++) {
 				if (!p->started[s])
 					continue;
 				kthread_flush_work(&p->stream[s].work);
@@ -514,18 +515,26 @@ static int __init hydra_applier_init(void)
 {
 	int s;
 
-	for (s = 0; s < hydra_nr_sockets; s++) {
+	for_each_online_node(s) {
 		struct kthread_worker *worker;
+		const struct cpumask *mask;
 
 		worker = kthread_create_worker(0, "hydra_apply/%d", s);
 		if (IS_ERR(worker)) {
-			pr_emerg("HYDRA: applier worker creation failed for socket %d\n",
+			pr_emerg("HYDRA: applier worker creation failed for node %d\n",
 				 s);
 			BUG();
 		}
-		kthread_bind_mask(worker->task, &hydra_socket_cpumask[s]);
+		mask = cpumask_of_node(s);
+		if (cpumask_empty(mask))
+			mask = &hydra_socket_cpumask[hydra_node_to_socket(s)];
+		kthread_bind_mask(worker->task, mask);
 		wake_up_process(worker->task);
 		hydra_appliers[s] = worker;
+	}
+
+	for (s = 0; s < hydra_nr_sockets; s++) {
+		struct kthread_worker *worker;
 
 		worker = kthread_create_worker(0, "hydra_backfill/%d", s);
 		if (IS_ERR(worker)) {
