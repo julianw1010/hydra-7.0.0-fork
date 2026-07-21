@@ -754,7 +754,7 @@ static int hydra_repl_fill_nodes(struct vm_fault *vmf, const int *dst_nodes,
 
 static bool hydra_span_socket_shared(struct mm_struct *mm,
 				     unsigned long address, size_t src_node,
-				     const nodemask_t *targets)
+				     int level, const nodemask_t *targets)
 {
 	pmd_t *pmd;
 	struct page *page, *cur;
@@ -764,7 +764,15 @@ static bool hydra_span_socket_shared(struct mm_struct *mm,
 	if (HYDRA_WALK_BAD(pmd))
 		return false;
 
-	page = virt_to_page(pmd);
+	if (level == HYDRA_PT_PTE) {
+		pmd_t v = READ_ONCE(*pmd);
+
+		if (pmd_none(v) || pmd_trans_huge(v) || pmd_bad(v))
+			return false;
+		page = pmd_page(v);
+	} else {
+		page = virt_to_page(pmd);
+	}
 
 	rcu_read_lock();
 	for (cur = page->next_replica; cur && cur != page;
@@ -861,6 +869,9 @@ int hydra_repl_fault(struct vm_fault *vmf, int fault_node)
 	if (info.level < 0)
 		return 0;
 
+	if (vmf->flags & FAULT_FLAG_WRITE)
+		return 0;
+
 	targets = hydra_socket_nodes[socket];
 	node_clear((int)repl_node, targets);
 	node_clear((int)master_node, targets);
@@ -873,7 +884,8 @@ int hydra_repl_fault(struct vm_fault *vmf, int fault_node)
 	src = hydra_same_socket(repl_node, master_node) ?
 		master_node : (size_t)rep_node;
 
-	if (hydra_span_socket_shared(mm, info.address, src, &targets)) {
+	if (hydra_span_socket_shared(mm, info.address, src, info.level,
+				     &targets)) {
 		if (hydra_queue_backfill(mm, socket, src, master_node,
 					 &targets, &info))
 			hydra_stats_promotion(mm);
