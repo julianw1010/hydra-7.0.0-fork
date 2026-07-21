@@ -72,8 +72,7 @@ static long hydra_set_wrprotect_pte_entry(struct mm_struct *mm,
 			(pte_t *)(page_address(cur) + offset);
 		int cur_nid = page_to_nid(cur);
 
-		if (scope &&
-		    !hydra_same_socket(cur_nid, page_to_nid(page))) {
+		if (scope) {
 			hydra_scope_note(scope, hydra_node_to_socket(cur_nid),
 					 addr, PAGE_SIZE);
 			delegated++;
@@ -126,8 +125,7 @@ static long hydra_set_wrprotect_pmd_entry(struct mm_struct *mm,
 			(pmd_t *)(page_address(cur) + offset);
 		int cur_nid = page_to_nid(cur);
 
-		if (scope &&
-		    !hydra_same_socket(cur_nid, page_to_nid(page))) {
+		if (scope) {
 			hydra_scope_note(scope, hydra_node_to_socket(cur_nid),
 					 addr, PMD_SIZE);
 			delegated++;
@@ -260,7 +258,7 @@ pte_t hydra_ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
 		int cur_nid = page_to_nid(cur);
 		pte_t old;
 
-		if (scope && !hydra_same_socket(cur_nid, page_to_nid(page))) {
+		if (scope) {
 			hydra_scope_note(scope, hydra_node_to_socket(cur_nid),
 					 addr, PAGE_SIZE);
 			delegated++;
@@ -455,7 +453,7 @@ pmd_t hydra_pmdp_get_and_clear(struct mm_struct *mm, unsigned long addr,
 		int cur_nid = page_to_nid(cur);
 		pmd_t old;
 
-		if (scope && !hydra_same_socket(cur_nid, page_to_nid(page))) {
+		if (scope) {
 			hydra_scope_note(scope, hydra_node_to_socket(cur_nid),
 					 addr, PMD_SIZE);
 			delegated++;
