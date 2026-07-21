@@ -252,7 +252,6 @@ struct hydra_stats {
 
 	atomic_long_t pt_writes[HYDRA_PT_NR_LEVELS];
 	atomic_long_t pt_pages[HYDRA_PT_NR_LEVELS];
-	atomic_long_t sibling_skips;
 	atomic_long_t sibling_delegated;
 	atomic_long_t sibling_reconciled;
 	atomic_long_t wr_grants;
@@ -357,24 +356,6 @@ static inline void hydra_stats_sibling_reconciled(struct mm_struct *mm, long n)
 
 	if (s && n > 0)
 		atomic_long_add(n, &s->sibling_reconciled);
-}
-
-static inline void hydra_stats_sibling_skips(void *tablep, long count)
-{
-	struct mm_struct *mm;
-	struct hydra_stats *s;
-
-	if (count <= 0)
-		return;
-	if (!virt_addr_valid(tablep))
-		return;
-	mm = READ_ONCE(virt_to_page(tablep)->pt_owner_mm);
-	if (!mm)
-		return;
-	s = mm->hydra_stats;
-	if (!s)
-		return;
-	atomic_long_add(count, &s->sibling_skips);
 }
 
 static inline struct hydra_stats *hydra_stats_of_table(void *tablep)

@@ -430,10 +430,8 @@ static void hydra_stats_print(struct seq_file *m, struct hydra_stats *s,
 			atomic_long_read(&s->ro_installs));
 	hydra_print_val(m, 4, "Write-intent speculative dirty installs",
 			atomic_long_read(&s->spec_dirty));
-	hydra_print_val(m, 4, "Sync stores to present remote entries",
+	hydra_print_val(m, 4, "Sync stores to remote entries",
 			atomic_long_read(&s->remote_stores));
-	hydra_print_val(m, 4, "Remote sibling stores skipped (empty)",
-			atomic_long_read(&s->sibling_skips));
 	hydra_print_val(m, 4, "Sibling writes delegated to appliers",
 			atomic_long_read(&s->sibling_delegated));
 	hydra_print_val(m, 4, "Scope drains",
