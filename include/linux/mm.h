@@ -88,6 +88,7 @@ extern int sysctl_legacy_va_layout;
 #ifdef CONFIG_X86
 extern int sysctl_hydra_repl_order;
 extern int sysctl_hydra_first_touch;
+extern int sysctl_hydra_route_prefetch;
 extern int sysctl_hydra_auto_enable;
 #endif
 #else
