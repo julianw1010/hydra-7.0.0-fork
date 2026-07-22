@@ -105,6 +105,8 @@ int sysctl_hydra_repl_order __read_mostly = 9;
 int sysctl_hydra_first_touch __read_mostly = 1;
 int sysctl_hydra_degree __read_mostly = HYDRA_DEGREE_NODE;
 int sysctl_hydra_promote_faults __read_mostly = 8192;
+int sysctl_hydra_quiet_faults __read_mostly = 1024;
+int sysctl_hydra_quiet_rounds __read_mostly = 3;
 int sysctl_hydra_auto_enable __read_mostly = 0;
 #endif
 
@@ -6832,9 +6834,6 @@ vm_fault_t handle_mm_fault(struct vm_area_struct *vma, unsigned long address,
 	lru_gen_enter_fault(vma);
 
 	hctx = hydra_stats_fault_begin(mm, vma, flags);
-
-	if (mm->lazy_repl_enabled && sysctl_hydra_degree == HYDRA_DEGREE_AUTO)
-		hydra_degree_tick(mm);
 
 	if (unlikely(is_vm_hugetlb_page(vma))) {
 		pr_emerg("hugetlb: hugetlb fault attempted; hugetlb is disabled on this kernel\n");

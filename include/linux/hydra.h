@@ -216,6 +216,12 @@ struct hydra_stats {
 	atomic_long_t promotions;
 	atomic_long_t demotions;
 
+	struct delayed_work degree_work;
+	long node_faults_last[NUMA_NODE_COUNT];
+	long node_faults_recent[NUMA_NODE_COUNT];
+	long faults_recent;
+	int quiet_rounds;
+
 	atomic_long_t pt_writes[HYDRA_PT_NR_LEVELS];
 	atomic_long_t pt_pages[HYDRA_PT_NR_LEVELS];
 
@@ -243,6 +249,7 @@ void hydra_vma_chown(struct vm_area_struct *vma, int node);
 int hydra_status_open(struct inode *inode, struct file *file);
 int hydra_history_open(struct inode *inode, struct file *file);
 int hydra_stats_clear_history(void);
+void hydra_degree_work_start(struct hydra_stats *s);
 
 static inline void hydra_stats_pt_write(void *tablep, int level, long pages)
 {
@@ -287,21 +294,6 @@ static inline void hydra_stats_copied_pmd(struct mm_struct *mm, long copied)
 	if (copied > 1)
 		atomic_long_add(copied - 1, &s->pmd_entries_prefetched);
 	atomic_long_inc(&s->pmd_copy_faults);
-}
-
-static inline void hydra_degree_tick(struct mm_struct *mm)
-{
-	struct hydra_stats *s = mm->hydra_stats;
-	int node = numa_node_id();
-
-	if (!s || node < 0 || node >= NUMA_NODE_COUNT)
-		return;
-	if (READ_ONCE(mm->hydra_tree_owner[node]) == node)
-		return;
-	if (atomic_long_read(&s->faults_node[node]) < sysctl_hydra_promote_faults)
-		return;
-
-	hydra_promote_node(mm, node);
 }
 
 static inline void hydra_stats_tlb(struct mm_struct *mm, long sent,

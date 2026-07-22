@@ -14,6 +14,57 @@ static LIST_HEAD(hydra_hist_list);
 static DEFINE_SPINLOCK(hydra_stats_lock);
 static unsigned long hydra_stats_next_id;
 
+static void hydra_degree_work_fn(struct work_struct *w)
+{
+	struct hydra_stats *s = container_of(to_delayed_work(w),
+					     struct hydra_stats, degree_work);
+	struct mm_struct *mm = s->mm;
+	long total = 0;
+	int node;
+
+	if (!mm || !mmget_not_zero(mm))
+		return;
+
+	if (!READ_ONCE(mm->lazy_repl_enabled))
+		goto out;
+
+	for (node = 0; node < NUMA_NODE_COUNT; node++) {
+		long cur = atomic_long_read(&s->faults_node[node]);
+		long delta = cur - s->node_faults_last[node];
+
+		s->node_faults_last[node] = cur;
+		s->node_faults_recent[node] = delta;
+		total += delta;
+	}
+
+	s->faults_recent = total;
+
+	if (sysctl_hydra_degree != HYDRA_DEGREE_AUTO)
+		goto out;
+
+	for (node = 0; node < NUMA_NODE_COUNT; node++)
+		if (s->node_faults_recent[node] >= sysctl_hydra_promote_faults)
+			hydra_promote_node(mm, node);
+
+	if (total < sysctl_hydra_quiet_faults) {
+		if (++s->quiet_rounds >= sysctl_hydra_quiet_rounds) {
+			hydra_demote_mm(mm);
+			s->quiet_rounds = 0;
+		}
+	} else {
+		s->quiet_rounds = 0;
+	}
+
+out:
+	mmput_async(mm);
+	schedule_delayed_work(&s->degree_work, HZ);
+}
+
+void hydra_degree_work_start(struct hydra_stats *s)
+{
+	schedule_delayed_work(&s->degree_work, HZ);
+}
+
 struct hydra_stats *hydra_stats_attach(struct mm_struct *mm)
 {
 	struct hydra_stats *s;
@@ -36,6 +87,8 @@ struct hydra_stats *hydra_stats_attach(struct mm_struct *mm)
 		for (i = 0; i < NUMA_NODE_COUNT; i++)
 			s->tree_owner[i] = i;
 	}
+
+	INIT_DELAYED_WORK(&s->degree_work, hydra_degree_work_fn);
 	s->start_jiffies = jiffies;
 
 	spin_lock(&hydra_stats_lock);
@@ -72,6 +125,8 @@ void hydra_stats_detach(struct mm_struct *mm)
 		return;
 
 	mm->hydra_stats = NULL;
+
+	cancel_delayed_work_sync(&s->degree_work);
 
 	if (!s->ever_enabled) {
 		spin_lock(&hydra_stats_lock);
@@ -414,6 +469,14 @@ static void hydra_stats_print(struct seq_file *m, struct hydra_stats *s,
 				atomic_long_read(&s->promotions));
 		hydra_print_val(m, 4, "demotions to a shared tree",
 				atomic_long_read(&s->demotions));
+		hydra_print_val(m, 4, "faults in last sample (all nodes)",
+				s->faults_recent);
+		seq_puts(m, "      recent faults by node:\n");
+		hydra_print_node_header(m);
+		seq_puts(m, "    flts");
+		for (node = 0; node < NUMA_NODE_COUNT; node++)
+			seq_printf(m, " %7ld", s->node_faults_recent[node]);
+		seq_putc(m, '\n');
 	}
 
 	hydra_print_section(m, "Master -> replica entry copying");

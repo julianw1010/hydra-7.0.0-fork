@@ -91,6 +91,9 @@ int hydra_enable_replication(struct mm_struct *mm)
 			mm->repl_pgd[i] = mm->repl_pgd[owner];
 	}
 
+	if (mm->hydra_stats)
+		hydra_degree_work_start(mm->hydra_stats);
+
 	WRITE_ONCE(mm->lazy_repl_enabled, true);
 	smp_mb();
 	on_each_cpu_mask(mm_cpumask(mm), hydra_reload_cr3, mm, 1);
