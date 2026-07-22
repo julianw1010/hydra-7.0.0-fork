@@ -89,6 +89,7 @@ extern int sysctl_legacy_va_layout;
 extern int sysctl_hydra_repl_order;
 extern int sysctl_hydra_repl_order_pull;
 extern int sysctl_hydra_birth;
+extern int sysctl_hydra_first_touch;
 extern int sysctl_hydra_auto_enable;
 extern int sysctl_hydra_extended;
 #endif

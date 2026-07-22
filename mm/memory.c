@@ -104,6 +104,7 @@ static bool vmf_pte_changed(struct vm_fault *vmf);
 int sysctl_hydra_repl_order __read_mostly = 9;
 int sysctl_hydra_repl_order_pull __read_mostly = 6;
 int sysctl_hydra_birth __read_mostly = 1;
+int sysctl_hydra_first_touch __read_mostly = 1;
 int sysctl_hydra_auto_enable __read_mostly = 0;
 int sysctl_hydra_extended __read_mostly = 1;
 #endif
@@ -6511,7 +6512,7 @@ vm_fault_t __handle_mm_fault(struct vm_area_struct *vma,
 
 	on_replica = mm->lazy_repl_enabled && (node_to_use != owner_node);
 
-	if (on_replica) {
+	if (on_replica && sysctl_hydra_first_touch) {
 		pmd_t *mp = hydra_walk_to_pmd(mm, address, owner_node);
 		bool first_touch = false;
 
