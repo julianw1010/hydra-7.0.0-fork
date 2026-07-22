@@ -88,6 +88,7 @@ extern int sysctl_legacy_va_layout;
 #ifdef CONFIG_X86
 extern int sysctl_hydra_repl_order;
 extern int sysctl_hydra_repl_order_pull;
+extern int sysctl_hydra_birth;
 extern int sysctl_hydra_auto_enable;
 extern int sysctl_hydra_extended;
 #endif

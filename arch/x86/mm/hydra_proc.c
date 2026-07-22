@@ -7,6 +7,7 @@
 
 extern int sysctl_hydra_repl_order;
 extern int sysctl_hydra_repl_order_pull;
+extern int sysctl_hydra_birth;
 extern int sysctl_hydra_tlbflush_opt;
 extern int sysctl_hydra_invlpgb;
 extern int sysctl_hydra_flush_relay;
@@ -27,6 +28,10 @@ static const struct hydra_int_knob hydra_repl_order_knob = {
 
 static const struct hydra_int_knob hydra_repl_order_pull_knob = {
 	"repl_order_pull", &sysctl_hydra_repl_order_pull, 0, 9,
+};
+
+static const struct hydra_int_knob hydra_birth_knob = {
+	"birth", &sysctl_hydra_birth, 0, 1,
 };
 
 static const struct hydra_int_knob hydra_tlbflush_opt_knob = {
@@ -255,6 +260,10 @@ static int __init hydra_proc_init(void)
 
 	if (!proc_create_data("repl_order_pull", 0644, hydra_dir, &hydra_knob_ops,
 			      (void *)&hydra_repl_order_pull_knob))
+		goto fail;
+
+	if (!proc_create_data("birth", 0644, hydra_dir, &hydra_knob_ops,
+			      (void *)&hydra_birth_knob))
 		goto fail;
 
 	if (!proc_create_data("tlbflush_opt", 0644, hydra_dir, &hydra_knob_ops,

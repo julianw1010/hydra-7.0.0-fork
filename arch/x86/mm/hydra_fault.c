@@ -831,7 +831,7 @@ void hydra_birth_replica_tables(struct mm_struct *mm, unsigned long address)
 	void *entry;
 	int n;
 
-	if (!sysctl_hydra_extended)
+	if (!sysctl_hydra_birth)
 		return;
 
 	entry = xa_load(mm->hydra_pud_owner, address >> PUD_SHIFT);
