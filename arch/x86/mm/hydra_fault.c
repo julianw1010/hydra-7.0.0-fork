@@ -245,12 +245,25 @@ int hydra_demote_node(struct mm_struct *mm, int node)
 
 	orphan = mm->repl_pgd[node];
 
-	WRITE_ONCE(mm->repl_pgd[node], mm->repl_pgd[target]);
-	WRITE_ONCE(mm->hydra_tree_owner[node], target);
-	smp_mb();
-
-	on_each_cpu_mask(cpumask_of_node(node), hydra_reload_cr3, mm, 1);
+	for (i = 0; i < NUMA_NODE_COUNT; i++) {
+		if (i != node && READ_ONCE(mm->hydra_tree_owner[i]) != node)
+			continue;
+		WRITE_ONCE(mm->repl_pgd[i], mm->repl_pgd[target]);
+		WRITE_ONCE(mm->hydra_tree_owner[i], target);
+		if (mm->hydra_stats)
+			mm->hydra_stats->tree_owner[i] = target;
+		smp_mb();
+		on_each_cpu_mask(cpumask_of_node(i), hydra_reload_cr3, mm, 1);
+	}
 	flush_tlb_mm(mm);
+
+	for (i = 0; i < NUMA_NODE_COUNT; i++) {
+		if (READ_ONCE(mm->hydra_tree_owner[i]) == node) {
+			pr_emerg("HYDRA: node %d still aliases demoted tree %d for mm %px\n",
+				 i, node, mm);
+			BUG();
+		}
+	}
 
 	hydra_unlink_tree(mm, orphan);
 
@@ -262,10 +275,8 @@ int hydra_demote_node(struct mm_struct *mm, int node)
 
 	pgd_free(mm, orphan);
 
-	if (mm->hydra_stats) {
-		mm->hydra_stats->tree_owner[node] = target;
+	if (mm->hydra_stats)
 		atomic_long_inc(&mm->hydra_stats->demotions);
-	}
 
 	return 0;
 }
