@@ -257,10 +257,9 @@ pte_t hydra_ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
 			       pte_t *ptep)
 {
 	struct page *page, *cur;
-	struct hydra_scope *scope;
 	unsigned long offset;
 	pte_t val;
-	long pages = 1, delegated = 0, rstores = 0;
+	long pages = 1, rstores = 0;
 
 	if (!ptep)
 		return __pte(0);
@@ -277,26 +276,6 @@ pte_t hydra_ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
 		goto out;
 
 	offset = ((unsigned long)ptep) & ~PAGE_MASK;
-	scope = hydra_scope_of(mm);
-
-	if (scope) {
-		if (scope->note_page != page) {
-			long members = 0;
-
-			rcu_read_lock();
-			for (cur = page->next_replica; cur && cur != page;
-			     cur = cur->next_replica) {
-				hydra_scope_note(scope, page_to_nid(cur),
-						 addr & PMD_MASK, PMD_SIZE);
-				members++;
-			}
-			rcu_read_unlock();
-			scope->note_page = page;
-			scope->note_members = members;
-		}
-		delegated = scope->note_members;
-		goto out;
-	}
 
 	rcu_read_lock();
 	for (cur = page->next_replica; cur && cur != page; cur = cur->next_replica) {
@@ -315,7 +294,6 @@ pte_t hydra_ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
 
 out:
 	hydra_stats_pt_write(ptep, HYDRA_PT_PTE, pages);
-	hydra_stats_sibling_delegated(mm, delegated);
 	hydra_stats_remote_stores(mm, rstores);
 	return val;
 }
@@ -465,10 +443,9 @@ pmd_t hydra_pmdp_get_and_clear(struct mm_struct *mm, unsigned long addr,
 			       pmd_t *pmdp)
 {
 	struct page *page, *cur;
-	struct hydra_scope *scope;
 	unsigned long offset;
 	pmd_t val;
-	long pages = 1, delegated = 0, rstores = 0;
+	long pages = 1, rstores = 0;
 
 	if (!pmdp)
 		return __pmd(0);
@@ -485,26 +462,6 @@ pmd_t hydra_pmdp_get_and_clear(struct mm_struct *mm, unsigned long addr,
 		goto out;
 
 	offset = ((unsigned long)pmdp) & ~PAGE_MASK;
-	scope = hydra_scope_of(mm);
-
-	if (scope) {
-		if (scope->note_page != page) {
-			long members = 0;
-
-			rcu_read_lock();
-			for (cur = page->next_replica; cur && cur != page;
-			     cur = cur->next_replica) {
-				hydra_scope_note(scope, page_to_nid(cur),
-						 addr & PUD_MASK, PUD_SIZE);
-				members++;
-			}
-			rcu_read_unlock();
-			scope->note_page = page;
-			scope->note_members = members;
-		}
-		delegated = scope->note_members;
-		goto out;
-	}
 
 	rcu_read_lock();
 	for (cur = page->next_replica; cur && cur != page; cur = cur->next_replica) {
@@ -523,7 +480,6 @@ pmd_t hydra_pmdp_get_and_clear(struct mm_struct *mm, unsigned long addr,
 
 out:
 	hydra_stats_pt_write(pmdp, HYDRA_PT_PMD, pages);
-	hydra_stats_sibling_delegated(mm, delegated);
 	hydra_stats_remote_stores(mm, rstores);
 	return val;
 }
