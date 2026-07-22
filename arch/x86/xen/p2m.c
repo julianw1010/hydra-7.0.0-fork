@@ -333,7 +333,7 @@ static void __init xen_rebuild_p2m_list(unsigned long *p2m)
 	p2m_init(p2m_identity);
 
 	p2m_missing_pte = alloc_p2m_page();
-	paravirt_alloc_pte(&init_mm, __pa(p2m_missing_pte) >> PAGE_SHIFT);
+	paravirt_alloc_pte(&init_mm, __pa(p2m_missing_pte) >> PAGE_SHIFT, 0);
 	p2m_identity_pte = alloc_p2m_page();
 	paravirt_alloc_pte(&init_mm, __pa(p2m_identity_pte) >> PAGE_SHIFT);
 	for (i = 0; i < PTRS_PER_PTE; i++) {

@@ -877,7 +877,7 @@ again:
 		}
 		if (pmd_none(*old_pmd))
 			continue;
-		if (pte_alloc(pmc->new->vm_mm, new_pmd))
+		if (pte_alloc(pmc->new->vm_mm, new_pmd, pmc->new_addr))
 			break;
 		if (move_ptes(pmc, extent, old_pmd, new_pmd) < 0)
 			goto again;

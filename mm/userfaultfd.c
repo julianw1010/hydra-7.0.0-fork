@@ -792,7 +792,7 @@ retry:
 
 		dst_pmdval = pmdp_get_lockless(dst_pmd);
 		if (unlikely(pmd_none(dst_pmdval)) &&
-		    unlikely(__pte_alloc(dst_mm, dst_pmd))) {
+		    unlikely(__pte_alloc(dst_mm, dst_pmd, dst_addr))) {
 			err = -ENOMEM;
 			break;
 		}
@@ -1888,13 +1888,13 @@ ssize_t move_pages(struct userfaultfd_ctx *ctx, unsigned long dst_start,
 					err = -ENOENT;
 					break;
 				}
-				if (unlikely(__pte_alloc(mm, src_pmd))) {
+				if (unlikely(__pte_alloc(mm, src_pmd, src_addr))) {
 					err = -ENOMEM;
 					break;
 				}
 			}
 
-			if (unlikely(pte_alloc(mm, dst_pmd))) {
+			if (unlikely(pte_alloc(mm, dst_pmd, dst_addr))) {
 				err = -ENOMEM;
 				break;
 			}

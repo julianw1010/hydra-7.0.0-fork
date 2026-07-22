@@ -525,15 +525,19 @@ void pmd_install(struct mm_struct *mm, pmd_t *pmd, pgtable_t *pte)
 	spin_unlock(ptl);
 }
 
-int __pte_alloc(struct mm_struct *mm, pmd_t *pmd)
+int __pte_alloc(struct mm_struct *mm, pmd_t *pmd, unsigned long addr)
 {
+	unsigned long pfn;
 	pgtable_t new = pte_alloc_one(mm, pmd);
 	if (!new)
 		return -ENOMEM;
 
+	pfn = page_to_pfn(new);
 	pmd_install(mm, pmd, &new);
 	if (new)
 		pte_free(mm, new);
+	else
+		paravirt_alloc_pte(mm, pfn, addr);
 	return 0;
 }
 
@@ -2513,7 +2517,7 @@ more:
 
 	/* Allocate the PTE if necessary; takes PMD lock once only. */
 	ret = -ENOMEM;
-	if (pte_alloc(mm, pmd))
+	if (pte_alloc(mm, pmd, addr))
 		goto out;
 
 	while (pages_to_write_in_pmd) {
@@ -5308,7 +5312,7 @@ static vm_fault_t do_anonymous_page(struct vm_fault *vmf)
 	 * Use pte_alloc() instead of pte_alloc_map(), so that OOM can
 	 * be distinguished from a transient failure of pte_offset_map().
 	 */
-	if (pte_alloc(vma->vm_mm, vmf->pmd))
+	if (pte_alloc(vma->vm_mm, vmf->pmd, vmf->address))
 		return VM_FAULT_OOM;
 
 	/* Use the zero-page for reads */
@@ -5688,7 +5692,7 @@ fallback:
 
 		if (vmf->prealloc_pte)
 			pmd_install(vma->vm_mm, vmf->pmd, &vmf->prealloc_pte);
-		else if (unlikely(pte_alloc(vma->vm_mm, vmf->pmd)))
+		else if (unlikely(pte_alloc(vma->vm_mm, vmf->pmd, vmf->address)))
 			return VM_FAULT_OOM;
 	}
 
@@ -6654,16 +6658,7 @@ retry_pud:
 	}
 
 fallback:
-	{
-		bool fresh_pmd = mm->lazy_repl_enabled && !on_replica &&
-				 pmd_none(*vmf.pmd);
-		vm_fault_t r = handle_pte_fault(&vmf, use_master);
-
-		if (fresh_pmd && !(r & (VM_FAULT_ERROR | VM_FAULT_RETRY)) &&
-		    !pmd_none(*vmf.pmd) && !pmd_trans_huge(*vmf.pmd))
-			hydra_birth_replica_tables(vma, address);
-		return r;
-	}
+	return handle_pte_fault(&vmf, use_master);
 }
 
 /**

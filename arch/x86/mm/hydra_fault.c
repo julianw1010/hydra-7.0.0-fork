@@ -480,7 +480,7 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 			if (likely(pmd_none(*repl_pmd))) {
 				hydra_link_page_to_replica_chain(master_pte_page, new_page);
 				mm_inc_nr_ptes(mm);
-				paravirt_alloc_pte(mm, page_to_pfn(new_page));
+				paravirt_alloc_pte(mm, page_to_pfn(new_page), 0);
 				native_set_pmd(repl_pmd,
 					__pmd(((pteval_t)page_to_pfn(new_page) << PAGE_SHIFT)
 					      | _PAGE_TABLE));
@@ -806,7 +806,7 @@ static int hydra_create_replica_pte_table(struct mm_struct *mm,
 	if (likely(pmd_none(*repl_pmd))) {
 		hydra_link_page_to_replica_chain(master_pte_page, new_page);
 		mm_inc_nr_ptes(mm);
-		paravirt_alloc_pte(mm, page_to_pfn(new_page));
+		paravirt_alloc_pte(mm, page_to_pfn(new_page), 0);
 		native_set_pmd(repl_pmd,
 			__pmd(((pteval_t)page_to_pfn(new_page) << PAGE_SHIFT)
 			      | _PAGE_TABLE));
@@ -821,19 +821,23 @@ static int hydra_create_replica_pte_table(struct mm_struct *mm,
 	return 0;
 }
 
-void hydra_birth_replica_tables(struct vm_area_struct *vma,
-				unsigned long address)
+void hydra_birth_replica_tables(struct mm_struct *mm, unsigned long address)
 {
-	struct mm_struct *mm = vma->vm_mm;
-	size_t master_node = vma->master_pgd_node;
+	size_t master_node;
 	pmd_t *master_pmd;
 	nodemask_t targets;
 	struct page *pmd_page, *pte_page, *cur;
 	pte_t *pte;
+	void *entry;
 	int n;
 
 	if (!sysctl_hydra_extended)
 		return;
+
+	entry = xa_load(mm->hydra_pud_owner, address >> PUD_SHIFT);
+	if (!entry)
+		return;
+	master_node = xa_to_value(entry);
 
 	master_pmd = hydra_walk_to_pmd(mm, address, master_node);
 	if (HYDRA_WALK_BAD(master_pmd) || pmd_none(*master_pmd) ||

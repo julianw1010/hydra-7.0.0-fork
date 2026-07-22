@@ -23,8 +23,7 @@ DECLARE_STATIC_KEY_FALSE(hydra_repl_ever_enabled);
 void hydra_reload_cr3(void *info);
 int hydra_enable_replication(struct mm_struct *mm);
 int hydra_repl_fault(struct vm_fault *vmf, int fault_node);
-void hydra_birth_replica_tables(struct vm_area_struct *vma,
-				unsigned long address);
+void hydra_birth_replica_tables(struct mm_struct *mm, unsigned long address);
 bool hydra_move_normal_pmd(struct vm_area_struct *vma, unsigned long old_addr,
 			   pmd_t *old_pmd, pmd_t *new_pmd);
 void hydra_break_chain_range(struct mm_struct *mm,

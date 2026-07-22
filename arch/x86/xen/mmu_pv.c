@@ -1618,7 +1618,8 @@ static inline void xen_alloc_ptpage(struct mm_struct *mm, unsigned long pfn,
 	}
 }
 
-static void xen_alloc_pte(struct mm_struct *mm, unsigned long pfn)
+static void xen_alloc_pte(struct mm_struct *mm, unsigned long pfn,
+			  unsigned long addr)
 {
 	xen_alloc_ptpage(mm, pfn, PT_PTE);
 }
