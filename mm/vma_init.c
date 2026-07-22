@@ -35,7 +35,7 @@ struct vm_area_struct *vm_area_alloc(struct mm_struct *mm)
 
 	vma_init(vma, mm);
 
-	vma->master_pgd_node = numa_node_id();
+	vma->master_pgd_node = hydra_tree_node(mm, numa_node_id());
 
 	return vma;
 }

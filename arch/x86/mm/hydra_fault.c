@@ -47,6 +47,14 @@ int hydra_promote_node(struct mm_struct *mm, int node)
 	if (READ_ONCE(mm->hydra_tree_owner[node]) == node)
 		return 0;
 
+	if (mm->hydra_stats &&
+	    atomic_long_read(&mm->hydra_stats->vma_owner_cur[node])) {
+		pr_emerg("HYDRA: promoting node %d for mm %px which masters %ld VMAs; promotion would orphan their page tables\n",
+			 node, mm,
+			 atomic_long_read(&mm->hydra_stats->vma_owner_cur[node]));
+		BUG();
+	}
+
 	old_pgd = READ_ONCE(mm->repl_pgd[node]);
 
 	new_pgd = hydra_repl_pgd_alloc(mm, node);
