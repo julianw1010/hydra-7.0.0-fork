@@ -103,7 +103,6 @@ static bool vmf_pte_changed(struct vm_fault *vmf);
 #if defined(CONFIG_X86) && defined(CONFIG_SYSCTL)
 int sysctl_hydra_repl_order __read_mostly = 9;
 int sysctl_hydra_first_touch __read_mostly = 1;
-int sysctl_hydra_route_prefetch __read_mostly;
 int sysctl_hydra_auto_enable __read_mostly = 0;
 #endif
 
@@ -6471,7 +6470,6 @@ vm_fault_t __handle_mm_fault(struct vm_area_struct *vma,
 	pgd_t *pgd;
 	p4d_t *p4d;
 	size_t node_to_use;
-	int routed_node = -1;
 	size_t owner_node = vma->master_pgd_node;
 	vm_fault_t ret;
 	bool on_replica;
@@ -6487,7 +6485,6 @@ vm_fault_t __handle_mm_fault(struct vm_area_struct *vma,
 
 	if (on_replica && sysctl_hydra_first_touch) {
 		bool write = flags & (FAULT_FLAG_WRITE | FAULT_FLAG_UNSHARE);
-		int from_node = node_to_use;
 		pmd_t *mp = hydra_walk_to_pmd(mm, address, owner_node);
 		bool needs_master = false;
 
@@ -6507,7 +6504,6 @@ vm_fault_t __handle_mm_fault(struct vm_area_struct *vma,
 		}
 
 		if (needs_master) {
-			routed_node = from_node;
 			node_to_use = owner_node;
 			on_replica = false;
 			hydra_stats_mark_serviced(mm);
@@ -6658,16 +6654,7 @@ retry_pud:
 	}
 
 fallback:
-	{
-		vm_fault_t ret = handle_pte_fault(&vmf, use_master);
-
-		if (routed_node >= 0 && sysctl_hydra_route_prefetch &&
-		    !(ret & (VM_FAULT_ERROR | VM_FAULT_RETRY |
-			     VM_FAULT_COMPLETED)))
-			hydra_repl_fault(&vmf, routed_node);
-
-		return ret;
-	}
+	return handle_pte_fault(&vmf, use_master);
 }
 
 /**
