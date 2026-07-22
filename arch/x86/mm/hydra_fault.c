@@ -239,6 +239,7 @@ int hydra_demote_node(struct mm_struct *mm, int node)
 	hydra_unlink_tree(mm, orphan);
 
 	tlb_gather_mmu(&tlb, mm);
+	tlb.hydra_demote = 1;
 	free_pgd_range_base(&tlb, FIRST_USER_ADDRESS, TASK_SIZE,
 			    FIRST_USER_ADDRESS, USER_PGTABLES_CEILING, orphan);
 	tlb_finish_mmu(&tlb);
