@@ -480,7 +480,7 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 			if (likely(pmd_none(*repl_pmd))) {
 				hydra_link_page_to_replica_chain(master_pte_page, new_page);
 				mm_inc_nr_ptes(mm);
-				paravirt_alloc_pte(mm, page_to_pfn(new_page), 0);
+				paravirt_alloc_pte(mm, page_to_pfn(new_page));
 				native_set_pmd(repl_pmd,
 					__pmd(((pteval_t)page_to_pfn(new_page) << PAGE_SHIFT)
 					      | _PAGE_TABLE));
@@ -806,7 +806,7 @@ static int hydra_create_replica_pte_table(struct mm_struct *mm,
 	if (likely(pmd_none(*repl_pmd))) {
 		hydra_link_page_to_replica_chain(master_pte_page, new_page);
 		mm_inc_nr_ptes(mm);
-		paravirt_alloc_pte(mm, page_to_pfn(new_page), 0);
+		paravirt_alloc_pte(mm, page_to_pfn(new_page));
 		native_set_pmd(repl_pmd,
 			__pmd(((pteval_t)page_to_pfn(new_page) << PAGE_SHIFT)
 			      | _PAGE_TABLE));

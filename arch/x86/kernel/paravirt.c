@@ -167,7 +167,7 @@ struct paravirt_patch_template pv_ops = {
 	.mmu.pgd_alloc		= __paravirt_pgd_alloc,
 	.mmu.pgd_free		= paravirt_nop,
 
-	.mmu.alloc_pte		= hydra_alloc_pte,
+	.mmu.alloc_pte		= paravirt_nop,
 	.mmu.alloc_pmd		= paravirt_nop,
 	.mmu.alloc_pud		= paravirt_nop,
 	.mmu.alloc_p4d		= paravirt_nop,

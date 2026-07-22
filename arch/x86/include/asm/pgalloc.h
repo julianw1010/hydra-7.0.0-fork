@@ -20,8 +20,7 @@ static inline int  __paravirt_pgd_alloc(struct mm_struct *mm) { return 0; }
 #else
 #define paravirt_pgd_alloc(mm)	__paravirt_pgd_alloc(mm)
 static inline void paravirt_pgd_free(struct mm_struct *mm, pgd_t *pgd) {}
-static inline void paravirt_alloc_pte(struct mm_struct *mm, unsigned long pfn,
-				      unsigned long addr)	{}
+static inline void paravirt_alloc_pte(struct mm_struct *mm, unsigned long pfn)	{}
 static inline void paravirt_alloc_pmd(struct mm_struct *mm, unsigned long pfn)	{}
 static inline void paravirt_alloc_pmd_clone(unsigned long pfn, unsigned long clonepfn,
 					    unsigned long start, unsigned long count) {}
@@ -65,14 +64,14 @@ static inline void __pte_free_tlb(struct mmu_gather *tlb, struct page *pte,
 static inline void pmd_populate_kernel(struct mm_struct *mm,
 				       pmd_t *pmd, pte_t *pte)
 {
-	paravirt_alloc_pte(mm, __pa(pte) >> PAGE_SHIFT, 0);
+	paravirt_alloc_pte(mm, __pa(pte) >> PAGE_SHIFT);
 	set_pmd(pmd, __pmd(__pa(pte) | _PAGE_TABLE));
 }
 
 static inline void pmd_populate_kernel_safe(struct mm_struct *mm,
 				       pmd_t *pmd, pte_t *pte)
 {
-	paravirt_alloc_pte(mm, __pa(pte) >> PAGE_SHIFT, 0);
+	paravirt_alloc_pte(mm, __pa(pte) >> PAGE_SHIFT);
 	set_pmd_safe(pmd, __pmd(__pa(pte) | _PAGE_TABLE));
 }
 
@@ -81,7 +80,7 @@ static inline void pmd_populate(struct mm_struct *mm, pmd_t *pmd,
 {
 	unsigned long pfn = page_to_pfn(pte);
 
-	paravirt_alloc_pte(mm, pfn, 0);
+	paravirt_alloc_pte(mm, pfn);
 	set_pmd(pmd, __pmd(((pteval_t)pfn << PAGE_SHIFT) | _PAGE_TABLE));
 }
 

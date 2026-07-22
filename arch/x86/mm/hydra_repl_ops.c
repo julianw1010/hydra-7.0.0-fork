@@ -171,15 +171,6 @@ static long hydra_set_wrprotect_pmd_entry(struct mm_struct *mm,
 	return pages;
 }
 
-void hydra_alloc_pte(struct mm_struct *mm, unsigned long pfn,
-		     unsigned long addr)
-{
-	if (!addr || !mm || !READ_ONCE(mm->lazy_repl_enabled))
-		return;
-
-	hydra_birth_replica_tables(mm, addr);
-}
-
 void hydra_set_pte(pte_t *ptep, pte_t pteval)
 {
 	struct page *pte_page, *cur;

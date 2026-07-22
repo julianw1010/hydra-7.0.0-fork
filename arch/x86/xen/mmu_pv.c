@@ -1534,8 +1534,7 @@ PV_CALLEE_SAVE_REGS_THUNK(xen_make_pte_init);
 
 /* Early in boot, while setting up the initial pagetable, assume
    everything is pinned. */
-static void __init xen_alloc_pte_init(struct mm_struct *mm, unsigned long pfn,
-				      unsigned long addr)
+static void __init xen_alloc_pte_init(struct mm_struct *mm, unsigned long pfn)
 {
 #ifdef CONFIG_FLATMEM
 	BUG_ON(mem_map);	/* should only be used early */
@@ -1619,8 +1618,7 @@ static inline void xen_alloc_ptpage(struct mm_struct *mm, unsigned long pfn,
 	}
 }
 
-static void xen_alloc_pte(struct mm_struct *mm, unsigned long pfn,
-			  unsigned long addr)
+static void xen_alloc_pte(struct mm_struct *mm, unsigned long pfn)
 {
 	xen_alloc_ptpage(mm, pfn, PT_PTE);
 }

@@ -527,17 +527,15 @@ void pmd_install(struct mm_struct *mm, pmd_t *pmd, pgtable_t *pte)
 
 int __pte_alloc(struct mm_struct *mm, pmd_t *pmd, unsigned long addr)
 {
-	unsigned long pfn;
 	pgtable_t new = pte_alloc_one(mm, pmd);
 	if (!new)
 		return -ENOMEM;
 
-	pfn = page_to_pfn(new);
 	pmd_install(mm, pmd, &new);
 	if (new)
 		pte_free(mm, new);
-	else
-		paravirt_alloc_pte(mm, pfn, addr);
+	else if (mm->lazy_repl_enabled)
+		hydra_birth_replica_tables(mm, addr);
 	return 0;
 }
 

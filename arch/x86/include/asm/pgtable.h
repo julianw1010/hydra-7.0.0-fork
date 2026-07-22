@@ -1727,7 +1727,6 @@ bool arch_is_platform_page(u64 paddr);
 })
 
 void hydra_set_pte(pte_t *ptep, pte_t pteval);
-void hydra_alloc_pte(struct mm_struct *mm, unsigned long pfn, unsigned long addr);
 pte_t hydra_get_pte(pte_t *ptep);
 
 int hydra_ptep_test_and_clear_young(struct vm_area_struct *vma, unsigned long addr, pte_t *ptep);
