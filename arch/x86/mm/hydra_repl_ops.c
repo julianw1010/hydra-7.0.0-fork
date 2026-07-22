@@ -9,7 +9,7 @@
 
 DEFINE_STATIC_KEY_FALSE(hydra_repl_ever_enabled);
 
-void hydra_wrprotect_pte_one(pte_t *ptep)
+static void hydra_wrprotect_pte_one(pte_t *ptep)
 {
 	pte_t old_pte, new_pte;
 
@@ -19,7 +19,7 @@ void hydra_wrprotect_pte_one(pte_t *ptep)
 	} while (!try_cmpxchg((long *)&ptep->pte, (long *)&old_pte, *(long *)&new_pte));
 }
 
-void hydra_wrprotect_pmd_one(pmd_t *pmdp)
+static void hydra_wrprotect_pmd_one(pmd_t *pmdp)
 {
 	pmd_t old_pmd, new_pmd;
 
@@ -29,23 +29,11 @@ void hydra_wrprotect_pmd_one(pmd_t *pmdp)
 	} while (!try_cmpxchg((long *)pmdp, (long *)&old_pmd, *(long *)&new_pmd));
 }
 
-static struct hydra_scope *hydra_scope_of(struct mm_struct *mm)
-{
-	struct hydra_scope *scope = current->hydra_scope;
-
-	if (!sysctl_hydra_extended || !hydra_wrprot_delegation_ready ||
-	    !scope || scope->mm != mm)
-		return NULL;
-	return scope;
-}
-
-static long hydra_set_wrprotect_pte_entry(struct mm_struct *mm,
-					  unsigned long addr, pte_t *ptep)
+static long hydra_set_wrprotect_pte_entry(pte_t *ptep)
 {
 	struct page *page, *cur;
-	struct hydra_scope *scope;
 	unsigned long offset;
-	long pages = 1, delegated = 0, rstores = 0;
+	long pages = 1;
 
 	if (!ptep)
 		return 0;
@@ -64,54 +52,25 @@ static long hydra_set_wrprotect_pte_entry(struct mm_struct *mm,
 		return pages;
 
 	offset = ((unsigned long)ptep) & ~PAGE_MASK;
-	scope = hydra_scope_of(mm);
-
-	if (scope) {
-		if (scope->note_page != page) {
-			long members = 0;
-
-			rcu_read_lock();
-			for (cur = page->next_replica; cur && cur != page;
-			     cur = cur->next_replica) {
-				hydra_scope_note(scope, page_to_nid(cur),
-						 addr & PMD_MASK, PMD_SIZE);
-				members++;
-			}
-			rcu_read_unlock();
-			scope->note_page = page;
-			scope->note_members = members;
-		}
-		hydra_stats_sibling_delegated(mm, scope->note_members);
-		return pages;
-	}
 
 	rcu_read_lock();
 	for (cur = page->next_replica; cur && cur != page; cur = cur->next_replica) {
 		pte_t *replica_entry =
 			(pte_t *)(page_address(cur) + offset);
-		int cur_nid = page_to_nid(cur);
-
-		if (!hydra_same_socket(cur_nid, page_to_nid(page)))
-			rstores++;
 		if (pte_val(READ_ONCE(*replica_entry)) & _PAGE_PRESENT)
 			hydra_wrprotect_pte_one(replica_entry);
 		pages++;
 	}
 	rcu_read_unlock();
 
-	hydra_stats_sibling_delegated(mm, delegated);
-	hydra_stats_remote_stores(mm, rstores);
-
 	return pages;
 }
 
-static long hydra_set_wrprotect_pmd_entry(struct mm_struct *mm,
-					  unsigned long addr, pmd_t *pmdp)
+static long hydra_set_wrprotect_pmd_entry(pmd_t *pmdp)
 {
 	struct page *page, *cur;
-	struct hydra_scope *scope;
 	unsigned long offset;
-	long pages = 1, delegated = 0, rstores = 0;
+	long pages = 1;
 
 	if (!pmdp)
 		return 0;
@@ -130,43 +89,16 @@ static long hydra_set_wrprotect_pmd_entry(struct mm_struct *mm,
 		return pages;
 
 	offset = ((unsigned long)pmdp) & ~PAGE_MASK;
-	scope = hydra_scope_of(mm);
-
-	if (scope) {
-		if (scope->note_page != page) {
-			long members = 0;
-
-			rcu_read_lock();
-			for (cur = page->next_replica; cur && cur != page;
-			     cur = cur->next_replica) {
-				hydra_scope_note(scope, page_to_nid(cur),
-						 addr & PUD_MASK, PUD_SIZE);
-				members++;
-			}
-			rcu_read_unlock();
-			scope->note_page = page;
-			scope->note_members = members;
-		}
-		hydra_stats_sibling_delegated(mm, scope->note_members);
-		return pages;
-	}
 
 	rcu_read_lock();
 	for (cur = page->next_replica; cur && cur != page; cur = cur->next_replica) {
 		pmd_t *replica_entry =
 			(pmd_t *)(page_address(cur) + offset);
-		int cur_nid = page_to_nid(cur);
-
-		if (!hydra_same_socket(cur_nid, page_to_nid(page)))
-			rstores++;
 		if (pmd_val(READ_ONCE(*replica_entry)) & _PAGE_PRESENT)
 			hydra_wrprotect_pmd_one(replica_entry);
 		pages++;
 	}
 	rcu_read_unlock();
-
-	hydra_stats_sibling_delegated(mm, delegated);
-	hydra_stats_remote_stores(mm, rstores);
 
 	return pages;
 }
@@ -176,7 +108,7 @@ void hydra_set_pte(pte_t *ptep, pte_t pteval)
 	struct page *pte_page, *cur;
 	unsigned long offset;
 	pte_t repl_val;
-	long pages = 1, rstores = 0;
+	long pages = 1;
 
 	native_set_pte(ptep, pteval);
 
@@ -189,23 +121,12 @@ void hydra_set_pte(pte_t *ptep, pte_t pteval)
 	pte_page = virt_to_page(ptep);
 
 	if (READ_ONCE(pte_page->next_replica)) {
-		int master_nid = page_to_nid(pte_page);
-
 		offset = ((unsigned long)ptep) & ~PAGE_MASK;
-		repl_val = (pte_val(pteval) & _PAGE_PRESENT) ? pteval : __pte(0);
-		if (sysctl_hydra_extended && pte_write(repl_val) &&
-		    !pte_dirty(repl_val)) {
-			repl_val = pte_wrprotect(repl_val);
-			hydra_stats_ro_install_table(ptep);
-		}
+		repl_val = pte_present(pteval) ? pteval : __pte(0);
 
 		rcu_read_lock();
 		for (cur = pte_page->next_replica; cur && cur != pte_page; cur = cur->next_replica) {
 			pte_t *rp = (pte_t *)(page_address(cur) + offset);
-			int cur_nid = page_to_nid(cur);
-
-			if (!hydra_same_socket(cur_nid, master_nid))
-				rstores++;
 			native_set_pte(rp, repl_val);
 			pages++;
 		}
@@ -213,7 +134,6 @@ void hydra_set_pte(pte_t *ptep, pte_t pteval)
 	}
 
 	hydra_stats_pt_write(ptep, HYDRA_PT_PTE, pages);
-	hydra_stats_remote_stores_table(ptep, rstores);
 }
 
 pte_t hydra_get_pte(pte_t *ptep)
@@ -253,13 +173,12 @@ pte_t hydra_get_pte(pte_t *ptep)
 	return val;
 }
 
-pte_t hydra_ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
-			       pte_t *ptep)
+pte_t hydra_ptep_get_and_clear(struct mm_struct *mm, pte_t *ptep)
 {
 	struct page *page, *cur;
 	unsigned long offset;
 	pte_t val;
-	long pages = 1, rstores = 0;
+	long pages = 1;
 
 	if (!ptep)
 		return __pte(0);
@@ -279,12 +198,7 @@ pte_t hydra_ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
 
 	rcu_read_lock();
 	for (cur = page->next_replica; cur && cur != page; cur = cur->next_replica) {
-		int cur_nid = page_to_nid(cur);
-		pte_t old;
-
-		if (!hydra_same_socket(cur_nid, page_to_nid(page)))
-			rstores++;
-		old = native_ptep_get_and_clear(
+		pte_t old = native_ptep_get_and_clear(
 			(pte_t *)(page_address(cur) + offset));
 		if (pte_val(old) & _PAGE_PRESENT)
 			val = __pte(pte_val(val) | (pte_val(old) & PTE_FLAGS_MASK));
@@ -294,14 +208,13 @@ pte_t hydra_ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
 
 out:
 	hydra_stats_pt_write(ptep, HYDRA_PT_PTE, pages);
-	hydra_stats_remote_stores(mm, rstores);
 	return val;
 }
 
 void hydra_ptep_set_wrprotect(struct mm_struct *mm,
 			      unsigned long addr, pte_t *ptep)
 {
-	long pages = hydra_set_wrprotect_pte_entry(mm, addr, ptep);
+	long pages = hydra_set_wrprotect_pte_entry(ptep);
 
 	hydra_stats_pt_write(ptep, HYDRA_PT_PTE, pages);
 }
@@ -356,7 +269,7 @@ void hydra_set_pmd(pmd_t *pmdp, pmd_t pmd)
 	struct page *page, *cur;
 	unsigned long offset;
 	pmd_t repl_val;
-	long pages = 1, rstores = 0;
+	long pages = 1;
 
 	native_set_pmd(pmdp, pmd);
 
@@ -369,29 +282,17 @@ void hydra_set_pmd(pmd_t *pmdp, pmd_t pmd)
 	page = virt_to_page(pmdp);
 
 	if (READ_ONCE(page->next_replica)) {
-		int master_nid = page_to_nid(page);
-
 		offset = ((unsigned long)pmdp) & ~PAGE_MASK;
 
-		if ((pmd_flags(pmd) & _PAGE_PRESENT) &&
+		if ((pmd_flags(pmd) & (_PAGE_PRESENT | _PAGE_PROTNONE)) &&
 		    (pmd_trans_huge(pmd) || pmd_leaf(pmd)))
 			repl_val = pmd;
 		else
 			repl_val = __pmd(0);
 
-		if (sysctl_hydra_extended && pmd_val(repl_val) &&
-		    pmd_write(repl_val) && !pmd_dirty(repl_val)) {
-			repl_val = pmd_wrprotect(repl_val);
-			hydra_stats_ro_install_table(pmdp);
-		}
-
 		rcu_read_lock();
 		for (cur = page->next_replica; cur && cur != page; cur = cur->next_replica) {
 			pmd_t *rp = (pmd_t *)(page_address(cur) + offset);
-			int cur_nid = page_to_nid(cur);
-
-			if (!hydra_same_socket(cur_nid, master_nid))
-				rstores++;
 			native_set_pmd(rp, repl_val);
 			pages++;
 		}
@@ -399,7 +300,6 @@ void hydra_set_pmd(pmd_t *pmdp, pmd_t pmd)
 	}
 
 	hydra_stats_pt_write(pmdp, HYDRA_PT_PMD, pages);
-	hydra_stats_remote_stores_table(pmdp, rstores);
 }
 
 pmd_t hydra_get_pmd(pmd_t *pmdp)
@@ -439,13 +339,12 @@ pmd_t hydra_get_pmd(pmd_t *pmdp)
 	return val;
 }
 
-pmd_t hydra_pmdp_get_and_clear(struct mm_struct *mm, unsigned long addr,
-			       pmd_t *pmdp)
+pmd_t hydra_pmdp_get_and_clear(struct mm_struct *mm, pmd_t *pmdp)
 {
 	struct page *page, *cur;
 	unsigned long offset;
 	pmd_t val;
-	long pages = 1, rstores = 0;
+	long pages = 1;
 
 	if (!pmdp)
 		return __pmd(0);
@@ -465,12 +364,7 @@ pmd_t hydra_pmdp_get_and_clear(struct mm_struct *mm, unsigned long addr,
 
 	rcu_read_lock();
 	for (cur = page->next_replica; cur && cur != page; cur = cur->next_replica) {
-		int cur_nid = page_to_nid(cur);
-		pmd_t old;
-
-		if (!hydra_same_socket(cur_nid, page_to_nid(page)))
-			rstores++;
-		old = native_pmdp_get_and_clear(
+		pmd_t old = native_pmdp_get_and_clear(
 			(pmd_t *)(page_address(cur) + offset));
 		if (pmd_val(old) & _PAGE_PRESENT)
 			val = __pmd(pmd_val(val) | (pmd_val(old) & PTE_FLAGS_MASK));
@@ -480,14 +374,13 @@ pmd_t hydra_pmdp_get_and_clear(struct mm_struct *mm, unsigned long addr,
 
 out:
 	hydra_stats_pt_write(pmdp, HYDRA_PT_PMD, pages);
-	hydra_stats_remote_stores(mm, rstores);
 	return val;
 }
 
 void hydra_pmdp_set_wrprotect(struct mm_struct *mm,
 			      unsigned long addr, pmd_t *pmdp)
 {
-	long pages = hydra_set_wrprotect_pmd_entry(mm, addr, pmdp);
+	long pages = hydra_set_wrprotect_pmd_entry(pmdp);
 
 	hydra_stats_pt_write(pmdp, HYDRA_PT_PMD, pages);
 }
@@ -543,7 +436,7 @@ pmd_t hydra_pmdp_establish(pmd_t *pmdp, pmd_t pmd)
 	unsigned long offset;
 	pmd_t old, repl_val;
 	pmdval_t flags = 0;
-	long pages = 1, rstores = 0;
+	long pages = 1;
 
 	if (IS_ENABLED(CONFIG_SMP))
 		old = xchg(pmdp, pmd);
@@ -563,25 +456,16 @@ pmd_t hydra_pmdp_establish(pmd_t *pmdp, pmd_t pmd)
 
 	offset = ((unsigned long)pmdp) & ~PAGE_MASK;
 
-	if ((pmd_flags(pmd) & _PAGE_PRESENT) &&
+	if ((pmd_flags(pmd) & (_PAGE_PRESENT | _PAGE_PROTNONE)) &&
 	    (pmd_trans_huge(pmd) || pmd_leaf(pmd)))
 		repl_val = pmd;
 	else
 		repl_val = __pmd(0);
 
-	if (sysctl_hydra_extended && pmd_val(repl_val) && pmd_write(repl_val) &&
-	    !pmd_dirty(repl_val)) {
-		repl_val = pmd_wrprotect(repl_val);
-		hydra_stats_ro_install_table(pmdp);
-	}
-
 	rcu_read_lock();
 	for (cur = pmd_page->next_replica; cur && cur != pmd_page; cur = cur->next_replica) {
 		pmd_t *rp = (pmd_t *)(page_address(cur) + offset);
 		pmd_t old_repl;
-
-		if (!hydra_same_socket(page_to_nid(cur), page_to_nid(pmd_page)))
-			rstores++;
 
 		if (IS_ENABLED(CONFIG_SMP))
 			old_repl = xchg(rp, repl_val);
@@ -600,7 +484,6 @@ pmd_t hydra_pmdp_establish(pmd_t *pmdp, pmd_t pmd)
 
 out:
 	hydra_stats_pt_write(pmdp, HYDRA_PT_PMD, pages);
-	hydra_stats_remote_stores_table(pmdp, rstores);
 	return old;
 }
 

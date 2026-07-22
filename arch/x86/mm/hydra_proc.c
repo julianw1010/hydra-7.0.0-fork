@@ -6,13 +6,9 @@
 #include <linux/hydra.h>
 
 extern int sysctl_hydra_repl_order;
-extern int sysctl_hydra_repl_order_pull;
-extern int sysctl_hydra_birth;
 extern int sysctl_hydra_first_touch;
 extern int sysctl_hydra_tlbflush_opt;
 extern int sysctl_hydra_invlpgb;
-extern int sysctl_hydra_flush_relay;
-extern int sysctl_hydra_extended;
 
 static struct proc_dir_entry *hydra_dir;
 
@@ -27,14 +23,6 @@ static const struct hydra_int_knob hydra_repl_order_knob = {
 	"repl_order", &sysctl_hydra_repl_order, 0, 9,
 };
 
-static const struct hydra_int_knob hydra_repl_order_pull_knob = {
-	"repl_order_pull", &sysctl_hydra_repl_order_pull, 0, 9,
-};
-
-static const struct hydra_int_knob hydra_birth_knob = {
-	"birth", &sysctl_hydra_birth, 0, 1,
-};
-
 static const struct hydra_int_knob hydra_first_touch_knob = {
 	"first_touch", &sysctl_hydra_first_touch, 0, 1,
 };
@@ -45,14 +33,6 @@ static const struct hydra_int_knob hydra_tlbflush_opt_knob = {
 
 static const struct hydra_int_knob hydra_invlpgb_knob = {
 	"invlpgb", &sysctl_hydra_invlpgb, 0, 1,
-};
-
-static const struct hydra_int_knob hydra_flush_relay_knob = {
-	"flush_relay", &sysctl_hydra_flush_relay, 0, 1,
-};
-
-static const struct hydra_int_knob hydra_extended_knob = {
-	"extended", &sysctl_hydra_extended, 0, 1,
 };
 
 static int hydra_proc_parse_long(const char __user *ubuf, size_t count,
@@ -176,35 +156,6 @@ static ssize_t hydra_cache_write(struct file *file, const char __user *ubuf,
 	return count;
 }
 
-static int hydra_topology_show(struct seq_file *m, void *v)
-{
-	int s;
-
-	seq_printf(m, "%-24s %d\n", "sockets", hydra_nr_sockets);
-
-	for (s = 0; s < hydra_nr_sockets; s++) {
-		seq_printf(m, "\nsocket %d\n", s);
-		seq_printf(m, "    %-20s %d\n", "representative node",
-			   hydra_socket_rep[s]);
-		seq_printf(m, "    %-20s %*pbl\n", "nodes",
-			   nodemask_pr_args(&hydra_socket_nodes[s]));
-	}
-
-	return 0;
-}
-
-static int hydra_topology_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, hydra_topology_show, NULL);
-}
-
-static const struct proc_ops hydra_topology_ops = {
-	.proc_open	= hydra_topology_open,
-	.proc_read	= seq_read,
-	.proc_lseek	= seq_lseek,
-	.proc_release	= single_release,
-};
-
 static const struct proc_ops hydra_cache_ops = {
 	.proc_open	= hydra_cache_open,
 	.proc_read	= seq_read,
@@ -256,19 +207,8 @@ static int __init hydra_proc_init(void)
 	if (!proc_create("cache", 0644, hydra_dir, &hydra_cache_ops))
 		goto fail;
 
-	if (!proc_create("topology", 0444, hydra_dir, &hydra_topology_ops))
-		goto fail;
-
 	if (!proc_create_data("repl_order", 0644, hydra_dir, &hydra_knob_ops,
 			      (void *)&hydra_repl_order_knob))
-		goto fail;
-
-	if (!proc_create_data("repl_order_pull", 0644, hydra_dir, &hydra_knob_ops,
-			      (void *)&hydra_repl_order_pull_knob))
-		goto fail;
-
-	if (!proc_create_data("birth", 0644, hydra_dir, &hydra_knob_ops,
-			      (void *)&hydra_birth_knob))
 		goto fail;
 
 	if (!proc_create_data("first_touch", 0644, hydra_dir, &hydra_knob_ops,
@@ -281,14 +221,6 @@ static int __init hydra_proc_init(void)
 
 	if (!proc_create_data("invlpgb", 0644, hydra_dir, &hydra_knob_ops,
 			      (void *)&hydra_invlpgb_knob))
-		goto fail;
-
-	if (!proc_create_data("flush_relay", 0644, hydra_dir, &hydra_knob_ops,
-			      (void *)&hydra_flush_relay_knob))
-		goto fail;
-
-	if (!proc_create_data("extended", 0644, hydra_dir, &hydra_knob_ops,
-			      (void *)&hydra_extended_knob))
 		goto fail;
 
 	if (!proc_create("status", 0444, hydra_dir, &hydra_status_ops))

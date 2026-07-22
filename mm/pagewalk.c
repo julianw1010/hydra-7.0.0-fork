@@ -130,7 +130,7 @@ again:
 		next = pmd_addr_end(addr, end);
 		if (pmd_none(*pmd)) {
 			if (has_install)
-				err = __pte_alloc(walk->mm, pmd, addr);
+				err = __pte_alloc(walk->mm, pmd);
 			else if (ops->pte_hole)
 				err = ops->pte_hole(addr, next, depth, walk);
 			if (err)

@@ -83,7 +83,6 @@ struct sched_attr;
 struct sched_dl_entity;
 struct seq_file;
 struct sighand_struct;
-struct hydra_scope;
 struct signal_struct;
 struct task_delay_info;
 struct task_group;
@@ -960,8 +959,6 @@ struct task_struct {
 	struct mm_struct		*active_mm;
 
 	unsigned int			hydra_master_serviced;
-
-	struct hydra_scope		*hydra_scope;
 
 	int				exit_state;
 	int				exit_code;

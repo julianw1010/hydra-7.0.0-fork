@@ -82,17 +82,6 @@ typedef struct {
 #error "CONFIG_HYDRA_NUMA_NODE_COUNT is not defined. Enable HYDRA_NUMA_NODE_COUNT in Kconfig."
 #endif
 
-struct hydra_scope {
-	struct mm_struct *mm;
-	struct hydra_scope *prev;
-	void *pool;
-	struct page *note_page;
-	long note_members;
-	unsigned long published[NUMA_NODE_COUNT];
-	unsigned long min[NUMA_NODE_COUNT];
-	unsigned long max[NUMA_NODE_COUNT];
-};
-
 struct page {
 	memdesc_flags_t flags;		/* Atomic flags, some possibly
 					 * updated asynchronously */

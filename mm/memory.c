@@ -102,11 +102,8 @@ static bool vmf_pte_changed(struct vm_fault *vmf);
 
 #if defined(CONFIG_X86) && defined(CONFIG_SYSCTL)
 int sysctl_hydra_repl_order __read_mostly = 9;
-int sysctl_hydra_repl_order_pull __read_mostly = 6;
-int sysctl_hydra_birth __read_mostly = 1;
 int sysctl_hydra_first_touch __read_mostly = 1;
 int sysctl_hydra_auto_enable __read_mostly = 0;
-int sysctl_hydra_extended __read_mostly = 1;
 #endif
 
 static int __init hydra_auto_enable_setup(char *str)
@@ -393,17 +390,6 @@ void free_pgd_range(struct mmu_gather *tlb,
 			unsigned long addr, unsigned long end,
 			unsigned long floor, unsigned long ceiling)
 {
-	unsigned long drain_lo, drain_hi;
-
-	if (hydra_scope_drain(&tlb->hydra_scope, &drain_lo, &drain_hi)) {
-		if (tlb->start > drain_lo)
-			tlb->start = drain_lo;
-		if (tlb->end < drain_hi)
-			tlb->end = drain_hi;
-		tlb->cleared_ptes = 1;
-		tlb->cleared_pmds = 1;
-	}
-
 	free_pgd_range_base(tlb, addr, end, floor, ceiling, tlb->mm->pgd);
 }
 
@@ -425,16 +411,6 @@ void free_pgtables(struct mmu_gather *tlb, struct unmap_desc *unmap)
 	struct unlink_vma_file_batch vb;
 	struct ma_state *mas = unmap->mas;
 	struct vm_area_struct *vma = unmap->first;
-	unsigned long drain_lo, drain_hi;
-
-	if (hydra_scope_drain(&tlb->hydra_scope, &drain_lo, &drain_hi)) {
-		if (tlb->start > drain_lo)
-			tlb->start = drain_lo;
-		if (tlb->end < drain_hi)
-			tlb->end = drain_hi;
-		tlb->cleared_ptes = 1;
-		tlb->cleared_pmds = 1;
-	}
 
 	/*
 	 * Note: USER_PGTABLES_CEILING may be passed as the value of pg_end and
@@ -484,7 +460,8 @@ void free_pgtables(struct mmu_gather *tlb, struct unmap_desc *unmap)
 			hydra_break_chain_range(tlb->mm, addr, vma->vm_end,
 						unmap->pg_start, pg_ceiling);
 			for (i = 0; i < NUMA_NODE_COUNT; i++) {
-				if (!hydra_repl_pgd_first(tlb->mm, i))
+				if (!tlb->mm->repl_pgd[i] ||
+				    tlb->mm->repl_pgd[i] == tlb->mm->pgd)
 					continue;
 				free_pgd_range_base(tlb, addr, vma->vm_end,
 					unmap->pg_start, pg_ceiling,
@@ -527,7 +504,7 @@ void pmd_install(struct mm_struct *mm, pmd_t *pmd, pgtable_t *pte)
 	spin_unlock(ptl);
 }
 
-int __pte_alloc(struct mm_struct *mm, pmd_t *pmd, unsigned long addr)
+int __pte_alloc(struct mm_struct *mm, pmd_t *pmd)
 {
 	pgtable_t new = pte_alloc_one(mm, pmd);
 	if (!new)
@@ -536,8 +513,6 @@ int __pte_alloc(struct mm_struct *mm, pmd_t *pmd, unsigned long addr)
 	pmd_install(mm, pmd, &new);
 	if (new)
 		pte_free(mm, new);
-	else if (mm->lazy_repl_enabled)
-		hydra_birth_replica_tables(mm, addr);
 	return 0;
 }
 
@@ -1577,7 +1552,6 @@ copy_page_range(struct vm_area_struct *dst_vma, struct vm_area_struct *src_vma)
 	struct mm_struct *dst_mm = dst_vma->vm_mm;
 	struct mm_struct *src_mm = src_vma->vm_mm;
 	struct mmu_notifier_range range;
-	struct hydra_scope hydra_scope;
 	unsigned long next;
 	bool is_cow;
 	int ret;
@@ -1609,7 +1583,6 @@ copy_page_range(struct vm_area_struct *dst_vma, struct vm_area_struct *src_vma)
 		 */
 		vma_assert_write_locked(src_vma);
 		raw_write_seqcount_begin(&src_mm->write_protect_seq);
-		hydra_scope_enter(&hydra_scope, src_mm);
 	}
 
 	ret = 0;
@@ -1627,8 +1600,6 @@ copy_page_range(struct vm_area_struct *dst_vma, struct vm_area_struct *src_vma)
 	} while (dst_pgd++, src_pgd++, addr = next, addr != end);
 
 	if (is_cow) {
-		hydra_scope_drain(&hydra_scope, NULL, NULL);
-		hydra_scope_exit(&hydra_scope);
 		raw_write_seqcount_end(&src_mm->write_protect_seq);
 		mmu_notifier_invalidate_range_end(&range);
 	}
@@ -2517,7 +2488,7 @@ more:
 
 	/* Allocate the PTE if necessary; takes PMD lock once only. */
 	ret = -ENOMEM;
-	if (pte_alloc(mm, pmd, addr))
+	if (pte_alloc(mm, pmd))
 		goto out;
 
 	while (pages_to_write_in_pmd) {
@@ -5312,7 +5283,7 @@ static vm_fault_t do_anonymous_page(struct vm_fault *vmf)
 	 * Use pte_alloc() instead of pte_alloc_map(), so that OOM can
 	 * be distinguished from a transient failure of pte_offset_map().
 	 */
-	if (pte_alloc(vma->vm_mm, vmf->pmd, vmf->address))
+	if (pte_alloc(vma->vm_mm, vmf->pmd))
 		return VM_FAULT_OOM;
 
 	/* Use the zero-page for reads */
@@ -5692,7 +5663,7 @@ fallback:
 
 		if (vmf->prealloc_pte)
 			pmd_install(vma->vm_mm, vmf->pmd, &vmf->prealloc_pte);
-		else if (unlikely(pte_alloc(vma->vm_mm, vmf->pmd, vmf->address)))
+		else if (unlikely(pte_alloc(vma->vm_mm, vmf->pmd)))
 			return VM_FAULT_OOM;
 	}
 
@@ -6630,8 +6601,6 @@ retry_pud:
 			if ((flags & (FAULT_FLAG_WRITE|FAULT_FLAG_UNSHARE)) &&
 			    !pmd_write(vmf.orig_pmd))
 				needs_master = true;
-			if ((flags & FAULT_FLAG_WRITE) && !pmd_dirty(vmf.orig_pmd))
-				needs_master = true;
 
 			if (needs_master) {
 				vm_fault_t master_ret;
@@ -6641,7 +6610,7 @@ retry_pud:
 				if (master_ret & (VM_FAULT_ERROR | VM_FAULT_NOPAGE |
 						  VM_FAULT_RETRY | VM_FAULT_COMPLETED))
 					return master_ret;
-				return hydra_repl_fault(&vmf, node_to_use);
+				return 0;
 			}
 
 			{

@@ -426,7 +426,7 @@ pgtable_populate_needed(struct vm_area_struct *vma, unsigned long cp_flags)
 	({								\
 		long err = 0;						\
 		if (unlikely(pgtable_populate_needed(vma, cp_flags))) {	\
-			if (pte_alloc(vma->vm_mm, pmd, addr))			\
+			if (pte_alloc(vma->vm_mm, pmd))			\
 				err = -ENOMEM;				\
 		}							\
 		err;							\

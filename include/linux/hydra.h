@@ -23,7 +23,6 @@ DECLARE_STATIC_KEY_FALSE(hydra_repl_ever_enabled);
 void hydra_reload_cr3(void *info);
 int hydra_enable_replication(struct mm_struct *mm);
 int hydra_repl_fault(struct vm_fault *vmf, int fault_node);
-void hydra_birth_replica_tables(struct mm_struct *mm, unsigned long address);
 bool hydra_move_normal_pmd(struct vm_area_struct *vma, unsigned long old_addr,
 			   pmd_t *old_pmd, pmd_t *new_pmd);
 void hydra_break_chain_range(struct mm_struct *mm,
@@ -34,72 +33,6 @@ void hydra_pud_owner_claim(struct mm_struct *mm, unsigned long start,
 void hydra_pud_owner_stamp(struct mm_struct *mm, unsigned long start,
 			   unsigned long end, int node);
 unsigned long hydra_vm_unmapped_pud_area(struct vm_unmapped_area_info *info);
-void hydra_wrprotect_pte_one(pte_t *ptep);
-void hydra_wrprotect_pmd_one(pmd_t *pmdp);
-bool hydra_scope_drain(struct hydra_scope *scope, unsigned long *lo_out,
-		       unsigned long *hi_out);
-extern int hydra_wrprot_delegation_ready;
-
-struct hydra_fill_info {
-	int level;
-	int order;
-	unsigned long address;
-	unsigned long start;
-	unsigned long end;
-};
-
-bool hydra_queue_backfill(struct mm_struct *mm, int socket, size_t src_node,
-			  size_t master_node, const nodemask_t *targets,
-			  const struct hydra_fill_info *info);
-void hydra_backfill_range(struct mm_struct *mm, struct vm_area_struct *vma,
-			  const struct hydra_fill_info *info,
-			  const int *dst_nodes, int ndst,
-			  size_t src_node, size_t master_node);
-
-void hydra_scope_enter(struct hydra_scope *scope, struct mm_struct *mm);
-void hydra_scope_exit(struct hydra_scope *scope);
-void hydra_scope_feed(struct hydra_scope *scope, int node);
-
-static inline void hydra_scope_note(struct hydra_scope *scope, int node,
-				    unsigned long addr, unsigned long size)
-{
-	if (scope->min[node] > addr)
-		scope->min[node] = addr;
-	if (scope->max[node] < addr + size)
-		scope->max[node] = addr + size;
-	if (scope->pool &&
-	    (scope->max[node] & PMD_MASK) != scope->published[node])
-		hydra_scope_feed(scope, node);
-}
-
-extern int hydra_nr_sockets;
-extern int hydra_node_socket[NUMA_NODE_COUNT];
-extern int hydra_socket_rep[NUMA_NODE_COUNT];
-extern nodemask_t hydra_socket_nodes[NUMA_NODE_COUNT];
-extern cpumask_t hydra_socket_cpumask[NUMA_NODE_COUNT];
-
-static inline int hydra_node_to_socket(int node)
-{
-	return hydra_node_socket[node];
-}
-
-static inline bool hydra_same_socket(int node_a, int node_b)
-{
-	return hydra_node_socket[node_a] == hydra_node_socket[node_b];
-}
-
-static inline bool hydra_repl_pgd_first(struct mm_struct *mm, int node)
-{
-	int i;
-
-	if (!mm->repl_pgd[node] || mm->repl_pgd[node] == mm->pgd)
-		return false;
-	for (i = 0; i < node; i++) {
-		if (mm->repl_pgd[i] == mm->repl_pgd[node])
-			return false;
-	}
-	return true;
-}
 
 #define HYDRA_WALK_NONE ((void *)0x1)
 
@@ -241,29 +174,10 @@ struct hydra_stats {
 
 	atomic_long_t pt_writes[HYDRA_PT_NR_LEVELS];
 	atomic_long_t pt_pages[HYDRA_PT_NR_LEVELS];
-	atomic_long_t sibling_delegated;
-	atomic_long_t sibling_reconciled;
-	atomic_long_t wr_grants;
-	atomic_long_t sweep_deferred;
-	atomic_long_t promotions;
-	atomic_long_t spec_dirty;
-	atomic_long_t fill_pulls;
-	atomic_long_t fill_local;
-	atomic_long_t fill_sweeps;
-	atomic_long_t copied_cross;
-	atomic_long_t ro_installs;
-	atomic_long_t remote_stores;
-	atomic_long_t scope_drains;
-	atomic_long_t scope_works;
-	atomic_long_t rec_cleared;
-	atomic_long_t rec_wrprot;
-	atomic_long_t rec_synced;
-	atomic_long_t tlb_relay_leaves;
 
 	atomic_long_t tlb_shootdowns;
 	atomic_long_t tlb_shootdowns_saved;
 	atomic_long_t tlb_broadcasts;
-	atomic_long_t tlb_relays;
 
 	atomic_long_t numa_migrate_4k[NUMA_NODE_COUNT][NUMA_NODE_COUNT];
 	atomic_long_t numa_migrate_2m[NUMA_NODE_COUNT][NUMA_NODE_COUNT];
@@ -305,144 +219,6 @@ static inline void hydra_stats_pt_write(void *tablep, int level, long pages)
 		return;
 	atomic_long_inc(&s->pt_writes[level]);
 	atomic_long_add(pages, &s->pt_pages[level]);
-}
-
-static inline void hydra_stats_wr_grant(struct mm_struct *mm)
-{
-	if (mm->hydra_stats)
-		atomic_long_inc(&mm->hydra_stats->wr_grants);
-}
-
-static inline void hydra_stats_sweep_deferred(struct mm_struct *mm)
-{
-	if (mm->hydra_stats)
-		atomic_long_inc(&mm->hydra_stats->sweep_deferred);
-}
-
-static inline void hydra_stats_promotion(struct mm_struct *mm)
-{
-	if (mm->hydra_stats)
-		atomic_long_inc(&mm->hydra_stats->promotions);
-}
-
-static inline void hydra_stats_spec_dirty(struct mm_struct *mm, long n)
-{
-	if (mm->hydra_stats && n > 0)
-		atomic_long_add(n, &mm->hydra_stats->spec_dirty);
-}
-
-static inline void hydra_stats_sibling_delegated(struct mm_struct *mm, long n)
-{
-	struct hydra_stats *s = mm ? mm->hydra_stats : NULL;
-
-	if (s && n > 0)
-		atomic_long_add(n, &s->sibling_delegated);
-}
-
-static inline void hydra_stats_sibling_reconciled(struct mm_struct *mm, long n)
-{
-	struct hydra_stats *s = mm->hydra_stats;
-
-	if (s && n > 0)
-		atomic_long_add(n, &s->sibling_reconciled);
-}
-
-static inline struct hydra_stats *hydra_stats_of_table(void *tablep)
-{
-	struct mm_struct *mm;
-
-	if (!virt_addr_valid(tablep))
-		return NULL;
-	mm = READ_ONCE(virt_to_page(tablep)->pt_owner_mm);
-	if (!mm)
-		return NULL;
-	return mm->hydra_stats;
-}
-
-static inline void hydra_stats_fill_pull(struct mm_struct *mm)
-{
-	if (mm->hydra_stats)
-		atomic_long_inc(&mm->hydra_stats->fill_pulls);
-}
-
-static inline void hydra_stats_fill_local(struct mm_struct *mm)
-{
-	if (mm->hydra_stats)
-		atomic_long_inc(&mm->hydra_stats->fill_local);
-}
-
-static inline void hydra_stats_fill_sweep(struct mm_struct *mm)
-{
-	if (mm->hydra_stats)
-		atomic_long_inc(&mm->hydra_stats->fill_sweeps);
-}
-
-static inline void hydra_stats_copied_cross(struct mm_struct *mm, long n)
-{
-	if (mm->hydra_stats && n > 0)
-		atomic_long_add(n, &mm->hydra_stats->copied_cross);
-}
-
-static inline void hydra_stats_ro_installs(struct mm_struct *mm, long n)
-{
-	if (mm->hydra_stats && n > 0)
-		atomic_long_add(n, &mm->hydra_stats->ro_installs);
-}
-
-static inline void hydra_stats_ro_install_table(void *tablep)
-{
-	struct hydra_stats *s = hydra_stats_of_table(tablep);
-
-	if (s)
-		atomic_long_inc(&s->ro_installs);
-}
-
-static inline void hydra_stats_remote_stores(struct mm_struct *mm, long n)
-{
-	if (mm->hydra_stats && n > 0)
-		atomic_long_add(n, &mm->hydra_stats->remote_stores);
-}
-
-static inline void hydra_stats_remote_stores_table(void *tablep, long n)
-{
-	struct hydra_stats *s = hydra_stats_of_table(tablep);
-
-	if (s && n > 0)
-		atomic_long_add(n, &s->remote_stores);
-}
-
-static inline void hydra_stats_scope_drain(struct mm_struct *mm, long works)
-{
-	struct hydra_stats *s = mm->hydra_stats;
-
-	if (!s)
-		return;
-	atomic_long_inc(&s->scope_drains);
-	atomic_long_add(works, &s->scope_works);
-}
-
-static inline void hydra_stats_rec_cleared(struct mm_struct *mm)
-{
-	if (mm->hydra_stats)
-		atomic_long_inc(&mm->hydra_stats->rec_cleared);
-}
-
-static inline void hydra_stats_rec_wrprot(struct mm_struct *mm)
-{
-	if (mm->hydra_stats)
-		atomic_long_inc(&mm->hydra_stats->rec_wrprot);
-}
-
-static inline void hydra_stats_rec_synced(struct mm_struct *mm)
-{
-	if (mm->hydra_stats)
-		atomic_long_inc(&mm->hydra_stats->rec_synced);
-}
-
-static inline void hydra_stats_tlb_relay_leaves(struct mm_struct *mm, long n)
-{
-	if (mm && mm->hydra_stats && n > 0)
-		atomic_long_add(n, &mm->hydra_stats->tlb_relay_leaves);
 }
 
 static inline void hydra_stats_copied_pte(struct mm_struct *mm, long copied)
@@ -488,14 +264,6 @@ static inline void hydra_stats_tlb_broadcast(struct mm_struct *mm, long count)
 
 	if (s && count > 0)
 		atomic_long_add(count, &s->tlb_broadcasts);
-}
-
-static inline void hydra_stats_tlb_relay(struct mm_struct *mm, long count)
-{
-	struct hydra_stats *s = mm->hydra_stats;
-
-	if (s && count > 0)
-		atomic_long_add(count, &s->tlb_relays);
 }
 
 static inline void hydra_stats_thp_split(struct mm_struct *mm)

@@ -28,7 +28,7 @@ obj-y				:=  init.o init_$(BITS).o fault.o ioremap.o extable.o mmap.o \
 				    hydra_repl_ops.o hydra_alloc.o hydra_proc.o \
 				    hydra_pgtable.o hydra_tlb.o \
 				    hydra_cache.o hydra_lifecycle.o hydra_fault.o \
-				    hydra_stats.o hydra_applier.o
+				    hydra_stats.o
 
 obj-y				+= pat/
 

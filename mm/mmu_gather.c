@@ -402,17 +402,6 @@ static void tlb_flush_mmu_free(struct mmu_gather *tlb)
 
 void tlb_flush_mmu(struct mmu_gather *tlb)
 {
-	unsigned long lo, hi;
-
-	if (hydra_scope_drain(&tlb->hydra_scope, &lo, &hi)) {
-		if (tlb->start > lo)
-			tlb->start = lo;
-		if (tlb->end < hi)
-			tlb->end = hi;
-		tlb->cleared_ptes = 1;
-		tlb->cleared_pmds = 1;
-	}
-
 	tlb_flush_mmu_tlbonly(tlb);
 	tlb_flush_mmu_free(tlb);
 }
@@ -442,12 +431,6 @@ static void __tlb_gather_mmu(struct mmu_gather *tlb, struct mm_struct *mm,
 	tlb->vma_pfn = 0;
 
 	tlb->fully_unshared_tables = 0;
-
-	if (fullmm)
-		tlb->hydra_scope.mm = NULL;
-	else
-		hydra_scope_enter(&tlb->hydra_scope, mm);
-
 	__tlb_reset_range(tlb);
 	inc_tlb_flush_pending(tlb->mm);
 }
@@ -515,9 +498,6 @@ void tlb_gather_mmu_vma(struct mmu_gather *tlb, struct vm_area_struct *vma)
  */
 void tlb_finish_mmu(struct mmu_gather *tlb)
 {
-	if (tlb->hydra_scope.mm)
-		hydra_scope_exit(&tlb->hydra_scope);
-
 	/*
 	 * We expect an earlier huge_pmd_unshare_flush() call to sort this out,
 	 * due to complicated locking requirements with page table unsharing.

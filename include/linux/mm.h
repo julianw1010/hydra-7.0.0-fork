@@ -87,11 +87,8 @@ extern void * high_memory;
 extern int sysctl_legacy_va_layout;
 #ifdef CONFIG_X86
 extern int sysctl_hydra_repl_order;
-extern int sysctl_hydra_repl_order_pull;
-extern int sysctl_hydra_birth;
 extern int sysctl_hydra_first_touch;
 extern int sysctl_hydra_auto_enable;
-extern int sysctl_hydra_extended;
 #endif
 #else
 #define sysctl_legacy_va_layout 0
@@ -3308,7 +3305,7 @@ static inline void mm_inc_nr_ptes(struct mm_struct *mm) {}
 static inline void mm_dec_nr_ptes(struct mm_struct *mm) {}
 #endif
 
-int __pte_alloc(struct mm_struct *mm, pmd_t *pmd, unsigned long addr);
+int __pte_alloc(struct mm_struct *mm, pmd_t *pmd);
 int __pte_alloc_kernel(pmd_t *pmd);
 
 #if defined(CONFIG_MMU)
@@ -3586,13 +3583,13 @@ pte_t *pte_offset_map_rw_nolock(struct mm_struct *mm, pmd_t *pmd,
 	pte_unmap(pte);					\
 } while (0)
 
-#define pte_alloc(mm, pmd, address) (unlikely(pmd_none(*(pmd))) && __pte_alloc(mm, pmd, address))
+#define pte_alloc(mm, pmd) (unlikely(pmd_none(*(pmd))) && __pte_alloc(mm, pmd))
 
 #define pte_alloc_map(mm, pmd, address)			\
-	(pte_alloc(mm, pmd, address) ? NULL : pte_offset_map(pmd, address))
+	(pte_alloc(mm, pmd) ? NULL : pte_offset_map(pmd, address))
 
 #define pte_alloc_map_lock(mm, pmd, address, ptlp)	\
-	(pte_alloc(mm, pmd, address) ?			\
+	(pte_alloc(mm, pmd) ?			\
 		 NULL : pte_offset_map_lock(mm, pmd, address, ptlp))
 
 #define pte_alloc_kernel(pmd, address)			\
