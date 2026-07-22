@@ -40,7 +40,14 @@ enum hydra_degree {
 	HYDRA_DEGREE_AUTO = 2,
 };
 
+struct mmu_gather;
+void free_pgd_range_base(struct mmu_gather *tlb, unsigned long addr,
+			 unsigned long end, unsigned long floor,
+			 unsigned long ceiling, pgd_t *pgd_base);
+
 int hydra_promote_node(struct mm_struct *mm, int node);
+int hydra_demote_node(struct mm_struct *mm, int node);
+int hydra_demote_mm(struct mm_struct *mm);
 void hydra_degree_build(struct mm_struct *mm, int primary_node);
 
 static inline int hydra_tree_node(struct mm_struct *mm, int node)
@@ -207,6 +214,7 @@ struct hydra_stats {
 
 	int tree_owner[NUMA_NODE_COUNT];
 	atomic_long_t promotions;
+	atomic_long_t demotions;
 
 	atomic_long_t pt_writes[HYDRA_PT_NR_LEVELS];
 	atomic_long_t pt_pages[HYDRA_PT_NR_LEVELS];

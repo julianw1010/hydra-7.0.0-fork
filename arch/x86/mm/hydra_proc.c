@@ -174,6 +174,48 @@ static const struct proc_ops hydra_cache_ops = {
 	.proc_release	= single_release,
 };
 
+static ssize_t hydra_demote_write(struct file *file, const char __user *ubuf,
+				  size_t count, loff_t *ppos)
+{
+	struct task_struct *task;
+	struct mm_struct *mm;
+	long val;
+	int ret, done;
+
+	ret = hydra_proc_parse_long(ubuf, count, &val);
+	if (ret)
+		return ret;
+
+	if (val <= 0)
+		return -EINVAL;
+
+	task = find_get_task_by_vpid((pid_t)val);
+	if (!task)
+		return -ESRCH;
+
+	mm = get_task_mm(task);
+	put_task_struct(task);
+	if (!mm)
+		return -ESRCH;
+
+	if (!READ_ONCE(mm->lazy_repl_enabled)) {
+		mmput(mm);
+		return -EINVAL;
+	}
+
+	done = hydra_demote_mm(mm);
+	mmput(mm);
+
+	pr_info("HYDRA: demoted %d nodes for pid %ld\n", done, val);
+
+	return count;
+}
+
+static const struct proc_ops hydra_demote_ops = {
+	.proc_write	= hydra_demote_write,
+	.proc_lseek	= noop_llseek,
+};
+
 static const struct proc_ops hydra_status_ops = {
 	.proc_open	= hydra_status_open,
 	.proc_read	= seq_read,
@@ -239,6 +281,9 @@ static int __init hydra_proc_init(void)
 
 	if (!proc_create_data("invlpgb", 0644, hydra_dir, &hydra_knob_ops,
 			      (void *)&hydra_invlpgb_knob))
+		goto fail;
+
+	if (!proc_create("demote", 0200, hydra_dir, &hydra_demote_ops))
 		goto fail;
 
 	if (!proc_create("status", 0444, hydra_dir, &hydra_status_ops))

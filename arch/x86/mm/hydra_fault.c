@@ -9,6 +9,7 @@
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
 #include <asm/tlbflush.h>
+#include <asm/tlb.h>
 #include <linux/topology.h>
 
 static int hydra_node_socket[NUMA_NODE_COUNT] __read_mostly;
@@ -77,6 +78,168 @@ int hydra_promote_node(struct mm_struct *mm, int node)
 	}
 
 	return 0;
+}
+
+static void hydra_unlink_from_chain(struct page *master, struct page *victim)
+{
+	struct page *cur;
+
+	if (!master || !victim || master == victim)
+		return;
+
+	hydra_chain_lock(master);
+
+	for (cur = master; cur; cur = cur->next_replica) {
+		if (cur->next_replica == victim) {
+			if (cur == master && victim->next_replica == master)
+				cur->next_replica = NULL;
+			else
+				cur->next_replica = victim->next_replica;
+			break;
+		}
+		if (cur->next_replica == master)
+			break;
+	}
+
+	hydra_chain_unlock(master);
+
+	WRITE_ONCE(victim->next_replica, NULL);
+}
+
+static void hydra_unlink_tree(struct mm_struct *mm, pgd_t *base)
+{
+	struct vm_area_struct *vma;
+	VMA_ITERATOR(vmi, mm, 0);
+
+	for_each_vma(vmi, vma) {
+		unsigned long addr;
+
+		for (addr = vma->vm_start; addr < vma->vm_end;) {
+			pgd_t *pgd = pgd_offset_pgd(base, addr);
+			p4d_t *p4d;
+			pud_t *pud;
+			pmd_t *pmd, *m_pmd;
+
+			if (pgd_none(*pgd) || pgd_bad(*pgd)) {
+				addr = pgd_addr_end(addr, vma->vm_end);
+				continue;
+			}
+
+			p4d = p4d_offset(pgd, addr);
+			if (p4d_none(*p4d) || p4d_bad(*p4d)) {
+				addr = p4d_addr_end(addr, vma->vm_end);
+				continue;
+			}
+
+			pud = pud_offset(p4d, addr);
+			if (pud_none(*pud) || pud_bad(*pud)) {
+				addr = pud_addr_end(addr, vma->vm_end);
+				continue;
+			}
+
+			pmd = pmd_offset(pud, addr);
+
+			m_pmd = hydra_walk_to_pmd(mm, addr,
+						  vma->master_pgd_node);
+			if (!HYDRA_WALK_BAD(m_pmd)) {
+				hydra_unlink_from_chain(virt_to_page(m_pmd),
+							virt_to_page(pmd));
+
+				if (!pmd_none(*pmd) && !pmd_bad(*pmd) &&
+				    !pmd_trans_huge(*pmd) &&
+				    !pmd_none(*m_pmd) && !pmd_bad(*m_pmd) &&
+				    !pmd_trans_huge(*m_pmd))
+					hydra_unlink_from_chain(
+						virt_to_page(pte_offset_kernel(m_pmd, addr)),
+						virt_to_page(pte_offset_kernel(pmd, addr)));
+			}
+
+			addr = pmd_addr_end(addr, vma->vm_end);
+		}
+	}
+}
+
+int hydra_demote_node(struct mm_struct *mm, int node)
+{
+	struct mmu_gather tlb;
+	pgd_t *orphan;
+	int target = -1;
+	int sock, i;
+
+	if (node < 0 || node >= NUMA_NODE_COUNT)
+		return -EINVAL;
+	if (!READ_ONCE(mm->lazy_repl_enabled))
+		return -EINVAL;
+	if (READ_ONCE(mm->hydra_tree_owner[node]) != node)
+		return 0;
+	if (mm->repl_pgd[node] == mm->pgd)
+		return 0;
+	if (mm->hydra_stats &&
+	    atomic_long_read(&mm->hydra_stats->vma_owner_cur[node]))
+		return -EBUSY;
+
+	sock = hydra_node_socket[node];
+
+	for (i = 0; i < NUMA_NODE_COUNT; i++) {
+		if (i == node || hydra_node_socket[i] != sock)
+			continue;
+		if (READ_ONCE(mm->hydra_tree_owner[i]) != i)
+			continue;
+		target = i;
+		if (mm->repl_pgd[i] == mm->pgd)
+			break;
+	}
+
+	if (target < 0)
+		return -EBUSY;
+
+	orphan = mm->repl_pgd[node];
+
+	WRITE_ONCE(mm->repl_pgd[node], mm->repl_pgd[target]);
+	WRITE_ONCE(mm->hydra_tree_owner[node], target);
+	smp_mb();
+
+	on_each_cpu_mask(cpumask_of_node(node), hydra_reload_cr3, mm, 1);
+	flush_tlb_mm(mm);
+
+	hydra_unlink_tree(mm, orphan);
+
+	tlb_gather_mmu(&tlb, mm);
+	free_pgd_range_base(&tlb, FIRST_USER_ADDRESS, TASK_SIZE,
+			    FIRST_USER_ADDRESS, USER_PGTABLES_CEILING, orphan);
+	tlb_finish_mmu(&tlb);
+
+	pgd_free(mm, orphan);
+
+	if (mm->hydra_stats) {
+		mm->hydra_stats->tree_owner[node] = target;
+		atomic_long_inc(&mm->hydra_stats->demotions);
+	}
+
+	return 0;
+}
+
+int hydra_demote_mm(struct mm_struct *mm)
+{
+	struct vm_area_struct *vma;
+	int node, done = 0;
+
+	mmap_write_lock(mm);
+
+	{
+		VMA_ITERATOR(vmi, mm, 0);
+
+		for_each_vma(vmi, vma)
+			vma_start_write(vma);
+	}
+
+	for (node = 0; node < NUMA_NODE_COUNT; node++)
+		if (!hydra_demote_node(mm, node))
+			done++;
+
+	mmap_write_unlock(mm);
+
+	return done;
 }
 
 void hydra_degree_build(struct mm_struct *mm, int primary_node)

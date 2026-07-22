@@ -325,7 +325,7 @@ static inline void free_p4d_range(struct mmu_gather *tlb, pgd_t *pgd,
  * specified virtual address range [@addr..@end). It is part of
  * the memory unmap flow.
  */
-static void free_pgd_range_base(struct mmu_gather *tlb,
+void free_pgd_range_base(struct mmu_gather *tlb,
 			unsigned long addr, unsigned long end,
 			unsigned long floor, unsigned long ceiling,
 			pgd_t *pgd_base)

@@ -412,6 +412,8 @@ static void hydra_stats_print(struct seq_file *m, struct hydra_stats *s,
 		hydra_print_val(m, 4, "distinct trees (degree)", trees);
 		hydra_print_val(m, 4, "promotions to own tree",
 				atomic_long_read(&s->promotions));
+		hydra_print_val(m, 4, "demotions to a shared tree",
+				atomic_long_read(&s->demotions));
 	}
 
 	hydra_print_section(m, "Master -> replica entry copying");
