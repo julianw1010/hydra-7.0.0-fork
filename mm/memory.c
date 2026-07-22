@@ -6484,19 +6484,26 @@ vm_fault_t __handle_mm_fault(struct vm_area_struct *vma,
 	on_replica = mm->lazy_repl_enabled && (node_to_use != owner_node);
 
 	if (on_replica && sysctl_hydra_first_touch) {
+		bool write = flags & (FAULT_FLAG_WRITE | FAULT_FLAG_UNSHARE);
 		pmd_t *mp = hydra_walk_to_pmd(mm, address, owner_node);
-		bool first_touch = false;
+		bool needs_master = false;
 
 		if (HYDRA_WALK_BAD(mp) || pmd_none(*mp)) {
-			first_touch = true;
-		} else if (!pmd_trans_huge(*mp) && !pmd_bad(*mp)) {
-			pte_t *mpte = pte_offset_kernel(mp, address);
+			needs_master = true;
+		} else if (pmd_trans_huge(*mp)) {
+			pmd_t v = READ_ONCE(*mp);
 
-			if (!(pte_val(READ_ONCE(*mpte)) & _PAGE_PRESENT))
-				first_touch = true;
+			if (pmd_protnone(v) || (write && !pmd_write(v)))
+				needs_master = true;
+		} else if (!pmd_bad(*mp)) {
+			pte_t v = READ_ONCE(*pte_offset_kernel(mp, address));
+
+			if (!(pte_val(v) & _PAGE_PRESENT) ||
+			    (write && !pte_write(v)))
+				needs_master = true;
 		}
 
-		if (first_touch) {
+		if (needs_master) {
 			node_to_use = owner_node;
 			on_replica = false;
 			hydra_stats_mark_serviced(mm);
