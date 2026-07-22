@@ -6654,7 +6654,16 @@ retry_pud:
 	}
 
 fallback:
-	return handle_pte_fault(&vmf, use_master);
+	{
+		bool fresh_pmd = mm->lazy_repl_enabled && !on_replica &&
+				 pmd_none(*vmf.pmd);
+		vm_fault_t r = handle_pte_fault(&vmf, use_master);
+
+		if (fresh_pmd && !(r & (VM_FAULT_ERROR | VM_FAULT_RETRY)) &&
+		    !pmd_none(*vmf.pmd) && !pmd_trans_huge(*vmf.pmd))
+			hydra_birth_replica_tables(vma, address);
+		return r;
+	}
 }
 
 /**

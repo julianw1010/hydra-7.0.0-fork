@@ -752,6 +752,116 @@ static int hydra_repl_fill_nodes(struct vm_fault *vmf, const int *dst_nodes,
 	return ret;
 }
 
+static int hydra_create_replica_pte_table(struct mm_struct *mm,
+					  unsigned long addr, int dst_node,
+					  size_t master_node)
+{
+	pmd_t *master_pmd, *repl_pmd;
+	pmd_t master_pmdval;
+	pgd_t *repl_pgd;
+	p4d_t *repl_p4d;
+	pud_t *repl_pud;
+	spinlock_t *master_pml;
+	pgtable_t new_page;
+	pte_t *master_pte;
+	struct page *master_pte_page;
+
+	if (hydra_find_master_pmd(mm, addr, master_node, &master_pmd, &master_pmdval) ||
+	    pmd_none(master_pmdval) || pmd_bad(master_pmdval) ||
+	    pmd_trans_huge(master_pmdval))
+		return -EAGAIN;
+
+	repl_pgd = pgd_offset_node(mm, addr, dst_node);
+	repl_p4d = p4d_alloc(mm, repl_pgd, addr);
+	if (!repl_p4d)
+		return -ENOMEM;
+
+	repl_pud = pud_alloc(mm, repl_p4d, addr);
+	if (!repl_pud)
+		return -ENOMEM;
+
+	repl_pmd = hydra_repl_pmd_alloc(mm, repl_pud, addr, master_node);
+	if (!repl_pmd)
+		return -ENOMEM;
+
+	if (!pmd_none(*repl_pmd))
+		return 0;
+
+	new_page = pte_alloc_one(mm, repl_pmd);
+	if (!new_page)
+		return -ENOMEM;
+
+	master_pml = pmd_lock(mm, master_pmd);
+
+	if (unlikely(pmd_none(*master_pmd) || pmd_bad(*master_pmd) ||
+		     pmd_trans_huge(*master_pmd))) {
+		spin_unlock(master_pml);
+		hydra_free_chain_node_rcu(new_page);
+		return -EAGAIN;
+	}
+
+	master_pte = pte_offset_kernel(master_pmd, addr);
+	master_pte_page = virt_to_page((unsigned long)master_pte & PAGE_MASK);
+
+	if (likely(pmd_none(*repl_pmd))) {
+		hydra_link_page_to_replica_chain(master_pte_page, new_page);
+		mm_inc_nr_ptes(mm);
+		paravirt_alloc_pte(mm, page_to_pfn(new_page));
+		native_set_pmd(repl_pmd,
+			__pmd(((pteval_t)page_to_pfn(new_page) << PAGE_SHIFT)
+			      | _PAGE_TABLE));
+		new_page = NULL;
+	}
+
+	spin_unlock(master_pml);
+
+	if (unlikely(new_page))
+		hydra_free_chain_node_rcu(new_page);
+
+	return 0;
+}
+
+void hydra_birth_replica_tables(struct vm_area_struct *vma,
+				unsigned long address)
+{
+	struct mm_struct *mm = vma->vm_mm;
+	size_t master_node = vma->master_pgd_node;
+	pmd_t *master_pmd;
+	nodemask_t targets;
+	struct page *pmd_page, *pte_page, *cur;
+	pte_t *pte;
+	int n;
+
+	if (!sysctl_hydra_extended)
+		return;
+
+	master_pmd = hydra_walk_to_pmd(mm, address, master_node);
+	if (HYDRA_WALK_BAD(master_pmd) || pmd_none(*master_pmd) ||
+	    pmd_bad(*master_pmd) || pmd_trans_huge(*master_pmd))
+		return;
+
+	pmd_page = virt_to_page(master_pmd);
+	pte = pte_offset_kernel(master_pmd, address);
+	pte_page = virt_to_page(pte);
+
+	nodes_clear(targets);
+	rcu_read_lock();
+	for (cur = pmd_page->next_replica; cur && cur != pmd_page;
+	     cur = cur->next_replica)
+		node_set(page_to_nid(cur), targets);
+	for (cur = pte_page->next_replica; cur && cur != pte_page;
+	     cur = cur->next_replica)
+		node_clear(page_to_nid(cur), targets);
+	rcu_read_unlock();
+	node_clear((int)master_node, targets);
+
+	if (nodes_empty(targets))
+		return;
+
+	for_each_node_mask(n, targets)
+		hydra_create_replica_pte_table(mm, address, n, master_node);
+}
+
 static bool hydra_span_socket_shared(struct mm_struct *mm,
 				     unsigned long address, size_t src_node,
 				     int level, const nodemask_t *targets)
