@@ -1144,8 +1144,10 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 		goto fail_nopgd;
 
 	mm->lazy_repl_enabled = false;
-	for (i = 0; i < NUMA_NODE_COUNT; i++)
+	for (i = 0; i < NUMA_NODE_COUNT; i++) {
 		mm->repl_pgd[i] = mm->pgd;
+		mm->hydra_socket_rep[i] = -1;
+	}
 
 	if (mm_alloc_id(mm))
 		goto fail_noid;

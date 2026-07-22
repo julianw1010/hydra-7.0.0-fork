@@ -11,58 +11,91 @@
 #include <asm/tlbflush.h>
 #include <linux/topology.h>
 
-static pte_t *hydra_nearest_pte_source(struct page *master_page,
-				       struct page *repl_page)
+static int hydra_node_socket[NUMA_NODE_COUNT] __read_mostly;
+
+static int __init hydra_socket_map_init(void)
 {
-	struct page *cur, *best = NULL;
-	int dst_nid = page_to_nid(repl_page);
-	int best_dist = node_distance(dst_nid, page_to_nid(master_page));
-	int len = 0;
+	int node, cpu, pkg;
 
-	for (cur = READ_ONCE(master_page->next_replica);
-	     cur && cur != master_page;
-	     cur = READ_ONCE(cur->next_replica)) {
-		int dist;
+	for (node = 0; node < NUMA_NODE_COUNT; node++) {
+		hydra_node_socket[node] = -1;
 
-		if (++len > NUMA_NODE_COUNT)
-			break;
-		if (cur == repl_page)
+		if (node >= MAX_NUMNODES || !node_online(node))
 			continue;
-		dist = node_distance(dst_nid, page_to_nid(cur));
-		if (dist < best_dist) {
-			best_dist = dist;
-			best = cur;
-		}
+
+		cpu = cpumask_first(cpumask_of_node(node));
+		if (cpu >= nr_cpu_ids)
+			continue;
+
+		pkg = topology_physical_package_id(cpu);
+		if (pkg >= 0 && pkg < NUMA_NODE_COUNT)
+			hydra_node_socket[node] = pkg;
 	}
 
-	return best ? (pte_t *)page_address(best) : NULL;
+	return 0;
+}
+late_initcall(hydra_socket_map_init);
+
+static int hydra_elect_socket_rep(struct mm_struct *mm, int node)
+{
+	int sock, rep;
+
+	if (node < 0 || node >= NUMA_NODE_COUNT)
+		return -1;
+
+	sock = hydra_node_socket[node];
+	if (sock < 0)
+		return -1;
+
+	rep = READ_ONCE(mm->hydra_socket_rep[sock]);
+	if (rep < 0) {
+		rep = cmpxchg(&mm->hydra_socket_rep[sock], -1, node);
+		if (rep < 0)
+			rep = node;
+	}
+
+	return rep;
 }
 
-static pmd_t *hydra_nearest_pmd_source(struct page *master_page,
-				       struct page *repl_page)
+static int hydra_fill_source_node(struct mm_struct *mm, size_t repl_node,
+				  size_t master_node)
 {
-	struct page *cur, *best = NULL;
-	int dst_nid = page_to_nid(repl_page);
-	int best_dist = node_distance(dst_nid, page_to_nid(master_page));
-	int len = 0;
+	int rep;
 
-	for (cur = READ_ONCE(master_page->next_replica);
-	     cur && cur != master_page;
-	     cur = READ_ONCE(cur->next_replica)) {
-		int dist;
+	if (!sysctl_hydra_local_fill)
+		return -1;
 
-		if (++len > NUMA_NODE_COUNT)
-			break;
-		if (cur == repl_page)
-			continue;
-		dist = node_distance(dst_nid, page_to_nid(cur));
-		if (dist < best_dist) {
-			best_dist = dist;
-			best = cur;
-		}
-	}
+	rep = hydra_elect_socket_rep(mm, repl_node);
+	if (rep < 0 || rep == (int)repl_node || rep == (int)master_node)
+		return -1;
 
-	return best ? (pmd_t *)page_address(best) : NULL;
+	return rep;
+}
+
+static pte_t *hydra_rep_pte_base(struct mm_struct *mm, unsigned long addr,
+				 int rep)
+{
+	pmd_t *pmd = hydra_walk_to_pmd(mm, addr, rep);
+	pte_t *pte;
+
+	if (HYDRA_WALK_BAD(pmd) || pmd_none(*pmd) || pmd_bad(*pmd) ||
+	    pmd_trans_huge(*pmd))
+		return NULL;
+
+	pte = pte_offset_kernel(pmd, addr);
+
+	return (pte_t *)((unsigned long)pte & PAGE_MASK);
+}
+
+static pmd_t *hydra_rep_pmd_base(struct mm_struct *mm, unsigned long pud_base,
+				 int rep)
+{
+	pmd_t *pmd = hydra_walk_to_pmd(mm, pud_base, rep);
+
+	if (HYDRA_WALK_BAD(pmd))
+		return NULL;
+
+	return pmd;
 }
 
 static int hydra_find_master_pmd(struct mm_struct *mm, unsigned long address,
@@ -162,6 +195,7 @@ static int hydra_repl_pmd_range(struct mm_struct *mm,
 	unsigned long prefetch_count;
 	unsigned long start_idx, end_idx, fault_idx, i;
 	unsigned long copied = 0;
+	int rep;
 
 	*prefetched_out = 0;
 
@@ -241,6 +275,14 @@ static int hydra_repl_pmd_range(struct mm_struct *mm,
 			hydra_link_page_to_replica_chain(m_pg, r_pg);
 	}
 
+	rep = hydra_fill_source_node(mm, repl_node, master_node);
+	if (rep >= 0 && !hydra_rep_pmd_base(mm, pud_base, rep)) {
+		unsigned long rep_prefetched = 0;
+
+		hydra_repl_pmd_range(mm, vma, address, rep, master_node,
+				     &rep_prefetched);
+	}
+
 	master_ptl = pmd_lockptr(mm, pmd_offset(master_pud, haddr));
 	repl_ptl = pmd_lockptr(mm, pmd_offset(repl_pud, haddr));
 
@@ -268,10 +310,8 @@ static int hydra_repl_pmd_range(struct mm_struct *mm,
 
 	rcu_read_lock();
 
-	if (sysctl_hydra_local_fill)
-		src_pmd_base = hydra_nearest_pmd_source(
-				virt_to_page(master_pmd_base),
-				virt_to_page(repl_pmd_base));
+	if (rep >= 0)
+		src_pmd_base = hydra_rep_pmd_base(mm, pud_base, rep);
 
 	for (i = start_idx; i < end_idx; i++) {
 		pmd_t repl_val = repl_pmd_base[i];
@@ -301,9 +341,21 @@ static int hydra_repl_pmd_range(struct mm_struct *mm,
 			continue;
 		}
 
-		val = src_pmd_base ? src_pmd_base[i] : master_pmd_base[i];
-		if (!(pmd_flags(val) & _PAGE_PRESENT) || !pmd_trans_huge(val))
+		if (src_pmd_base) {
+			pmd_t src_val = src_pmd_base[i];
+
+			if ((pmd_flags(src_val) & _PAGE_PRESENT) &&
+			    pmd_trans_huge(src_val)) {
+				val = src_val;
+			} else {
+				val = master_pmd_base[i];
+				if (!pmd_val(src_val) && pmd_present(val) &&
+				    pmd_trans_huge(val) && !pmd_protnone(val))
+					native_set_pmd(&src_pmd_base[i], val);
+			}
+		} else {
 			val = master_pmd_base[i];
+		}
 
 		if (!pmd_present(val) || !pmd_trans_huge(val))
 			continue;
@@ -408,6 +460,7 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 	spinlock_t *master_ptl, *master_pml;
 	unsigned long addr = pmd_addr;
 	unsigned long copied = 0;
+	int rep;
 	int ret;
 
 	if (hydra_find_master_pmd(mm, addr, master_node, &master_pmd, &master_pmdval) ||
@@ -479,6 +532,11 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 			hydra_free_chain_node_rcu(new_page);
 	}
 
+	rep = hydra_fill_source_node(mm, repl_node, master_node);
+	if (rep >= 0 && !hydra_rep_pte_base(mm, addr, rep))
+		hydra_repl_pte_range(mm, vma, pmd_addr, start_idx, count,
+				     rep, master_node, fault_flags);
+
 	master_pml = pmd_lock(mm, master_pmd);
 
 	if (unlikely(pmd_none(*master_pmd) || pmd_bad(*master_pmd) ||
@@ -511,10 +569,8 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 
 		rcu_read_lock();
 
-		if (sysctl_hydra_local_fill)
-			src_pte_base = hydra_nearest_pte_source(
-					virt_to_page(master_pte_base),
-					virt_to_page(repl_pte_base));
+		if (rep >= 0)
+			src_pte_base = hydra_rep_pte_base(mm, addr, rep);
 
 		for (i = start_idx; i < start_idx + count; i++) {
 			pte_t val;
@@ -537,9 +593,20 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 				}
 				continue;
 			}
-			val = src_pte_base ? src_pte_base[i] : master_pte_base[i];
-			if (!(pte_val(val) & _PAGE_PRESENT))
+			if (src_pte_base) {
+				pte_t src_val = src_pte_base[i];
+
+				if (pte_val(src_val) & _PAGE_PRESENT) {
+					val = src_val;
+				} else {
+					val = master_pte_base[i];
+					if (!pte_val(src_val) &&
+					    pte_present(val) && !pte_protnone(val))
+						src_pte_base[i] = val;
+				}
+			} else {
 				val = master_pte_base[i];
+			}
 			if (!pte_present(val) || pte_protnone(val))
 				val = __pte(0);
 			else
