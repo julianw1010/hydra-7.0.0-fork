@@ -397,15 +397,16 @@ static void hydra_stats_print(struct seq_file *m, struct hydra_stats *s,
 	hydra_print_section(m,
 		"Socket-rep fill sourcing (/proc/hydra/local_fill)");
 	{
+		char rbuf[48];
 		int sock;
 		bool any = false;
 
 		for (sock = 0; sock < NUMA_NODE_COUNT; sock++) {
 			if (s->socket_rep[sock] < 0)
 				continue;
-			scnprintf(buf, sizeof(buf), "elected rep for socket %d",
-				  sock);
-			hydra_print_val(m, 4, buf, s->socket_rep[sock]);
+			scnprintf(rbuf, sizeof(rbuf),
+				  "elected rep for socket %d", sock);
+			hydra_print_val(m, 4, rbuf, s->socket_rep[sock]);
 			any = true;
 		}
 		if (!any)
