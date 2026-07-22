@@ -335,7 +335,7 @@ static void __init xen_rebuild_p2m_list(unsigned long *p2m)
 	p2m_missing_pte = alloc_p2m_page();
 	paravirt_alloc_pte(&init_mm, __pa(p2m_missing_pte) >> PAGE_SHIFT, 0);
 	p2m_identity_pte = alloc_p2m_page();
-	paravirt_alloc_pte(&init_mm, __pa(p2m_identity_pte) >> PAGE_SHIFT);
+	paravirt_alloc_pte(&init_mm, __pa(p2m_identity_pte) >> PAGE_SHIFT, 0);
 	for (i = 0; i < PTRS_PER_PTE; i++) {
 		set_pte(p2m_missing_pte + i,
 			pfn_pte(PFN_DOWN(__pa(p2m_missing)), PAGE_KERNEL_RO));
@@ -480,7 +480,7 @@ static pte_t *alloc_p2m_pmd(unsigned long addr, pte_t *pte_pg)
 
 	for (i = 0; i < PMDS_PER_MID_PAGE; i++) {
 		copy_page(pte_newpg[i], pte_pg);
-		paravirt_alloc_pte(&init_mm, __pa(pte_newpg[i]) >> PAGE_SHIFT);
+		paravirt_alloc_pte(&init_mm, __pa(pte_newpg[i]) >> PAGE_SHIFT, 0);
 
 		pmdp = lookup_pmd_address(vaddr);
 		BUG_ON(!pmdp);
