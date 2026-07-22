@@ -8,16 +8,6 @@
 #include <linux/hydra.h>
 #include <asm/pgtable.h>
 
-struct hydra_apply_work {
-	struct kthread_work work;
-	struct mm_struct *mm;
-	unsigned long start;
-	unsigned long end;
-	int nid;
-	long applied;
-	int done;
-};
-
 struct hydra_stream_work {
 	struct kthread_work work;
 	struct mm_struct *mm;
@@ -311,15 +301,6 @@ static long hydra_reconcile_range(struct mm_struct *mm, unsigned long start,
 	return applied;
 }
 
-static void hydra_reconcile_fn(struct kthread_work *work)
-{
-	struct hydra_apply_work *w =
-		container_of(work, struct hydra_apply_work, work);
-
-	w->applied = hydra_reconcile_range(w->mm, w->start, w->end, w->nid);
-	smp_store_release(&w->done, 1);
-}
-
 static void hydra_stream_fn(struct kthread_work *work)
 {
 	struct hydra_stream_work *w =
@@ -423,89 +404,70 @@ bool hydra_scope_drain(struct hydra_scope *scope, unsigned long *lo_out,
 {
 	struct mm_struct *mm = scope->mm;
 	struct hydra_scope_pool *p = scope->pool;
-	struct hydra_apply_work works[NUMA_NODE_COUNT];
+	unsigned long smin[NUMA_NODE_COUNT], smax[NUMA_NODE_COUNT];
 	unsigned long lo = ULONG_MAX, hi = 0;
 	long applied = 0, items = 0;
-	int s, n = 0, i;
+	int s;
 
 	if (!hydra_wrprot_delegation_ready || !mm || !mm->lazy_repl_enabled)
 		return false;
 
-	{
-		unsigned long smin[NUMA_NODE_COUNT], smax[NUMA_NODE_COUNT];
+	for (s = 0; s < NUMA_NODE_COUNT; s++) {
+		smin[s] = scope->min[s];
+		smax[s] = scope->max[s];
+		scope->min[s] = ULONG_MAX;
+		scope->max[s] = 0;
+		scope->published[s] = 0;
+
+		if (smin[s] < smax[s]) {
+			if (lo > smin[s])
+				lo = smin[s];
+			if (hi < smax[s])
+				hi = smax[s];
+		}
+	}
+	scope->note_page = NULL;
+
+	if (p) {
+		for (s = 0; s < NUMA_NODE_COUNT; s++) {
+			if (p->started[s])
+				smp_store_release(&p->stream[s].closed, 1);
+		}
 
 		for (s = 0; s < NUMA_NODE_COUNT; s++) {
-			smin[s] = scope->min[s];
-			smax[s] = scope->max[s];
-			scope->min[s] = ULONG_MAX;
-			scope->max[s] = 0;
-			scope->published[s] = 0;
-		}
-		scope->note_page = NULL;
-
-		if (p) {
-			for (s = 0; s < NUMA_NODE_COUNT; s++) {
-				if (p->started[s])
-					smp_store_release(&p->stream[s].closed, 1);
-			}
-		}
-
-		for (s = 0; s < NUMA_NODE_COUNT; s++) {
-			unsigned long wlo = smin[s];
-			unsigned long whi = smax[s];
-
-			if (wlo >= whi)
+			if (!p->started[s])
 				continue;
 
-			if (lo > wlo)
-				lo = wlo;
-			if (hi < whi)
-				hi = whi;
+			kthread_flush_work(&p->stream[s].work);
+			applied += p->stream[s].applied;
 
-			if (p && p->started[s])
-				whi = p->stream[s].start;
+			if (p->stream[s].frontier < smax[s])
+				applied += hydra_reconcile_range(mm,
+						p->stream[s].frontier,
+						smax[s], s);
+			if (smin[s] < p->stream[s].start)
+				applied += hydra_reconcile_range(mm, smin[s],
+						p->stream[s].start, s);
 
-			if (wlo >= whi)
-				continue;
-
-			BUG_ON(!hydra_appliers[s]);
-			works[n].mm = mm;
-			works[n].start = wlo;
-			works[n].end = whi;
-			works[n].nid = s;
-			works[n].applied = 0;
-			works[n].done = 0;
-			kthread_init_work(&works[n].work, hydra_reconcile_fn);
-			kthread_queue_work(hydra_appliers[s], &works[n].work);
-			n++;
-		}
-
-		if (p) {
-			for (s = 0; s < NUMA_NODE_COUNT; s++) {
-				if (!p->started[s])
-					continue;
-				kthread_flush_work(&p->stream[s].work);
-				applied += p->stream[s].applied;
-				if (p->stream[s].frontier < smax[s])
-					applied += hydra_reconcile_range(mm,
-							p->stream[s].frontier,
-							smax[s], s);
-				p->started[s] = 0;
-				items++;
-			}
+			p->started[s] = 0;
+			smin[s] = ULONG_MAX;
+			smax[s] = 0;
+			items++;
 		}
 	}
 
-	if (!n && !items)
+	for (s = 0; s < NUMA_NODE_COUNT; s++) {
+		if (smin[s] >= smax[s])
+			continue;
+		applied += hydra_reconcile_range(mm, smin[s], smax[s], s);
+		items++;
+	}
+
+	if (!items)
 		return false;
 
-	for (i = 0; i < n; i++) {
-		kthread_flush_work(&works[i].work);
-		applied += works[i].applied;
-	}
-
 	hydra_stats_sibling_reconciled(mm, applied);
-	hydra_stats_scope_drain(mm, n + items);
+	hydra_stats_scope_drain(mm, items);
 
 	if (lo_out)
 		*lo_out = lo;
