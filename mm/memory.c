@@ -6510,6 +6510,26 @@ vm_fault_t __handle_mm_fault(struct vm_area_struct *vma,
 
 	on_replica = mm->lazy_repl_enabled && (node_to_use != owner_node);
 
+	if (on_replica) {
+		pmd_t *mp = hydra_walk_to_pmd(mm, address, owner_node);
+		bool first_touch = false;
+
+		if (HYDRA_WALK_BAD(mp) || pmd_none(*mp)) {
+			first_touch = true;
+		} else if (!pmd_trans_huge(*mp) && !pmd_bad(*mp)) {
+			pte_t *mpte = pte_offset_kernel(mp, address);
+
+			if (!(pte_val(READ_ONCE(*mpte)) & _PAGE_PRESENT))
+				first_touch = true;
+		}
+
+		if (first_touch) {
+			node_to_use = owner_node;
+			on_replica = false;
+			hydra_stats_mark_serviced(mm);
+		}
+	}
+
 	pgd = hydra_pgd_offset(mm, address, node_to_use);
 
 	p4d = p4d_alloc(mm, pgd, address);
