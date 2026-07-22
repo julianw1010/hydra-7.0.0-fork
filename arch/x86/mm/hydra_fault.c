@@ -106,57 +106,91 @@ static void hydra_unlink_from_chain(struct page *master, struct page *victim)
 	WRITE_ONCE(victim->next_replica, NULL);
 }
 
+static pmd_t *hydra_master_pmd_of(struct mm_struct *mm, unsigned long addr)
+{
+	pgd_t *pgd = pgd_offset(mm, addr);
+	p4d_t *p4d;
+	pud_t *pud;
+
+	if (pgd_none(*pgd) || pgd_bad(*pgd))
+		return NULL;
+
+	p4d = p4d_offset(pgd, addr);
+	if (p4d_none(*p4d) || p4d_bad(*p4d))
+		return NULL;
+
+	pud = pud_offset(p4d, addr);
+	if (pud_none(*pud) || pud_bad(*pud))
+		return NULL;
+
+	return pmd_offset(pud, addr);
+}
+
 static void hydra_unlink_tree(struct mm_struct *mm, pgd_t *base)
 {
-	struct vm_area_struct *vma;
-	VMA_ITERATOR(vmi, mm, 0);
+	unsigned long addr, next_pgd, next_p4d, next_pud, next_pmd;
+	pgd_t *pgd;
+	p4d_t *p4d;
+	pud_t *pud;
+	pmd_t *pmd, *m_pmd;
 
-	for_each_vma(vmi, vma) {
-		unsigned long addr;
+	addr = 0;
+	pgd = pgd_offset_pgd(base, addr);
 
-		for (addr = vma->vm_start; addr < vma->vm_end;) {
-			pgd_t *pgd = pgd_offset_pgd(base, addr);
-			p4d_t *p4d;
-			pud_t *pud;
-			pmd_t *pmd, *m_pmd;
+	do {
+		next_pgd = pgd_addr_end(addr, TASK_SIZE);
+		if (pgd_none(*pgd) || pgd_bad(*pgd))
+			goto next_pgd_ul;
 
-			if (pgd_none(*pgd) || pgd_bad(*pgd)) {
-				addr = pgd_addr_end(addr, vma->vm_end);
-				continue;
-			}
-
-			p4d = p4d_offset(pgd, addr);
-			if (p4d_none(*p4d) || p4d_bad(*p4d)) {
-				addr = p4d_addr_end(addr, vma->vm_end);
-				continue;
-			}
+		p4d = p4d_offset(pgd, addr);
+		do {
+			next_p4d = p4d_addr_end(addr, next_pgd);
+			if (p4d_none(*p4d) || p4d_bad(*p4d))
+				goto next_p4d_ul;
 
 			pud = pud_offset(p4d, addr);
-			if (pud_none(*pud) || pud_bad(*pud)) {
-				addr = pud_addr_end(addr, vma->vm_end);
-				continue;
-			}
+			do {
+				next_pud = pud_addr_end(addr, next_p4d);
+				if (pud_none(*pud) || pud_bad(*pud))
+					goto next_pud_ul;
 
-			pmd = pmd_offset(pud, addr);
+				pmd = pmd_offset(pud, addr);
 
-			m_pmd = hydra_walk_to_pmd(mm, addr,
-						  vma->master_pgd_node);
-			if (!HYDRA_WALK_BAD(m_pmd)) {
-				hydra_unlink_from_chain(virt_to_page(m_pmd),
-							virt_to_page(pmd));
+				m_pmd = hydra_master_pmd_of(mm, addr);
+				if (m_pmd)
+					hydra_unlink_from_chain(
+						virt_to_page(m_pmd),
+						virt_to_page(pmd));
 
-				if (!pmd_none(*pmd) && !pmd_bad(*pmd) &&
-				    !pmd_trans_huge(*pmd) &&
-				    !pmd_none(*m_pmd) && !pmd_bad(*m_pmd) &&
-				    !pmd_trans_huge(*m_pmd))
+				do {
+					next_pmd = pmd_addr_end(addr, next_pud);
+
+					if (pmd_none(*pmd) ||
+					    pmd_trans_huge(*pmd) ||
+					    pmd_bad(*pmd))
+						goto next_pmd_ul;
+
+					m_pmd = hydra_master_pmd_of(mm, addr);
+					if (!m_pmd || pmd_none(*m_pmd) ||
+					    pmd_trans_huge(*m_pmd) ||
+					    pmd_bad(*m_pmd))
+						goto next_pmd_ul;
+
 					hydra_unlink_from_chain(
 						virt_to_page(pte_offset_kernel(m_pmd, addr)),
 						virt_to_page(pte_offset_kernel(pmd, addr)));
-			}
-
-			addr = pmd_addr_end(addr, vma->vm_end);
-		}
-	}
+next_pmd_ul:
+					addr = next_pmd;
+				} while (pmd++, addr != next_pud);
+next_pud_ul:
+				addr = next_pud;
+			} while (pud++, addr != next_p4d);
+next_p4d_ul:
+			addr = next_p4d;
+		} while (p4d++, addr != next_pgd);
+next_pgd_ul:
+		addr = next_pgd;
+	} while (pgd++, addr != TASK_SIZE);
 }
 
 int hydra_demote_node(struct mm_struct *mm, int node)
