@@ -400,7 +400,7 @@ void hydra_scope_feed(struct hydra_scope *scope, int node)
 		return;
 	}
 
-	if (scope->max[node] - scope->min[node] < PMD_SIZE)
+	if (scope->max[node] - scope->min[node] < 2 * PMD_SIZE)
 		return;
 	if (!hydra_wrprot_delegation_ready || !hydra_appliers[node] ||
 	    !scope->mm || !scope->mm->lazy_repl_enabled)
