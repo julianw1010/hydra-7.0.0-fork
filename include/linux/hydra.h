@@ -224,7 +224,7 @@ struct hydra_stats {
 	long faults_recent;
 	long pt_writes_last;
 	long pt_pages_last;
-	long fills_last;
+	long price_last;
 	long rent_meter;
 	long demote_price;
 	long node_paid[NUMA_NODE_COUNT];

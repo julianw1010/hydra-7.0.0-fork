@@ -43,7 +43,7 @@ static void hydra_degree_work_fn(struct work_struct *w)
 		goto out;
 
 	{
-		long writes, pages, fills, dw, dp, df;
+		long writes, pages, dw, dp, growth;
 		long owners = 0, price = 0, excess;
 		int promoted_now = 0;
 
@@ -51,15 +51,11 @@ static void hydra_degree_work_fn(struct work_struct *w)
 			 atomic_long_read(&s->pt_writes[HYDRA_PT_PMD]);
 		pages = atomic_long_read(&s->pt_pages[HYDRA_PT_PTE]) +
 			atomic_long_read(&s->pt_pages[HYDRA_PT_PMD]);
-		fills = atomic_long_read(&s->pte_copy_faults) +
-			atomic_long_read(&s->pmd_copy_faults);
 
 		dw = writes - s->pt_writes_last;
 		dp = pages - s->pt_pages_last;
-		df = fills - s->fills_last;
 		s->pt_writes_last = writes;
 		s->pt_pages_last = pages;
-		s->fills_last = fills;
 
 		for (node = 0; node < NUMA_NODE_COUNT; node++) {
 			if (READ_ONCE(mm->hydra_tree_owner[node]) != node)
@@ -93,17 +89,23 @@ static void hydra_degree_work_fn(struct work_struct *w)
 			}
 		}
 
-		if (owners > hydra_nr_tree_groups && owners > 1) {
+		growth = price - s->price_last;
+		s->price_last = price;
+
+		excess = 0;
+		if (owners > hydra_nr_tree_groups && owners > 1)
 			excess = ((dp - dw) * (owners - hydra_nr_tree_groups)) /
 				 (owners - 1);
-			excess -= df;
-			if (excess > 0)
-				s->rent_meter += excess;
-		}
+		if (growth > 0)
+			excess -= growth * PTRS_PER_PTE;
+
+		s->rent_meter += excess;
+		if (s->rent_meter < 0)
+			s->rent_meter = 0;
 
 		if (!promoted_now && price > 0 &&
 		    owners > hydra_nr_tree_groups &&
-		    s->rent_meter >= price) {
+		    s->rent_meter >= price * PTRS_PER_PTE) {
 			if (hydra_demote_mm(mm) > 0) {
 				s->rent_meter = 0;
 				for (node = 0; node < NUMA_NODE_COUNT; node++)
@@ -528,10 +530,12 @@ static void hydra_stats_print(struct seq_file *m, struct hydra_stats *s,
 				atomic_long_read(&s->demotions));
 		hydra_print_val(m, 4, "faults in last sample (all nodes)",
 				s->faults_recent);
-		hydra_print_val(m, 4, "rent accrued (excess page touches)",
+		hydra_print_val(m, 4, "rent accrued (excess entry touches)",
 				s->rent_meter);
 		hydra_print_val(m, 4, "demote price (live replica pages)",
 				s->demote_price);
+		hydra_print_val(m, 4, "demote price (entry-op equivalent)",
+				s->demote_price * PTRS_PER_PTE);
 		seq_puts(m, "      recent faults by node:\n");
 		hydra_print_node_header(m);
 		seq_puts(m, "    flts");
