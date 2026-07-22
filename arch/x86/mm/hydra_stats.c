@@ -45,7 +45,7 @@ static void hydra_degree_work_fn(struct work_struct *w)
 	if (total > s->faults_peak)
 		s->faults_peak = total;
 
-	if (total * HYDRA_QUIET_RATIO > s->faults_peak) {
+	if (total * HYDRA_BUSY_RATIO >= s->faults_peak) {
 		int shared = 0;
 
 		s->quiet_run = 0;
@@ -65,6 +65,11 @@ static void hydra_degree_work_fn(struct work_struct *w)
 			}
 		}
 
+		goto out;
+	}
+
+	if (total * HYDRA_QUIET_RATIO >= s->faults_peak) {
+		s->quiet_run = 0;
 		goto out;
 	}
 

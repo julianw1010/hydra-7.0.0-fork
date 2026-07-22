@@ -35,6 +35,7 @@ void hydra_pud_owner_stamp(struct mm_struct *mm, unsigned long start,
 unsigned long hydra_vm_unmapped_pud_area(struct vm_unmapped_area_info *info);
 
 #define HYDRA_QUIET_RATIO	64
+#define HYDRA_BUSY_RATIO	4
 #define HYDRA_QUIET_NEED_MAX	3600
 
 enum hydra_degree {
