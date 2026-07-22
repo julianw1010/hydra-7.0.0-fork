@@ -172,6 +172,11 @@ struct hydra_stats {
 	atomic_long_t pmd_entries_prefetched;
 	atomic_long_t pmd_copy_faults;
 
+	int socket_rep[NUMA_NODE_COUNT];
+	atomic_long_t rep_fills;
+	atomic_long_t rep_entries;
+	atomic_long_t rep_backfills;
+
 	atomic_long_t pt_writes[HYDRA_PT_NR_LEVELS];
 	atomic_long_t pt_pages[HYDRA_PT_NR_LEVELS];
 
@@ -243,6 +248,20 @@ static inline void hydra_stats_copied_pmd(struct mm_struct *mm, long copied)
 	if (copied > 1)
 		atomic_long_add(copied - 1, &s->pmd_entries_prefetched);
 	atomic_long_inc(&s->pmd_copy_faults);
+}
+
+static inline void hydra_stats_rep_fill(struct mm_struct *mm, long hits,
+					long backfills)
+{
+	struct hydra_stats *s = mm->hydra_stats;
+
+	if (!s)
+		return;
+	atomic_long_inc(&s->rep_fills);
+	if (hits > 0)
+		atomic_long_add(hits, &s->rep_entries);
+	if (backfills > 0)
+		atomic_long_add(backfills, &s->rep_backfills);
 }
 
 static inline void hydra_stats_tlb(struct mm_struct *mm, long sent,

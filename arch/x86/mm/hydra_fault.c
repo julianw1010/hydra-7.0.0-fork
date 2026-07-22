@@ -52,6 +52,8 @@ static int hydra_elect_socket_rep(struct mm_struct *mm, int node)
 		rep = cmpxchg(&mm->hydra_socket_rep[sock], -1, node);
 		if (rep < 0)
 			rep = node;
+		if (mm->hydra_stats)
+			mm->hydra_stats->socket_rep[sock] = rep;
 	}
 
 	return rep;
@@ -195,6 +197,7 @@ static int hydra_repl_pmd_range(struct mm_struct *mm,
 	unsigned long prefetch_count;
 	unsigned long start_idx, end_idx, fault_idx, i;
 	unsigned long copied = 0;
+	long rep_hits = 0, rep_back = 0;
 	int rep;
 
 	*prefetched_out = 0;
@@ -347,11 +350,14 @@ static int hydra_repl_pmd_range(struct mm_struct *mm,
 			if ((pmd_flags(src_val) & _PAGE_PRESENT) &&
 			    pmd_trans_huge(src_val)) {
 				val = src_val;
+				rep_hits++;
 			} else {
 				val = master_pmd_base[i];
 				if (!pmd_val(src_val) && pmd_present(val) &&
-				    pmd_trans_huge(val) && !pmd_protnone(val))
+				    pmd_trans_huge(val) && !pmd_protnone(val)) {
 					native_set_pmd(&src_pmd_base[i], val);
+					rep_back++;
+				}
 			}
 		} else {
 			val = master_pmd_base[i];
@@ -367,6 +373,9 @@ static int hydra_repl_pmd_range(struct mm_struct *mm,
 
 		copied++;
 	}
+
+	if (src_pmd_base)
+		hydra_stats_rep_fill(mm, rep_hits, rep_back);
 
 	rcu_read_unlock();
 
@@ -566,6 +575,7 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 	{
 		unsigned long i;
 		pte_t *src_pte_base = NULL;
+		long rep_hits = 0, rep_back = 0;
 
 		rcu_read_lock();
 
@@ -598,11 +608,14 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 
 				if (pte_val(src_val) & _PAGE_PRESENT) {
 					val = src_val;
+					rep_hits++;
 				} else {
 					val = master_pte_base[i];
 					if (!pte_val(src_val) &&
-					    pte_present(val) && !pte_protnone(val))
+					    pte_present(val) && !pte_protnone(val)) {
 						src_pte_base[i] = val;
+						rep_back++;
+					}
 				}
 			} else {
 				val = master_pte_base[i];
@@ -613,6 +626,9 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 				copied++;
 			repl_pte_base[i] = val;
 		}
+
+		if (src_pte_base)
+			hydra_stats_rep_fill(mm, rep_hits, rep_back);
 
 		rcu_read_unlock();
 	}

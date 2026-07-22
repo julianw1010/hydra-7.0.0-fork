@@ -30,6 +30,12 @@ struct hydra_stats *hydra_stats_attach(struct mm_struct *mm)
 	get_task_comm(s->comm, current);
 	s->mm = mm;
 	s->master_node = -1;
+	{
+		int i;
+
+		for (i = 0; i < NUMA_NODE_COUNT; i++)
+			s->socket_rep[i] = -1;
+	}
 	s->start_jiffies = jiffies;
 
 	spin_lock(&hydra_stats_lock);
@@ -387,6 +393,31 @@ static void hydra_stats_print(struct seq_file *m, struct hydra_stats *s,
 	seq_puts(m, "      by handling node:\n");
 	hydra_print_node_header(m);
 	hydra_print_node_row(m, "flts", s->faults_node);
+
+	hydra_print_section(m,
+		"Socket-rep fill sourcing (/proc/hydra/local_fill)");
+	{
+		int sock;
+		bool any = false;
+
+		for (sock = 0; sock < NUMA_NODE_COUNT; sock++) {
+			if (s->socket_rep[sock] < 0)
+				continue;
+			scnprintf(buf, sizeof(buf), "elected rep for socket %d",
+				  sock);
+			hydra_print_val(m, 4, buf, s->socket_rep[sock]);
+			any = true;
+		}
+		if (!any)
+			seq_printf(m, "    %-40s %12s\n", "elected reps",
+				   "none");
+	}
+	hydra_print_val(m, 4, "fills sourced from a rep",
+			atomic_long_read(&s->rep_fills));
+	hydra_print_val(m, 4, "entries taken from a rep",
+			atomic_long_read(&s->rep_entries));
+	hydra_print_val(m, 4, "entries back-filled into a rep",
+			atomic_long_read(&s->rep_backfills));
 
 	hydra_print_section(m, "Master -> replica entry copying");
 	hydra_print_copied(m, "PTE", "4KB",
