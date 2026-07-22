@@ -1161,7 +1161,7 @@ struct mm_struct {
 		unsigned long task_size;	/* size of task vm space */
 		bool          lazy_repl_enabled;
 		pgd_t * repl_pgd[NUMA_NODE_COUNT];
-		int           hydra_socket_rep[NUMA_NODE_COUNT];
+		int           hydra_tree_owner[NUMA_NODE_COUNT];
 		struct xarray *hydra_pud_owner;
 		struct hydra_stats *hydra_stats;
 		pgd_t * pgd;

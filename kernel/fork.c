@@ -597,10 +597,17 @@ static inline void mm_free_pgd(struct mm_struct *mm)
 	}
 
 	for (i = 0; i < NUMA_NODE_COUNT; i++) {
-		if (mm->repl_pgd[i] && mm->repl_pgd[i] != mm->pgd) {
-			pgd_free(mm, mm->repl_pgd[i]);
-			mm->repl_pgd[i] = NULL;
-		}
+		pgd_t *p = mm->repl_pgd[i];
+		int j;
+
+		if (!p || p == mm->pgd)
+			continue;
+
+		for (j = i; j < NUMA_NODE_COUNT; j++)
+			if (mm->repl_pgd[j] == p)
+				mm->repl_pgd[j] = NULL;
+
+		pgd_free(mm, p);
 	}
 
 	pgd_free(mm, mm->pgd);
@@ -1146,7 +1153,7 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 	mm->lazy_repl_enabled = false;
 	for (i = 0; i < NUMA_NODE_COUNT; i++) {
 		mm->repl_pgd[i] = mm->pgd;
-		mm->hydra_socket_rep[i] = -1;
+		mm->hydra_tree_owner[i] = i;
 	}
 
 	if (mm_alloc_id(mm))

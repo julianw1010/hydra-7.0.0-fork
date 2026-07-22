@@ -103,7 +103,8 @@ static bool vmf_pte_changed(struct vm_fault *vmf);
 #if defined(CONFIG_X86) && defined(CONFIG_SYSCTL)
 int sysctl_hydra_repl_order __read_mostly = 9;
 int sysctl_hydra_first_touch __read_mostly = 1;
-int sysctl_hydra_local_fill __read_mostly = 0;
+int sysctl_hydra_degree __read_mostly = HYDRA_DEGREE_NODE;
+int sysctl_hydra_promote_faults __read_mostly = 8192;
 int sysctl_hydra_auto_enable __read_mostly = 0;
 #endif
 
@@ -461,8 +462,16 @@ void free_pgtables(struct mmu_gather *tlb, struct unmap_desc *unmap)
 			hydra_break_chain_range(tlb->mm, addr, vma->vm_end,
 						unmap->pg_start, pg_ceiling);
 			for (i = 0; i < NUMA_NODE_COUNT; i++) {
+				int j;
+
 				if (!tlb->mm->repl_pgd[i] ||
 				    tlb->mm->repl_pgd[i] == tlb->mm->pgd)
+					continue;
+				for (j = 0; j < i; j++)
+					if (tlb->mm->repl_pgd[j] ==
+					    tlb->mm->repl_pgd[i])
+						break;
+				if (j < i)
 					continue;
 				free_pgd_range_base(tlb, addr, vma->vm_end,
 					unmap->pg_start, pg_ceiling,
@@ -6479,7 +6488,7 @@ vm_fault_t __handle_mm_fault(struct vm_area_struct *vma,
 		node_to_use = owner_node;
 		hydra_stats_mark_serviced(mm);
 	} else {
-		node_to_use = numa_node_id();
+		node_to_use = hydra_tree_node(mm, numa_node_id());
 	}
 
 	on_replica = mm->lazy_repl_enabled && (node_to_use != owner_node);
@@ -6823,6 +6832,9 @@ vm_fault_t handle_mm_fault(struct vm_area_struct *vma, unsigned long address,
 	lru_gen_enter_fault(vma);
 
 	hctx = hydra_stats_fault_begin(mm, vma, flags);
+
+	if (mm->lazy_repl_enabled && sysctl_hydra_degree == HYDRA_DEGREE_AUTO)
+		hydra_degree_tick(mm);
 
 	if (unlikely(is_vm_hugetlb_page(vma))) {
 		pr_emerg("hugetlb: hugetlb fault attempted; hugetlb is disabled on this kernel\n");

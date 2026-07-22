@@ -34,7 +34,7 @@ struct hydra_stats *hydra_stats_attach(struct mm_struct *mm)
 		int i;
 
 		for (i = 0; i < NUMA_NODE_COUNT; i++)
-			s->socket_rep[i] = -1;
+			s->tree_owner[i] = i;
 	}
 	s->start_jiffies = jiffies;
 
@@ -395,30 +395,24 @@ static void hydra_stats_print(struct seq_file *m, struct hydra_stats *s,
 	hydra_print_node_row(m, "flts", s->faults_node);
 
 	hydra_print_section(m,
-		"Socket-rep fill sourcing (/proc/hydra/local_fill)");
+		"Replication degree  [cols = node, value = tree it walks]");
 	{
-		char rbuf[48];
-		int sock;
-		bool any = false;
+		int node, trees = 0;
 
-		for (sock = 0; sock < NUMA_NODE_COUNT; sock++) {
-			if (s->socket_rep[sock] < 0)
-				continue;
-			scnprintf(rbuf, sizeof(rbuf),
-				  "elected rep for socket %d", sock);
-			hydra_print_val(m, 4, rbuf, s->socket_rep[sock]);
-			any = true;
-		}
-		if (!any)
-			seq_printf(m, "    %-40s %12s\n", "elected reps",
-				   "none");
+		hydra_print_node_header(m);
+		seq_puts(m, "    tree");
+		for (node = 0; node < NUMA_NODE_COUNT; node++)
+			seq_printf(m, " %7d", s->tree_owner[node]);
+		seq_putc(m, '\n');
+
+		for (node = 0; node < NUMA_NODE_COUNT; node++)
+			if (s->tree_owner[node] == node)
+				trees++;
+
+		hydra_print_val(m, 4, "distinct trees (degree)", trees);
+		hydra_print_val(m, 4, "promotions to own tree",
+				atomic_long_read(&s->promotions));
 	}
-	hydra_print_val(m, 4, "fills sourced from a rep",
-			atomic_long_read(&s->rep_fills));
-	hydra_print_val(m, 4, "entries taken from a rep",
-			atomic_long_read(&s->rep_entries));
-	hydra_print_val(m, 4, "entries back-filled into a rep",
-			atomic_long_read(&s->rep_backfills));
 
 	hydra_print_section(m, "Master -> replica entry copying");
 	hydra_print_copied(m, "PTE", "4KB",

@@ -34,6 +34,39 @@ void hydra_pud_owner_stamp(struct mm_struct *mm, unsigned long start,
 			   unsigned long end, int node);
 unsigned long hydra_vm_unmapped_pud_area(struct vm_unmapped_area_info *info);
 
+enum hydra_degree {
+	HYDRA_DEGREE_SOCKET = 0,
+	HYDRA_DEGREE_NODE = 1,
+	HYDRA_DEGREE_AUTO = 2,
+};
+
+int hydra_promote_node(struct mm_struct *mm, int node);
+void hydra_degree_build(struct mm_struct *mm, int primary_node);
+
+static inline int hydra_tree_node(struct mm_struct *mm, int node)
+{
+	if (!mm->lazy_repl_enabled || node < 0 || node >= NUMA_NODE_COUNT)
+		return node;
+
+	return READ_ONCE(mm->hydra_tree_owner[node]);
+}
+
+static inline void hydra_tree_expand(struct mm_struct *mm, nodemask_t *mask)
+{
+	nodemask_t out = *mask;
+	int n, m;
+
+	for (n = 0; n < NUMA_NODE_COUNT; n++) {
+		if (!node_isset(n, *mask))
+			continue;
+		for (m = 0; m < NUMA_NODE_COUNT; m++)
+			if (READ_ONCE(mm->hydra_tree_owner[m]) == n)
+				node_set(m, out);
+	}
+
+	*mask = out;
+}
+
 #define HYDRA_WALK_NONE ((void *)0x1)
 
 #define HYDRA_WALK_BAD(r) (((unsigned long)(r) & 1) == 1)
@@ -172,10 +205,8 @@ struct hydra_stats {
 	atomic_long_t pmd_entries_prefetched;
 	atomic_long_t pmd_copy_faults;
 
-	int socket_rep[NUMA_NODE_COUNT];
-	atomic_long_t rep_fills;
-	atomic_long_t rep_entries;
-	atomic_long_t rep_backfills;
+	int tree_owner[NUMA_NODE_COUNT];
+	atomic_long_t promotions;
 
 	atomic_long_t pt_writes[HYDRA_PT_NR_LEVELS];
 	atomic_long_t pt_pages[HYDRA_PT_NR_LEVELS];
@@ -250,18 +281,19 @@ static inline void hydra_stats_copied_pmd(struct mm_struct *mm, long copied)
 	atomic_long_inc(&s->pmd_copy_faults);
 }
 
-static inline void hydra_stats_rep_fill(struct mm_struct *mm, long hits,
-					long backfills)
+static inline void hydra_degree_tick(struct mm_struct *mm)
 {
 	struct hydra_stats *s = mm->hydra_stats;
+	int node = numa_node_id();
 
-	if (!s)
+	if (!s || node < 0 || node >= NUMA_NODE_COUNT)
 		return;
-	atomic_long_inc(&s->rep_fills);
-	if (hits > 0)
-		atomic_long_add(hits, &s->rep_entries);
-	if (backfills > 0)
-		atomic_long_add(backfills, &s->rep_backfills);
+	if (READ_ONCE(mm->hydra_tree_owner[node]) == node)
+		return;
+	if (atomic_long_read(&s->faults_node[node]) < sysctl_hydra_promote_faults)
+		return;
+
+	hydra_promote_node(mm, node);
 }
 
 static inline void hydra_stats_tlb(struct mm_struct *mm, long sent,
@@ -334,7 +366,7 @@ static inline struct hydra_fault_ctx hydra_stats_fault_begin(struct mm_struct *m
 		if (node >= 0 && node < NUMA_NODE_COUNT)
 			atomic_long_inc(&c.s->faults_node[node]);
 		c.replica = mm->lazy_repl_enabled &&
-			    (node != vma->master_pgd_node);
+			    (hydra_tree_node(mm, node) != vma->master_pgd_node);
 		c.write = !!(flags & FAULT_FLAG_WRITE);
 		c.present = !!(flags & FAULT_FLAG_PROT);
 		if (c.replica) {
