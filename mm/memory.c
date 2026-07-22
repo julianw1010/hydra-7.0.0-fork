@@ -107,6 +107,8 @@ int sysctl_hydra_degree __read_mostly = HYDRA_DEGREE_NODE;
 int sysctl_hydra_promote_faults __read_mostly = 8192;
 int sysctl_hydra_quiet_faults __read_mostly = 1024;
 int sysctl_hydra_quiet_rounds __read_mostly = 3;
+int sysctl_hydra_promote_rounds __read_mostly = 3;
+int sysctl_hydra_demote_cooldown __read_mostly = 15;
 int sysctl_hydra_auto_enable __read_mostly = 0;
 #endif
 

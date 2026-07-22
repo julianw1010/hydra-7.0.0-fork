@@ -92,6 +92,8 @@ extern int sysctl_hydra_degree;
 extern int sysctl_hydra_promote_faults;
 extern int sysctl_hydra_quiet_faults;
 extern int sysctl_hydra_quiet_rounds;
+extern int sysctl_hydra_promote_rounds;
+extern int sysctl_hydra_demote_cooldown;
 extern int sysctl_hydra_auto_enable;
 #endif
 #else

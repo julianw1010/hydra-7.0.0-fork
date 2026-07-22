@@ -221,6 +221,8 @@ struct hydra_stats {
 	long node_faults_recent[NUMA_NODE_COUNT];
 	long faults_recent;
 	int quiet_rounds;
+	int hot_rounds[NUMA_NODE_COUNT];
+	int cooldown;
 
 	atomic_long_t pt_writes[HYDRA_PT_NR_LEVELS];
 	atomic_long_t pt_pages[HYDRA_PT_NR_LEVELS];

@@ -42,13 +42,30 @@ static void hydra_degree_work_fn(struct work_struct *w)
 	if (sysctl_hydra_degree != HYDRA_DEGREE_AUTO)
 		goto out;
 
-	for (node = 0; node < NUMA_NODE_COUNT; node++)
-		if (s->node_faults_recent[node] >= sysctl_hydra_promote_faults)
-			hydra_promote_node(mm, node);
+	if (s->cooldown > 0) {
+		s->cooldown--;
+		for (node = 0; node < NUMA_NODE_COUNT; node++)
+			s->hot_rounds[node] = 0;
+		goto out;
+	}
+
+	for (node = 0; node < NUMA_NODE_COUNT; node++) {
+		if (s->node_faults_recent[node] < sysctl_hydra_promote_faults) {
+			s->hot_rounds[node] = 0;
+			continue;
+		}
+
+		if (++s->hot_rounds[node] < sysctl_hydra_promote_rounds)
+			continue;
+
+		s->hot_rounds[node] = 0;
+		hydra_promote_node(mm, node);
+	}
 
 	if (total < sysctl_hydra_quiet_faults) {
 		if (++s->quiet_rounds >= sysctl_hydra_quiet_rounds) {
-			hydra_demote_mm(mm);
+			if (hydra_demote_mm(mm) > 0)
+				s->cooldown = sysctl_hydra_demote_cooldown;
 			s->quiet_rounds = 0;
 		}
 	} else {
