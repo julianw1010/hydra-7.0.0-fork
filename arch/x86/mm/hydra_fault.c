@@ -9,6 +9,61 @@
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
 #include <asm/tlbflush.h>
+#include <linux/topology.h>
+
+static pte_t *hydra_nearest_pte_source(struct page *master_page,
+				       struct page *repl_page)
+{
+	struct page *cur, *best = NULL;
+	int dst_nid = page_to_nid(repl_page);
+	int best_dist = node_distance(dst_nid, page_to_nid(master_page));
+	int len = 0;
+
+	for (cur = READ_ONCE(master_page->next_replica);
+	     cur && cur != master_page;
+	     cur = READ_ONCE(cur->next_replica)) {
+		int dist;
+
+		if (++len > NUMA_NODE_COUNT)
+			break;
+		if (cur == repl_page)
+			continue;
+		dist = node_distance(dst_nid, page_to_nid(cur));
+		if (dist < best_dist) {
+			best_dist = dist;
+			best = cur;
+		}
+	}
+
+	return best ? (pte_t *)page_address(best) : NULL;
+}
+
+static pmd_t *hydra_nearest_pmd_source(struct page *master_page,
+				       struct page *repl_page)
+{
+	struct page *cur, *best = NULL;
+	int dst_nid = page_to_nid(repl_page);
+	int best_dist = node_distance(dst_nid, page_to_nid(master_page));
+	int len = 0;
+
+	for (cur = READ_ONCE(master_page->next_replica);
+	     cur && cur != master_page;
+	     cur = READ_ONCE(cur->next_replica)) {
+		int dist;
+
+		if (++len > NUMA_NODE_COUNT)
+			break;
+		if (cur == repl_page)
+			continue;
+		dist = node_distance(dst_nid, page_to_nid(cur));
+		if (dist < best_dist) {
+			best_dist = dist;
+			best = cur;
+		}
+	}
+
+	return best ? (pmd_t *)page_address(best) : NULL;
+}
 
 static int hydra_find_master_pmd(struct mm_struct *mm, unsigned long address,
 				 int master_node, pmd_t **pmdpp,
@@ -100,6 +155,7 @@ static int hydra_repl_pmd_range(struct mm_struct *mm,
 	p4d_t *master_p4d, *repl_p4d;
 	pud_t *master_pud, *repl_pud;
 	pmd_t *master_pmd_base, *repl_pmd_base;
+	pmd_t *src_pmd_base = NULL;
 	spinlock_t *master_ptl, *repl_ptl;
 	unsigned long haddr = address & HPAGE_PMD_MASK;
 	unsigned long pud_base, range_start, range_end;
@@ -210,17 +266,25 @@ static int hydra_repl_pmd_range(struct mm_struct *mm,
 	start_idx = (range_start - pud_base) >> HPAGE_PMD_SHIFT;
 	end_idx = (range_end - pud_base) >> HPAGE_PMD_SHIFT;
 
+	rcu_read_lock();
+
+	if (sysctl_hydra_local_fill)
+		src_pmd_base = hydra_nearest_pmd_source(
+				virt_to_page(master_pmd_base),
+				virt_to_page(repl_pmd_base));
+
 	for (i = start_idx; i < end_idx; i++) {
-		pmd_t master_val = master_pmd_base[i];
 		pmd_t repl_val = repl_pmd_base[i];
-
-		if (!pmd_present(master_val) || !pmd_trans_huge(master_val))
-			continue;
-
-		if (pmd_protnone(master_val))
-			continue;
+		pmd_t val;
 
 		if (pmd_present(repl_val) && pmd_trans_huge(repl_val)) {
+			pmd_t master_val = master_pmd_base[i];
+
+			if (!pmd_present(master_val) ||
+			    !pmd_trans_huge(master_val) ||
+			    pmd_protnone(master_val))
+				continue;
+
 			if ((pmd_val(repl_val) ^ pmd_val(master_val)) &
 			    ~(_PAGE_ACCESSED | _PAGE_DIRTY | _PAGE_SAVED_DIRTY)) {
 				struct page *m_pg = virt_to_page(master_pmd_base);
@@ -237,10 +301,22 @@ static int hydra_repl_pmd_range(struct mm_struct *mm,
 			continue;
 		}
 
-		native_set_pmd(&repl_pmd_base[i], master_val);
+		val = src_pmd_base ? src_pmd_base[i] : master_pmd_base[i];
+		if (!(pmd_flags(val) & _PAGE_PRESENT) || !pmd_trans_huge(val))
+			val = master_pmd_base[i];
+
+		if (!pmd_present(val) || !pmd_trans_huge(val))
+			continue;
+
+		if (pmd_protnone(val))
+			continue;
+
+		native_set_pmd(&repl_pmd_base[i], val);
 
 		copied++;
 	}
+
+	rcu_read_unlock();
 
 	*prefetched_out = copied;
 	hydra_stats_copied_pmd(mm, copied);
@@ -431,10 +507,20 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 
 	{
 		unsigned long i;
+		pte_t *src_pte_base = NULL;
+
+		rcu_read_lock();
+
+		if (sysctl_hydra_local_fill)
+			src_pte_base = hydra_nearest_pte_source(
+					virt_to_page(master_pte_base),
+					virt_to_page(repl_pte_base));
+
 		for (i = start_idx; i < start_idx + count; i++) {
-			pte_t val = master_pte_base[i];
+			pte_t val;
 			pte_t repl_cur = repl_pte_base[i];
 			if (pte_present(repl_cur)) {
+				val = master_pte_base[i];
 				if (pte_present(val) && !pte_protnone(val) &&
 				    ((pte_val(repl_cur) ^ pte_val(val)) &
 				     ~(_PAGE_ACCESSED | _PAGE_DIRTY | _PAGE_SAVED_DIRTY))) {
@@ -451,12 +537,17 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 				}
 				continue;
 			}
+			val = src_pte_base ? src_pte_base[i] : master_pte_base[i];
+			if (!(pte_val(val) & _PAGE_PRESENT))
+				val = master_pte_base[i];
 			if (!pte_present(val) || pte_protnone(val))
 				val = __pte(0);
 			else
 				copied++;
 			repl_pte_base[i] = val;
 		}
+
+		rcu_read_unlock();
 	}
 
 	if (master_ptl != master_pml)

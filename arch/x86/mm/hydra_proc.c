@@ -7,6 +7,7 @@
 
 extern int sysctl_hydra_repl_order;
 extern int sysctl_hydra_first_touch;
+extern int sysctl_hydra_local_fill;
 extern int sysctl_hydra_tlbflush_opt;
 extern int sysctl_hydra_invlpgb;
 
@@ -25,6 +26,10 @@ static const struct hydra_int_knob hydra_repl_order_knob = {
 
 static const struct hydra_int_knob hydra_first_touch_knob = {
 	"first_touch", &sysctl_hydra_first_touch, 0, 1,
+};
+
+static const struct hydra_int_knob hydra_local_fill_knob = {
+	"local_fill", &sysctl_hydra_local_fill, 0, 1,
 };
 
 static const struct hydra_int_knob hydra_tlbflush_opt_knob = {
@@ -213,6 +218,10 @@ static int __init hydra_proc_init(void)
 
 	if (!proc_create_data("first_touch", 0644, hydra_dir, &hydra_knob_ops,
 			      (void *)&hydra_first_touch_knob))
+		goto fail;
+
+	if (!proc_create_data("local_fill", 0644, hydra_dir, &hydra_knob_ops,
+			      (void *)&hydra_local_fill_knob))
 		goto fail;
 
 	if (!proc_create_data("tlbflush_opt", 0644, hydra_dir, &hydra_knob_ops,

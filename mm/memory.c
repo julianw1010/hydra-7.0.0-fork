@@ -103,6 +103,7 @@ static bool vmf_pte_changed(struct vm_fault *vmf);
 #if defined(CONFIG_X86) && defined(CONFIG_SYSCTL)
 int sysctl_hydra_repl_order __read_mostly = 9;
 int sysctl_hydra_first_touch __read_mostly = 1;
+int sysctl_hydra_local_fill __read_mostly = 0;
 int sysctl_hydra_auto_enable __read_mostly = 0;
 #endif
 
