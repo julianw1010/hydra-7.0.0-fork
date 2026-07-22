@@ -288,7 +288,7 @@ void hydra_degree_build(struct mm_struct *mm, int primary_node)
 			continue;
 		}
 
-		if (sysctl_hydra_degree == HYDRA_DEGREE_NODE) {
+		if (sysctl_hydra_degree != HYDRA_DEGREE_SOCKET) {
 			mm->hydra_tree_owner[i] = i;
 			continue;
 		}
