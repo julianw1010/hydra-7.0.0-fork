@@ -42,44 +42,75 @@ static void hydra_degree_work_fn(struct work_struct *w)
 	if (sysctl_hydra_degree != HYDRA_DEGREE_AUTO)
 		goto out;
 
-	if (total > s->faults_peak)
-		s->faults_peak = total;
+	{
+		long writes, pages, fills, dw, dp, df;
+		long owners = 0, price = 0, excess;
+		int promoted_now = 0;
 
-	if (total * HYDRA_BUSY_RATIO >= s->faults_peak) {
-		int shared = 0;
+		writes = atomic_long_read(&s->pt_writes[HYDRA_PT_PTE]) +
+			 atomic_long_read(&s->pt_writes[HYDRA_PT_PMD]);
+		pages = atomic_long_read(&s->pt_pages[HYDRA_PT_PTE]) +
+			atomic_long_read(&s->pt_pages[HYDRA_PT_PMD]);
+		fills = atomic_long_read(&s->pte_copy_faults) +
+			atomic_long_read(&s->pmd_copy_faults);
 
-		s->quiet_run = 0;
+		dw = writes - s->pt_writes_last;
+		dp = pages - s->pt_pages_last;
+		df = fills - s->fills_last;
+		s->pt_writes_last = writes;
+		s->pt_pages_last = pages;
+		s->fills_last = fills;
 
-		for (node = 0; node < NUMA_NODE_COUNT; node++)
+		for (node = 0; node < NUMA_NODE_COUNT; node++) {
 			if (READ_ONCE(mm->hydra_tree_owner[node]) != node)
-				shared++;
+				continue;
+			owners++;
+			if (mm->repl_pgd[node] == mm->pgd)
+				continue;
+			price += atomic_long_read(&s->pt_cur[node][HYDRA_PT_PTE]) +
+				 atomic_long_read(&s->pt_cur[node][HYDRA_PT_PMD]);
+		}
+		s->demote_price = price;
 
-		if (shared) {
-			for (node = 0; node < NUMA_NODE_COUNT; node++)
-				hydra_promote_node(mm, node);
+		for (node = 0; node < NUMA_NODE_COUNT; node++) {
+			int o = READ_ONCE(mm->hydra_tree_owner[node]);
+			long need;
 
-			if (s->just_demoted) {
-				s->just_demoted = 0;
-				if (s->quiet_need < HYDRA_QUIET_NEED_MAX)
-					s->quiet_need *= 2;
+			if (o == node || o < 0 || o >= NUMA_NODE_COUNT) {
+				s->node_paid[node] = 0;
+				continue;
+			}
+
+			s->node_paid[node] += s->node_faults_recent[node];
+
+			need = atomic_long_read(&s->pt_cur[o][HYDRA_PT_PTE]) +
+			       atomic_long_read(&s->pt_cur[o][HYDRA_PT_PMD]);
+
+			if (need > 0 && s->node_paid[node] >= need) {
+				s->node_paid[node] = 0;
+				if (!hydra_promote_node(mm, node))
+					promoted_now = 1;
 			}
 		}
 
-		goto out;
+		if (owners > hydra_nr_tree_groups && owners > 1) {
+			excess = ((dp - dw) * (owners - hydra_nr_tree_groups)) /
+				 (owners - 1);
+			excess -= df;
+			if (excess > 0)
+				s->rent_meter += excess;
+		}
+
+		if (!promoted_now && price > 0 &&
+		    owners > hydra_nr_tree_groups &&
+		    s->rent_meter >= price) {
+			if (hydra_demote_mm(mm) > 0) {
+				s->rent_meter = 0;
+				for (node = 0; node < NUMA_NODE_COUNT; node++)
+					s->node_paid[node] = 0;
+			}
+		}
 	}
-
-	if (total * HYDRA_QUIET_RATIO >= s->faults_peak) {
-		s->quiet_run = 0;
-		goto out;
-	}
-
-	if (++s->quiet_run < s->quiet_need)
-		goto out;
-
-	s->quiet_run = 0;
-
-	if (hydra_demote_mm(mm) > 0)
-		s->just_demoted = 1;
 
 out:
 	mmput_async(mm);
@@ -113,8 +144,6 @@ struct hydra_stats *hydra_stats_attach(struct mm_struct *mm)
 		for (i = 0; i < NUMA_NODE_COUNT; i++)
 			s->tree_owner[i] = i;
 	}
-
-	s->quiet_need = 1;
 
 	INIT_DELAYED_WORK(&s->degree_work, hydra_degree_work_fn);
 	s->start_jiffies = jiffies;
@@ -499,10 +528,10 @@ static void hydra_stats_print(struct seq_file *m, struct hydra_stats *s,
 				atomic_long_read(&s->demotions));
 		hydra_print_val(m, 4, "faults in last sample (all nodes)",
 				s->faults_recent);
-		hydra_print_val(m, 4, "peak faults in any sample",
-				s->faults_peak);
-		hydra_print_val(m, 4, "quiet samples needed to demote",
-				s->quiet_need);
+		hydra_print_val(m, 4, "rent accrued (excess page touches)",
+				s->rent_meter);
+		hydra_print_val(m, 4, "demote price (live replica pages)",
+				s->demote_price);
 		seq_puts(m, "      recent faults by node:\n");
 		hydra_print_node_header(m);
 		seq_puts(m, "    flts");

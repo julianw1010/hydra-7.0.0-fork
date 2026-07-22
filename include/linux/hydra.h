@@ -34,9 +34,7 @@ void hydra_pud_owner_stamp(struct mm_struct *mm, unsigned long start,
 			   unsigned long end, int node);
 unsigned long hydra_vm_unmapped_pud_area(struct vm_unmapped_area_info *info);
 
-#define HYDRA_QUIET_RATIO	64
-#define HYDRA_BUSY_RATIO	4
-#define HYDRA_QUIET_NEED_MAX	3600
+extern int hydra_nr_tree_groups;
 
 enum hydra_degree {
 	HYDRA_DEGREE_SOCKET = 0,
@@ -224,10 +222,12 @@ struct hydra_stats {
 	long node_faults_last[NUMA_NODE_COUNT];
 	long node_faults_recent[NUMA_NODE_COUNT];
 	long faults_recent;
-	long faults_peak;
-	int quiet_run;
-	int quiet_need;
-	int just_demoted;
+	long pt_writes_last;
+	long pt_pages_last;
+	long fills_last;
+	long rent_meter;
+	long demote_price;
+	long node_paid[NUMA_NODE_COUNT];
 
 	atomic_long_t pt_writes[HYDRA_PT_NR_LEVELS];
 	atomic_long_t pt_pages[HYDRA_PT_NR_LEVELS];

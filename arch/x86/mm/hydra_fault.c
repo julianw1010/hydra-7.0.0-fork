@@ -13,10 +13,12 @@
 #include <linux/topology.h>
 
 static int hydra_node_socket[NUMA_NODE_COUNT] __read_mostly;
+int hydra_nr_tree_groups __read_mostly = 1;
 
 static int __init hydra_socket_map_init(void)
 {
-	int node, cpu, pkg;
+	int node, cpu, pkg, groups = 0;
+	bool seen[NUMA_NODE_COUNT] = { };
 
 	for (node = 0; node < NUMA_NODE_COUNT; node++) {
 		hydra_node_socket[node] = -1;
@@ -32,6 +34,20 @@ static int __init hydra_socket_map_init(void)
 		if (pkg >= 0 && pkg < NUMA_NODE_COUNT)
 			hydra_node_socket[node] = pkg;
 	}
+
+	for (node = 0; node < NUMA_NODE_COUNT; node++) {
+		int sock = hydra_node_socket[node];
+
+		if (sock < 0)
+			groups++;
+		else if (!seen[sock]) {
+			seen[sock] = true;
+			groups++;
+		}
+	}
+
+	if (groups > 0)
+		hydra_nr_tree_groups = groups;
 
 	return 0;
 }
