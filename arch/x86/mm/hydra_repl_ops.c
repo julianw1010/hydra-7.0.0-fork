@@ -122,7 +122,7 @@ void hydra_set_pte(pte_t *ptep, pte_t pteval)
 
 	if (READ_ONCE(pte_page->next_replica)) {
 		offset = ((unsigned long)ptep) & ~PAGE_MASK;
-		repl_val = pte_present(pteval) ? pteval : __pte(0);
+		repl_val = (pte_val(pteval) & _PAGE_PRESENT) ? pteval : __pte(0);
 
 		rcu_read_lock();
 		for (cur = pte_page->next_replica; cur && cur != pte_page; cur = cur->next_replica) {
@@ -284,7 +284,7 @@ void hydra_set_pmd(pmd_t *pmdp, pmd_t pmd)
 	if (READ_ONCE(page->next_replica)) {
 		offset = ((unsigned long)pmdp) & ~PAGE_MASK;
 
-		if ((pmd_flags(pmd) & (_PAGE_PRESENT | _PAGE_PROTNONE)) &&
+		if ((pmd_flags(pmd) & _PAGE_PRESENT) &&
 		    (pmd_trans_huge(pmd) || pmd_leaf(pmd)))
 			repl_val = pmd;
 		else
@@ -456,7 +456,7 @@ pmd_t hydra_pmdp_establish(pmd_t *pmdp, pmd_t pmd)
 
 	offset = ((unsigned long)pmdp) & ~PAGE_MASK;
 
-	if ((pmd_flags(pmd) & (_PAGE_PRESENT | _PAGE_PROTNONE)) &&
+	if ((pmd_flags(pmd) & _PAGE_PRESENT) &&
 	    (pmd_trans_huge(pmd) || pmd_leaf(pmd)))
 		repl_val = pmd;
 	else
