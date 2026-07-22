@@ -42,35 +42,39 @@ static void hydra_degree_work_fn(struct work_struct *w)
 	if (sysctl_hydra_degree != HYDRA_DEGREE_AUTO)
 		goto out;
 
-	if (s->cooldown > 0) {
-		s->cooldown--;
+	if (total > s->faults_peak)
+		s->faults_peak = total;
+
+	if (total * HYDRA_QUIET_RATIO > s->faults_peak) {
+		int shared = 0;
+
+		s->quiet_run = 0;
+
 		for (node = 0; node < NUMA_NODE_COUNT; node++)
-			s->hot_rounds[node] = 0;
+			if (READ_ONCE(mm->hydra_tree_owner[node]) != node)
+				shared++;
+
+		if (shared) {
+			for (node = 0; node < NUMA_NODE_COUNT; node++)
+				hydra_promote_node(mm, node);
+
+			if (s->just_demoted) {
+				s->just_demoted = 0;
+				if (s->quiet_need < HYDRA_QUIET_NEED_MAX)
+					s->quiet_need *= 2;
+			}
+		}
+
 		goto out;
 	}
 
-	for (node = 0; node < NUMA_NODE_COUNT; node++) {
-		if (s->node_faults_recent[node] < sysctl_hydra_promote_faults) {
-			s->hot_rounds[node] = 0;
-			continue;
-		}
+	if (++s->quiet_run < s->quiet_need)
+		goto out;
 
-		if (++s->hot_rounds[node] < sysctl_hydra_promote_rounds)
-			continue;
+	s->quiet_run = 0;
 
-		s->hot_rounds[node] = 0;
-		hydra_promote_node(mm, node);
-	}
-
-	if (total < sysctl_hydra_quiet_faults) {
-		if (++s->quiet_rounds >= sysctl_hydra_quiet_rounds) {
-			if (hydra_demote_mm(mm) > 0)
-				s->cooldown = sysctl_hydra_demote_cooldown;
-			s->quiet_rounds = 0;
-		}
-	} else {
-		s->quiet_rounds = 0;
-	}
+	if (hydra_demote_mm(mm) > 0)
+		s->just_demoted = 1;
 
 out:
 	mmput_async(mm);
@@ -104,6 +108,8 @@ struct hydra_stats *hydra_stats_attach(struct mm_struct *mm)
 		for (i = 0; i < NUMA_NODE_COUNT; i++)
 			s->tree_owner[i] = i;
 	}
+
+	s->quiet_need = 1;
 
 	INIT_DELAYED_WORK(&s->degree_work, hydra_degree_work_fn);
 	s->start_jiffies = jiffies;
@@ -488,6 +494,10 @@ static void hydra_stats_print(struct seq_file *m, struct hydra_stats *s,
 				atomic_long_read(&s->demotions));
 		hydra_print_val(m, 4, "faults in last sample (all nodes)",
 				s->faults_recent);
+		hydra_print_val(m, 4, "peak faults in any sample",
+				s->faults_peak);
+		hydra_print_val(m, 4, "quiet samples needed to demote",
+				s->quiet_need);
 		seq_puts(m, "      recent faults by node:\n");
 		hydra_print_node_header(m);
 		seq_puts(m, "    flts");

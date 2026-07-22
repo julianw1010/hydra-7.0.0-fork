@@ -89,11 +89,6 @@ extern int sysctl_legacy_va_layout;
 extern int sysctl_hydra_repl_order;
 extern int sysctl_hydra_first_touch;
 extern int sysctl_hydra_degree;
-extern int sysctl_hydra_promote_faults;
-extern int sysctl_hydra_quiet_faults;
-extern int sysctl_hydra_quiet_rounds;
-extern int sysctl_hydra_promote_rounds;
-extern int sysctl_hydra_demote_cooldown;
 extern int sysctl_hydra_auto_enable;
 #endif
 #else
