@@ -343,8 +343,7 @@ struct mmu_gather {
 	 * requires a complete flush of the tlb
 	 */
 	unsigned int		need_flush_all : 1,
-                        collect_nodemask : 1,
-                        hydra_demote : 1;
+                        collect_nodemask : 1;
 
 	/*
 	 * we have removed page directories

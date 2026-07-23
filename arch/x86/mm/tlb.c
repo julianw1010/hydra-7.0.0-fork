@@ -1501,11 +1501,7 @@ void flush_tlb_mm_node_range(struct mm_struct *mm,
 	cpumask_copy(&mm_mask, mm_cpumask(mm));
 
 	if (mm->lazy_repl_enabled && sysctl_hydra_tlbflush_opt && nodemask) {
-		nodemask_t shared = *nodemask;
-
-		hydra_tree_expand(mm, &shared);
-
-		for_each_node_mask(node, shared) {
+		for_each_node_mask(node, *nodemask) {
 			cpumask_or(&flush_mask, &flush_mask, cpumask_of_node(node));
 		}
 		cpumask_and(&flush_mask, &flush_mask, &mm_mask);

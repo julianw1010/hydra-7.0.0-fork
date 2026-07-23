@@ -35,14 +35,8 @@ static void hydra_free_tlb_page(struct mmu_gather *tlb, struct page *page)
 void ___pte_free_tlb(struct mmu_gather *tlb, struct page *pte)
 {
 	paravirt_release_pte(page_to_pfn(pte));
-	if (pte->next_replica) {
-		if (tlb->hydra_demote) {
-			pr_emerg("HYDRA: demote freeing still-chained PTE page %px (nid %d) next %px; unlink walk missed it and the whole chain would be freed\n",
-				 pte, page_to_nid(pte), pte->next_replica);
-			BUG();
-		}
+	if (pte->next_replica)
 		hydra_free_replica_chain(pte, tlb);
-	}
 	hydra_free_tlb_page(tlb, pte);
 }
 
@@ -50,12 +44,6 @@ void ___pte_free_tlb(struct mmu_gather *tlb, struct page *pte)
 void ___pmd_free_tlb(struct mmu_gather *tlb, pmd_t *pmd)
 {
 	struct page *page = virt_to_page(pmd);
-
-	if (tlb->hydra_demote && page->next_replica) {
-		pr_emerg("HYDRA: demote freeing still-chained PMD page %px (nid %d) next %px; unlink walk missed it\n",
-			 page, page_to_nid(page), page->next_replica);
-		BUG();
-	}
 
 	paravirt_release_pmd(__pa(pmd) >> PAGE_SHIFT);
 	/*

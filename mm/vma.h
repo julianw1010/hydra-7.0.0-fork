@@ -7,8 +7,6 @@
 #ifndef __MM_VMA_H
 #define __MM_VMA_H
 
-#include <linux/hydra.h>
-
 /*
  * VMA lock generalization
  */
@@ -246,7 +244,7 @@ static inline pgoff_t vma_pgoff_offset(struct vm_area_struct *vma,
 		.vm_flags = vm_flags_,					\
 		.pgoff = pgoff_,					\
 		.state = VMA_MERGE_START,				\
-		.master_pgd_node = hydra_tree_node(mm_, numa_node_id()),	\
+		.master_pgd_node = numa_node_id(),			\
 	}
 
 #define VMG_VMA_STATE(name, vmi_, prev_, vma_, start_, end_)	\

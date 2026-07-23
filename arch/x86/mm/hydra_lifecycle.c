@@ -65,34 +65,18 @@ int hydra_enable_replication(struct mm_struct *mm)
 
 	hydra_stats_mark_enabled(mm, primary_node);
 
-	hydra_degree_build(mm, primary_node);
-
 	for (i = 0; i < NUMA_NODE_COUNT; i++) {
-		if (mm->hydra_tree_owner[i] != i)
-			continue;
-
 		if (i == primary_node) {
 			mm->repl_pgd[i] = mm->pgd;
-			continue;
-		}
-
-		mm->repl_pgd[i] = hydra_repl_pgd_alloc(mm, i);
-		if (!mm->repl_pgd[i]) {
-			pr_emerg("HYDRA: replica PGD allocation failed for mm %px node %d during enable\n",
-				 mm, i);
-			BUG();
+		} else {
+			mm->repl_pgd[i] = hydra_repl_pgd_alloc(mm, i);
+			if (!mm->repl_pgd[i]) {
+				pr_emerg("HYDRA: replica PGD allocation failed for mm %px node %d during enable\n",
+					 mm, i);
+				BUG();
+			}
 		}
 	}
-
-	for (i = 0; i < NUMA_NODE_COUNT; i++) {
-		int owner = mm->hydra_tree_owner[i];
-
-		if (owner != i)
-			mm->repl_pgd[i] = mm->repl_pgd[owner];
-	}
-
-	if (mm->hydra_stats)
-		hydra_degree_work_start(mm->hydra_stats);
 
 	WRITE_ONCE(mm->lazy_repl_enabled, true);
 	smp_mb();

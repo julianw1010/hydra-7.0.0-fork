@@ -9,356 +9,6 @@
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
 #include <asm/tlbflush.h>
-#include <asm/tlb.h>
-#include <linux/topology.h>
-
-static int hydra_node_socket[NUMA_NODE_COUNT] __read_mostly;
-int hydra_nr_tree_groups __read_mostly = 1;
-
-static int __init hydra_socket_map_init(void)
-{
-	int node, cpu, pkg, groups = 0;
-	bool seen[NUMA_NODE_COUNT] = { };
-
-	for (node = 0; node < NUMA_NODE_COUNT; node++) {
-		hydra_node_socket[node] = -1;
-
-		if (node >= MAX_NUMNODES || !node_online(node))
-			continue;
-
-		cpu = cpumask_first(cpumask_of_node(node));
-		if (cpu >= nr_cpu_ids)
-			continue;
-
-		pkg = topology_physical_package_id(cpu);
-		if (pkg >= 0 && pkg < NUMA_NODE_COUNT)
-			hydra_node_socket[node] = pkg;
-	}
-
-	for (node = 0; node < NUMA_NODE_COUNT; node++) {
-		int sock = hydra_node_socket[node];
-
-		if (sock < 0)
-			groups++;
-		else if (!seen[sock]) {
-			seen[sock] = true;
-			groups++;
-		}
-	}
-
-	if (groups > 0)
-		hydra_nr_tree_groups = groups;
-
-	return 0;
-}
-late_initcall(hydra_socket_map_init);
-
-int hydra_promote_node(struct mm_struct *mm, int node)
-{
-	pgd_t *old_pgd, *new_pgd;
-
-	if (node < 0 || node >= NUMA_NODE_COUNT)
-		return -EINVAL;
-	if (!READ_ONCE(mm->lazy_repl_enabled))
-		return -EINVAL;
-	if (READ_ONCE(mm->hydra_tree_owner[node]) == node)
-		return 0;
-
-	if (mm->hydra_stats &&
-	    atomic_long_read(&mm->hydra_stats->vma_owner_cur[node])) {
-		pr_emerg("HYDRA: promoting node %d for mm %px which masters %ld VMAs; promotion would orphan their page tables\n",
-			 node, mm,
-			 atomic_long_read(&mm->hydra_stats->vma_owner_cur[node]));
-		BUG();
-	}
-
-	old_pgd = READ_ONCE(mm->repl_pgd[node]);
-
-	new_pgd = hydra_repl_pgd_alloc(mm, node);
-	if (!new_pgd)
-		return -ENOMEM;
-
-	if (cmpxchg(&mm->repl_pgd[node], old_pgd, new_pgd) != old_pgd) {
-		pgd_free(mm, new_pgd);
-		return 0;
-	}
-
-	WRITE_ONCE(mm->hydra_tree_owner[node], node);
-	smp_mb();
-
-	on_each_cpu_mask(cpumask_of_node(node), hydra_reload_cr3, mm, 1);
-
-	if (mm->hydra_stats) {
-		mm->hydra_stats->tree_owner[node] = node;
-		atomic_long_inc(&mm->hydra_stats->promotions);
-	}
-
-	return 0;
-}
-
-static void hydra_unlink_from_chain(struct page *master, struct page *victim)
-{
-	struct page *cur;
-
-	if (!master || !victim || master == victim)
-		return;
-
-	hydra_chain_lock(master);
-
-	for (cur = master; cur; cur = cur->next_replica) {
-		if (cur->next_replica == victim) {
-			if (cur == master && victim->next_replica == master)
-				cur->next_replica = NULL;
-			else
-				cur->next_replica = victim->next_replica;
-			break;
-		}
-		if (cur->next_replica == master)
-			break;
-	}
-
-	hydra_chain_unlock(master);
-
-	WRITE_ONCE(victim->next_replica, NULL);
-}
-
-static pmd_t *hydra_master_pmd_of(struct mm_struct *mm, unsigned long addr)
-{
-	pgd_t *pgd = pgd_offset(mm, addr);
-	p4d_t *p4d;
-	pud_t *pud;
-
-	if (pgd_none(*pgd) || pgd_bad(*pgd))
-		return NULL;
-
-	p4d = p4d_offset(pgd, addr);
-	if (p4d_none(*p4d) || p4d_bad(*p4d))
-		return NULL;
-
-	pud = pud_offset(p4d, addr);
-	if (pud_none(*pud) || pud_bad(*pud))
-		return NULL;
-
-	return pmd_offset(pud, addr);
-}
-
-static void hydra_unlink_tree(struct mm_struct *mm, pgd_t *base)
-{
-	unsigned long addr, next_pgd, next_p4d, next_pud, next_pmd;
-	pgd_t *pgd;
-	p4d_t *p4d;
-	pud_t *pud;
-	pmd_t *pmd, *m_pmd;
-
-	addr = 0;
-	pgd = pgd_offset_pgd(base, addr);
-
-	do {
-		next_pgd = pgd_addr_end(addr, TASK_SIZE);
-		if (pgd_none(*pgd) || pgd_bad(*pgd))
-			goto next_pgd_ul;
-
-		p4d = p4d_offset(pgd, addr);
-		do {
-			next_p4d = p4d_addr_end(addr, next_pgd);
-			if (p4d_none(*p4d) || p4d_bad(*p4d))
-				goto next_p4d_ul;
-
-			pud = pud_offset(p4d, addr);
-			do {
-				next_pud = pud_addr_end(addr, next_p4d);
-				if (pud_none(*pud) || pud_bad(*pud))
-					goto next_pud_ul;
-
-				pmd = pmd_offset(pud, addr);
-
-				m_pmd = hydra_master_pmd_of(mm, addr);
-				if (m_pmd)
-					hydra_unlink_from_chain(
-						virt_to_page(m_pmd),
-						virt_to_page(pmd));
-
-				do {
-					next_pmd = pmd_addr_end(addr, next_pud);
-
-					if (pmd_none(*pmd) ||
-					    pmd_trans_huge(*pmd) ||
-					    pmd_bad(*pmd))
-						goto next_pmd_ul;
-
-					m_pmd = hydra_master_pmd_of(mm, addr);
-					if (!m_pmd || pmd_none(*m_pmd) ||
-					    pmd_trans_huge(*m_pmd) ||
-					    pmd_bad(*m_pmd))
-						goto next_pmd_ul;
-
-					hydra_unlink_from_chain(
-						virt_to_page(pte_offset_kernel(m_pmd, addr)),
-						virt_to_page(pte_offset_kernel(pmd, addr)));
-next_pmd_ul:
-					addr = next_pmd;
-				} while (pmd++, addr != next_pud);
-next_pud_ul:
-				addr = next_pud;
-			} while (pud++, addr != next_p4d);
-next_p4d_ul:
-			addr = next_p4d;
-		} while (p4d++, addr != next_pgd);
-next_pgd_ul:
-		addr = next_pgd;
-	} while (pgd++, addr != TASK_SIZE);
-}
-
-int hydra_demote_node(struct mm_struct *mm, int node)
-{
-	struct mmu_gather tlb;
-	pgd_t *orphan;
-	int target = -1;
-	int sock, i;
-
-	if (node < 0 || node >= NUMA_NODE_COUNT)
-		return -EINVAL;
-	if (!READ_ONCE(mm->lazy_repl_enabled))
-		return -EINVAL;
-	if (READ_ONCE(mm->hydra_tree_owner[node]) != node)
-		return 0;
-	if (mm->repl_pgd[node] == mm->pgd)
-		return 0;
-	if (mm->hydra_stats &&
-	    atomic_long_read(&mm->hydra_stats->vma_owner_cur[node]))
-		return -EBUSY;
-
-	sock = hydra_node_socket[node];
-
-	for (i = 0; i < NUMA_NODE_COUNT; i++) {
-		if (i == node || hydra_node_socket[i] != sock)
-			continue;
-		if (READ_ONCE(mm->hydra_tree_owner[i]) != i)
-			continue;
-		target = i;
-		if (mm->repl_pgd[i] == mm->pgd)
-			break;
-	}
-
-	if (target < 0)
-		return -EBUSY;
-
-	orphan = mm->repl_pgd[node];
-
-	for (i = 0; i < NUMA_NODE_COUNT; i++) {
-		if (i != node && READ_ONCE(mm->hydra_tree_owner[i]) != node)
-			continue;
-		WRITE_ONCE(mm->repl_pgd[i], mm->repl_pgd[target]);
-		WRITE_ONCE(mm->hydra_tree_owner[i], target);
-		if (mm->hydra_stats)
-			mm->hydra_stats->tree_owner[i] = target;
-		smp_mb();
-		on_each_cpu_mask(cpumask_of_node(i), hydra_reload_cr3, mm, 1);
-	}
-	flush_tlb_mm(mm);
-
-	for (i = 0; i < NUMA_NODE_COUNT; i++) {
-		if (READ_ONCE(mm->hydra_tree_owner[i]) == node) {
-			pr_emerg("HYDRA: node %d still aliases demoted tree %d for mm %px\n",
-				 i, node, mm);
-			BUG();
-		}
-	}
-
-	hydra_unlink_tree(mm, orphan);
-
-	tlb_gather_mmu(&tlb, mm);
-	tlb.hydra_demote = 1;
-	free_pgd_range_base(&tlb, FIRST_USER_ADDRESS, TASK_SIZE,
-			    FIRST_USER_ADDRESS, USER_PGTABLES_CEILING, orphan);
-	tlb_finish_mmu(&tlb);
-
-	pgd_free(mm, orphan);
-
-	if (mm->hydra_stats)
-		atomic_long_inc(&mm->hydra_stats->demotions);
-
-	return 0;
-}
-
-int hydra_demote_mm(struct mm_struct *mm)
-{
-	struct vm_area_struct *vma;
-	int node, done = 0;
-
-	mmap_write_lock(mm);
-
-	{
-		VMA_ITERATOR(vmi, mm, 0);
-
-		for_each_vma(vmi, vma)
-			vma_start_write(vma);
-	}
-
-	for (node = 0; node < NUMA_NODE_COUNT; node++)
-		if (!hydra_demote_node(mm, node))
-			done++;
-
-	mmap_write_unlock(mm);
-
-	return done;
-}
-
-void hydra_degree_build(struct mm_struct *mm, int primary_node)
-{
-	int i, j, sock, primary_sock;
-
-	primary_sock = hydra_node_socket[primary_node];
-
-	for (i = 0; i < NUMA_NODE_COUNT; i++) {
-		if (i == primary_node) {
-			mm->hydra_tree_owner[i] = primary_node;
-			continue;
-		}
-
-		if (sysctl_hydra_degree != HYDRA_DEGREE_SOCKET) {
-			mm->hydra_tree_owner[i] = i;
-			continue;
-		}
-
-		sock = hydra_node_socket[i];
-
-		if (sock < 0) {
-			mm->hydra_tree_owner[i] = i;
-			continue;
-		}
-
-		if (sock == primary_sock) {
-			mm->hydra_tree_owner[i] = primary_node;
-			continue;
-		}
-
-		mm->hydra_tree_owner[i] = -1;
-	}
-
-	for (i = 0; i < NUMA_NODE_COUNT; i++) {
-		int owner = i;
-
-		if (mm->hydra_tree_owner[i] >= 0)
-			continue;
-
-		sock = hydra_node_socket[i];
-
-		for (j = 0; j < i; j++) {
-			if (hydra_node_socket[j] == sock &&
-			    mm->hydra_tree_owner[j] == j) {
-				owner = j;
-				break;
-			}
-		}
-
-		mm->hydra_tree_owner[i] = owner;
-	}
-
-	if (mm->hydra_stats)
-		for (i = 0; i < NUMA_NODE_COUNT; i++)
-			mm->hydra_stats->tree_owner[i] = mm->hydra_tree_owner[i];
-}
 
 static int hydra_find_master_pmd(struct mm_struct *mm, unsigned long address,
 				 int master_node, pmd_t **pmdpp,
@@ -561,17 +211,16 @@ static int hydra_repl_pmd_range(struct mm_struct *mm,
 	end_idx = (range_end - pud_base) >> HPAGE_PMD_SHIFT;
 
 	for (i = start_idx; i < end_idx; i++) {
+		pmd_t master_val = master_pmd_base[i];
 		pmd_t repl_val = repl_pmd_base[i];
-		pmd_t val;
+
+		if (!pmd_present(master_val) || !pmd_trans_huge(master_val))
+			continue;
+
+		if (pmd_protnone(master_val))
+			continue;
 
 		if (pmd_present(repl_val) && pmd_trans_huge(repl_val)) {
-			pmd_t master_val = master_pmd_base[i];
-
-			if (!pmd_present(master_val) ||
-			    !pmd_trans_huge(master_val) ||
-			    pmd_protnone(master_val))
-				continue;
-
 			if ((pmd_val(repl_val) ^ pmd_val(master_val)) &
 			    ~(_PAGE_ACCESSED | _PAGE_DIRTY | _PAGE_SAVED_DIRTY)) {
 				struct page *m_pg = virt_to_page(master_pmd_base);
@@ -588,15 +237,7 @@ static int hydra_repl_pmd_range(struct mm_struct *mm,
 			continue;
 		}
 
-		val = master_pmd_base[i];
-
-		if (!pmd_present(val) || !pmd_trans_huge(val))
-			continue;
-
-		if (pmd_protnone(val))
-			continue;
-
-		native_set_pmd(&repl_pmd_base[i], val);
+		native_set_pmd(&repl_pmd_base[i], master_val);
 
 		copied++;
 	}
@@ -790,12 +431,10 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 
 	{
 		unsigned long i;
-
 		for (i = start_idx; i < start_idx + count; i++) {
-			pte_t val;
+			pte_t val = master_pte_base[i];
 			pte_t repl_cur = repl_pte_base[i];
 			if (pte_present(repl_cur)) {
-				val = master_pte_base[i];
 				if (pte_present(val) && !pte_protnone(val) &&
 				    ((pte_val(repl_cur) ^ pte_val(val)) &
 				     ~(_PAGE_ACCESSED | _PAGE_DIRTY | _PAGE_SAVED_DIRTY))) {
@@ -812,7 +451,6 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 				}
 				continue;
 			}
-			val = master_pte_base[i];
 			if (!pte_present(val) || pte_protnone(val))
 				val = __pte(0);
 			else
@@ -953,15 +591,7 @@ void hydra_break_chain_range(struct mm_struct *mm,
 	}
 
 	for (node = 0; node < NUMA_NODE_COUNT; node++) {
-		int prev;
-
 		if (!mm->repl_pgd[node])
-			continue;
-
-		for (prev = 0; prev < node; prev++)
-			if (mm->repl_pgd[prev] == mm->repl_pgd[node])
-				break;
-		if (prev < node)
 			continue;
 
 		addr = start;

@@ -103,7 +103,6 @@ static bool vmf_pte_changed(struct vm_fault *vmf);
 #if defined(CONFIG_X86) && defined(CONFIG_SYSCTL)
 int sysctl_hydra_repl_order __read_mostly = 9;
 int sysctl_hydra_first_touch __read_mostly = 1;
-int sysctl_hydra_degree __read_mostly = HYDRA_DEGREE_NODE;
 int sysctl_hydra_auto_enable __read_mostly = 0;
 #endif
 
@@ -324,7 +323,7 @@ static inline void free_p4d_range(struct mmu_gather *tlb, pgd_t *pgd,
  * specified virtual address range [@addr..@end). It is part of
  * the memory unmap flow.
  */
-void free_pgd_range_base(struct mmu_gather *tlb,
+static void free_pgd_range_base(struct mmu_gather *tlb,
 			unsigned long addr, unsigned long end,
 			unsigned long floor, unsigned long ceiling,
 			pgd_t *pgd_base)
@@ -461,16 +460,8 @@ void free_pgtables(struct mmu_gather *tlb, struct unmap_desc *unmap)
 			hydra_break_chain_range(tlb->mm, addr, vma->vm_end,
 						unmap->pg_start, pg_ceiling);
 			for (i = 0; i < NUMA_NODE_COUNT; i++) {
-				int j;
-
 				if (!tlb->mm->repl_pgd[i] ||
 				    tlb->mm->repl_pgd[i] == tlb->mm->pgd)
-					continue;
-				for (j = 0; j < i; j++)
-					if (tlb->mm->repl_pgd[j] ==
-					    tlb->mm->repl_pgd[i])
-						break;
-				if (j < i)
 					continue;
 				free_pgd_range_base(tlb, addr, vma->vm_end,
 					unmap->pg_start, pg_ceiling,
@@ -6487,7 +6478,7 @@ vm_fault_t __handle_mm_fault(struct vm_area_struct *vma,
 		node_to_use = owner_node;
 		hydra_stats_mark_serviced(mm);
 	} else {
-		node_to_use = hydra_tree_node(mm, numa_node_id());
+		node_to_use = numa_node_id();
 	}
 
 	on_replica = mm->lazy_repl_enabled && (node_to_use != owner_node);
