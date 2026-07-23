@@ -963,6 +963,11 @@ reload_tlb:
 	new_lam = mm_lam_cr3_mask(next);
 
 	if (next->lazy_repl_enabled) {
+		int anode = numa_node_id();
+
+		if (anode >= 0 && anode < NUMA_NODE_COUNT &&
+		    !test_bit(anode, &next->hydra_active_nodes))
+			set_bit(anode, &next->hydra_active_nodes);
 		smp_rmb();
 		next_pgd = next->repl_pgd[hydra_effective_node(next)];
 	} else {

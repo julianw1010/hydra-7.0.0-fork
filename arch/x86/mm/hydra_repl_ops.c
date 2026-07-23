@@ -312,10 +312,13 @@ void hydra_set_pmd(pmd_t *pmdp, pmd_t pmd)
 	page = virt_to_page(pmdp);
 
 	if (READ_ONCE(page->next_replica)) {
+		bool table;
+
 		offset = ((unsigned long)pmdp) & ~PAGE_MASK;
 
-		if ((pmd_flags(pmd) & _PAGE_PRESENT) &&
-		    (pmd_trans_huge(pmd) || pmd_leaf(pmd)))
+		table = (pmd_flags(pmd) & _PAGE_PRESENT) &&
+			!pmd_trans_huge(pmd) && !pmd_leaf(pmd);
+		if ((pmd_flags(pmd) & _PAGE_PRESENT) && !table)
 			repl_val = pmd;
 		else
 			repl_val = __pmd(0);
@@ -323,11 +326,16 @@ void hydra_set_pmd(pmd_t *pmdp, pmd_t pmd)
 		rcu_read_lock();
 		for (cur = page->next_replica; cur && cur != page; cur = cur->next_replica) {
 			pmd_t *rp;
+			pmd_t v;
 
 			if (hydra_pt_parked(cur))
 				continue;
 			rp = (pmd_t *)(page_address(cur) + offset);
-			native_set_pmd(rp, repl_val);
+			v = repl_val;
+			if (table)
+				v = hydra_push_val(pmd, page_to_nid(cur),
+						   READ_ONCE(page->pt_owner_mm));
+			native_set_pmd(rp, v);
 			hydra_rent_charge(cur);
 			pages++;
 		}

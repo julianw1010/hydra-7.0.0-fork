@@ -45,6 +45,7 @@ extern int sysctl_hydra_domain_dist;
 extern int sysctl_hydra_share_dist;
 extern int sysctl_hydra_rent_base;
 extern int sysctl_hydra_prebuild;
+extern int sysctl_hydra_push;
 
 void hydra_topology_update(void);
 int hydra_topology_calibrate(void);
@@ -122,6 +123,10 @@ void hydra_coherence_enforce(struct mm_struct *mm, unsigned long address);
 struct page *hydra_pick_share_source(struct page *master_page, int node);
 struct page *hydra_find_parked(struct page *master_page, int node);
 void hydra_unpark_prepare(struct page *page);
+pmd_t hydra_push_val(pmd_t master_e, int node, struct mm_struct *mm);
+void hydra_push_siblings(struct mm_struct *mm, unsigned long addr,
+			 struct page *master_pte_page, struct page *target,
+			 int self, spinlock_t *held_pml);
 int hydra_repl_fault(struct vm_fault *vmf, int fault_node);
 bool hydra_move_normal_pmd(struct vm_area_struct *vma, unsigned long old_addr,
 			   pmd_t *old_pmd, pmd_t *new_pmd);
@@ -301,6 +306,7 @@ struct hydra_stats {
 	atomic_long_t coh_unparks;
 	atomic_long_t coh_prebuilt;
 	atomic_long_t coh_shared_ref_clears;
+	atomic_long_t coh_push_installs;
 };
 
 struct hydra_stats *hydra_stats_attach(struct mm_struct *mm);

@@ -114,6 +114,10 @@ int hydra_enable_replication(struct mm_struct *mm)
 
 	primary_node = page_to_nid(virt_to_page(mm->pgd));
 
+	set_bit(primary_node, &mm->hydra_active_nodes);
+	if (numa_node_id() >= 0 && numa_node_id() < NUMA_NODE_COUNT)
+		set_bit(numa_node_id(), &mm->hydra_active_nodes);
+
 	{
 		struct xarray *xa = kzalloc(sizeof(*xa), GFP_KERNEL);
 

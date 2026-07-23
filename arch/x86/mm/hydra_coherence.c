@@ -12,6 +12,7 @@
 int sysctl_hydra_share_dist __read_mostly = -1;
 int sysctl_hydra_rent_base __read_mostly = 8192;
 int sysctl_hydra_prebuild __read_mostly = 1;
+int sysctl_hydra_push __read_mostly = 1;
 
 struct page *hydra_pick_share_source(struct page *master_page, int node)
 {
@@ -57,6 +58,69 @@ void hydra_unpark_prepare(struct page *page)
 	memset(page_address(page), 0, PAGE_SIZE);
 	hydra_rent_clear(page);
 	hydra_pt_clear_parked(page);
+}
+
+pmd_t hydra_push_val(pmd_t master_e, int node, struct mm_struct *mm)
+{
+	struct page *child;
+	struct page *src;
+
+	if (!mm || !READ_ONCE(sysctl_hydra_push))
+		return __pmd(0);
+	if (!(READ_ONCE(mm->hydra_active_nodes) & (1UL << node)))
+		return __pmd(0);
+
+	child = pmd_pgtable(master_e);
+	src = hydra_pick_share_source(child, node);
+	if (!src)
+		return __pmd(0);
+
+	hydra_map_node_set(child, node);
+	if (mm->hydra_stats)
+		atomic_long_inc(&mm->hydra_stats->coh_push_installs);
+
+	return __pmd(((pmdval_t)page_to_pfn(src) << PAGE_SHIFT) |
+		     (pmd_val(master_e) & ~PTE_PFN_MASK));
+}
+
+void hydra_push_siblings(struct mm_struct *mm, unsigned long addr,
+			 struct page *master_pte_page, struct page *target,
+			 int self, spinlock_t *held_pml)
+{
+	unsigned long act;
+	int k;
+
+	if (!READ_ONCE(sysctl_hydra_push))
+		return;
+
+	act = READ_ONCE(mm->hydra_active_nodes) & HYDRA_MAP_NODES_MASK;
+	for_each_set_bit(k, &act, NUMA_NODE_COUNT) {
+		pmd_t *pmd_k;
+		spinlock_t *kpml;
+
+		if (k == self)
+			continue;
+		if (hydra_node_dist(k, page_to_nid(target)) >
+		    hydra_share_dist_eff())
+			continue;
+		pmd_k = hydra_walk_to_pmd(mm, addr, k);
+		if (HYDRA_WALK_BAD(pmd_k) || !pmd_none(*pmd_k))
+			continue;
+
+		kpml = pmd_lockptr(mm, pmd_k);
+		if (kpml != held_pml)
+			spin_lock_nested(kpml, SINGLE_DEPTH_NESTING);
+		if (pmd_none(*pmd_k)) {
+			hydra_map_node_set(master_pte_page, k);
+			native_set_pmd(pmd_k,
+				__pmd(((pmdval_t)page_to_pfn(target) << PAGE_SHIFT)
+				      | _PAGE_TABLE));
+			if (mm->hydra_stats)
+				atomic_long_inc(&mm->hydra_stats->coh_shared_links);
+		}
+		if (kpml != held_pml)
+			spin_unlock(kpml);
+	}
 }
 
 static int hydra_rent_limit(int copy_nid, int master_nid)

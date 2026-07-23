@@ -448,6 +448,9 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 				native_set_pmd(repl_pmd,
 					__pmd(((pteval_t)page_to_pfn(ready) << PAGE_SHIFT)
 					      | _PAGE_TABLE));
+				hydra_push_siblings(mm, addr, master_pte_page,
+						    ready, (int)repl_node,
+						    master_pml);
 				linked = true;
 			}
 		} else {
@@ -483,6 +486,9 @@ static int hydra_repl_pte_range(struct mm_struct *mm,
 				native_set_pmd(repl_pmd,
 					__pmd(((pteval_t)page_to_pfn(new_page) << PAGE_SHIFT)
 					      | _PAGE_TABLE));
+				hydra_push_siblings(mm, addr, master_pte_page,
+						    new_page, (int)repl_node,
+						    master_pml);
 				new_page = NULL;
 			}
 

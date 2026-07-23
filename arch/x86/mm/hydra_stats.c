@@ -437,6 +437,8 @@ static void hydra_stats_print(struct seq_file *m, struct hydra_stats *s,
 			atomic_long_read(&s->coh_shared_ref_clears));
 	hydra_print_val(m, 4, "interior tables prebuilt",
 			atomic_long_read(&s->coh_prebuilt));
+	hydra_print_val(m, 4, "pushed installs",
+			atomic_long_read(&s->coh_push_installs));
 
 	hydra_print_section(m,
 		"autoNUMA migrations: 4KB base pages  [rows = source node, cols = dest node]");

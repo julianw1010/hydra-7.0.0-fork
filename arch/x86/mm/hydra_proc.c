@@ -49,6 +49,10 @@ static const struct hydra_int_knob hydra_prebuild_knob = {
 	"prebuild", &sysctl_hydra_prebuild, 0, 1,
 };
 
+static const struct hydra_int_knob hydra_push_knob = {
+	"push", &sysctl_hydra_push, 0, 1,
+};
+
 static int hydra_proc_parse_long(const char __user *ubuf, size_t count,
 				 long *val)
 {
@@ -344,6 +348,10 @@ static int __init hydra_proc_init(void)
 
 	if (!proc_create_data("prebuild", 0644, hydra_dir, &hydra_knob_ops,
 			      (void *)&hydra_prebuild_knob))
+		goto fail;
+
+	if (!proc_create_data("push", 0644, hydra_dir, &hydra_knob_ops,
+			      (void *)&hydra_push_knob))
 		goto fail;
 
 	if (!proc_create("domain_dist", 0644, hydra_dir, &hydra_domain_dist_ops))

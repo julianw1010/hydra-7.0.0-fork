@@ -1164,6 +1164,7 @@ struct mm_struct {
 		bool          lazy_repl_enabled;
 		pgd_t * repl_pgd[NUMA_NODE_COUNT];
 		int repl_steering[NUMA_NODE_COUNT];
+		unsigned long hydra_active_nodes;
 		struct xarray *hydra_pud_owner;
 		struct hydra_stats *hydra_stats;
 		pgd_t * pgd;

@@ -1144,6 +1144,7 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 		goto fail_nopgd;
 
 	mm->lazy_repl_enabled = false;
+	mm->hydra_active_nodes = 0;
 	for (i = 0; i < NUMA_NODE_COUNT; i++) {
 		mm->repl_pgd[i] = mm->pgd;
 		mm->repl_steering[i] = -1;
