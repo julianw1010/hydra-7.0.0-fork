@@ -65,6 +65,7 @@
 #include <linux/rcupdate.h>
 #include <linux/uidgid.h>
 #include <linux/cred.h>
+#include <linux/hydra.h>
 
 #include <linux/nospec.h>
 
@@ -2907,6 +2908,140 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 		if (arg3 & PR_CFI_LOCK && !(arg3 & PR_CFI_DISABLE))
 			error = arch_prctl_lock_branch_landing_pad_state(me);
 		break;
+	case PR_SET_PGTABLE_REPL_STEERING:
+	{
+		struct mm_struct *mm;
+		struct task_struct *task = NULL;
+		int steering[NUMA_NODE_COUNT];
+		int __user *user_steering = (int __user *)arg2;
+		pid_t target_pid = (pid_t)arg3;
+		bool changed = false;
+		int i;
+
+		if (!user_steering) {
+			error = -EINVAL;
+			break;
+		}
+
+		if (copy_from_user(steering, user_steering, sizeof(steering))) {
+			error = -EFAULT;
+			break;
+		}
+
+		for (i = 0; i < NUMA_NODE_COUNT; i++) {
+			if (steering[i] < -1 || steering[i] >= NUMA_NODE_COUNT) {
+				error = -EINVAL;
+				break;
+			}
+		}
+		if (error)
+			break;
+
+		if (target_pid != 0) {
+			rcu_read_lock();
+			task = find_task_by_vpid(target_pid);
+			if (task)
+				get_task_struct(task);
+			rcu_read_unlock();
+			if (!task) {
+				error = -ESRCH;
+				break;
+			}
+			mm = get_task_mm(task);
+		} else {
+			mm = current->mm;
+			if (mm)
+				mmget(mm);
+		}
+
+		if (!mm) {
+			if (task)
+				put_task_struct(task);
+			error = -EINVAL;
+			break;
+		}
+
+		mmap_write_lock(mm);
+		if (!mm->lazy_repl_enabled) {
+			error = -EINVAL;
+		} else {
+			for (i = 0; i < NUMA_NODE_COUNT; i++) {
+				int t = steering[i];
+
+				if (t >= 0 && !mm->repl_pgd[t]) {
+					error = -EINVAL;
+					break;
+				}
+			}
+			if (!error) {
+				for (i = 0; i < NUMA_NODE_COUNT; i++) {
+					if (READ_ONCE(mm->repl_steering[i]) != steering[i])
+						changed = true;
+					WRITE_ONCE(mm->repl_steering[i], steering[i]);
+				}
+			}
+		}
+		mmap_write_unlock(mm);
+
+		if (!error && changed)
+			hydra_force_steering_switch(mm);
+
+		mmput(mm);
+		if (task)
+			put_task_struct(task);
+		break;
+	}
+	case PR_GET_PGTABLE_REPL_STEERING:
+	{
+		struct mm_struct *mm;
+		struct task_struct *task = NULL;
+		int steering[NUMA_NODE_COUNT];
+		int __user *user_steering = (int __user *)arg2;
+		pid_t target_pid = (pid_t)arg3;
+		int i;
+
+		if (!user_steering) {
+			error = -EINVAL;
+			break;
+		}
+
+		if (target_pid != 0) {
+			rcu_read_lock();
+			task = find_task_by_vpid(target_pid);
+			if (task)
+				get_task_struct(task);
+			rcu_read_unlock();
+			if (!task) {
+				error = -ESRCH;
+				break;
+			}
+			mm = get_task_mm(task);
+		} else {
+			mm = current->mm;
+			if (mm)
+				mmget(mm);
+		}
+
+		if (!mm) {
+			if (task)
+				put_task_struct(task);
+			error = -EINVAL;
+			break;
+		}
+
+		for (i = 0; i < NUMA_NODE_COUNT; i++)
+			steering[i] = READ_ONCE(mm->repl_steering[i]);
+
+		if (copy_to_user(user_steering, steering, sizeof(steering)))
+			error = -EFAULT;
+		else
+			error = 0;
+
+		mmput(mm);
+		if (task)
+			put_task_struct(task);
+		break;
+	}
 	default:
 		trace_task_prctl_unknown(option, arg2, arg3, arg4, arg5);
 		error = -EINVAL;

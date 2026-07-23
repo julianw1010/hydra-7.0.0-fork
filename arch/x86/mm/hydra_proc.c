@@ -35,6 +35,18 @@ static const struct hydra_int_knob hydra_invlpgb_knob = {
 	"invlpgb", &sysctl_hydra_invlpgb, 0, 1,
 };
 
+static const struct hydra_int_knob hydra_share_dist_knob = {
+	"share_dist", &sysctl_hydra_share_dist, -1, 255,
+};
+
+static const struct hydra_int_knob hydra_rent_base_knob = {
+	"rent_base", &sysctl_hydra_rent_base, 0, 1 << 20,
+};
+
+static const struct hydra_int_knob hydra_prebuild_knob = {
+	"prebuild", &sysctl_hydra_prebuild, 0, 1,
+};
+
 static int hydra_proc_parse_long(const char __user *ubuf, size_t count,
 				 long *val)
 {
@@ -164,23 +176,62 @@ static const struct proc_ops hydra_cache_ops = {
 	.proc_release	= single_release,
 };
 
+static int hydra_domain_dist_show(struct seq_file *m, void *v)
+{
+	seq_printf(m, "%d\n", READ_ONCE(sysctl_hydra_domain_dist));
+	return 0;
+}
+
+static int hydra_domain_dist_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, hydra_domain_dist_show, NULL);
+}
+
+static ssize_t hydra_domain_dist_write(struct file *file,
+				       const char __user *ubuf,
+				       size_t count, loff_t *ppos)
+{
+	long val;
+	int ret;
+
+	ret = hydra_proc_parse_long(ubuf, count, &val);
+	if (ret)
+		return ret;
+
+	if (val < 0 || val > 255)
+		return -EINVAL;
+
+	WRITE_ONCE(sysctl_hydra_domain_dist, (int)val);
+	hydra_topology_update();
+
+	return count;
+}
+
+static const struct proc_ops hydra_domain_dist_ops = {
+	.proc_open	= hydra_domain_dist_open,
+	.proc_read	= seq_read,
+	.proc_write	= hydra_domain_dist_write,
+	.proc_lseek	= seq_lseek,
+	.proc_release	= single_release,
+};
+
+static int hydra_topology_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, hydra_topology_show, NULL);
+}
+
+static const struct proc_ops hydra_topology_ops = {
+	.proc_open	= hydra_topology_open,
+	.proc_read	= seq_read,
+	.proc_lseek	= seq_lseek,
+	.proc_release	= single_release,
+};
+
 static const struct proc_ops hydra_status_ops = {
 	.proc_open	= hydra_status_open,
 	.proc_read	= seq_read,
 	.proc_lseek	= seq_lseek,
 	.proc_release	= seq_release,
-};
-
-static int hydra_domains_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, hydra_domains_proc_show, NULL);
-}
-
-static const struct proc_ops hydra_domains_ops = {
-	.proc_open	= hydra_domains_open,
-	.proc_read	= seq_read,
-	.proc_lseek	= seq_lseek,
-	.proc_release	= single_release,
 };
 
 static ssize_t hydra_history_write(struct file *file, const char __user *ubuf,
@@ -235,7 +286,22 @@ static int __init hydra_proc_init(void)
 			      (void *)&hydra_invlpgb_knob))
 		goto fail;
 
-	if (!proc_create("domains", 0444, hydra_dir, &hydra_domains_ops))
+	if (!proc_create_data("share_dist", 0644, hydra_dir, &hydra_knob_ops,
+			      (void *)&hydra_share_dist_knob))
+		goto fail;
+
+	if (!proc_create_data("rent_base", 0644, hydra_dir, &hydra_knob_ops,
+			      (void *)&hydra_rent_base_knob))
+		goto fail;
+
+	if (!proc_create_data("prebuild", 0644, hydra_dir, &hydra_knob_ops,
+			      (void *)&hydra_prebuild_knob))
+		goto fail;
+
+	if (!proc_create("domain_dist", 0644, hydra_dir, &hydra_domain_dist_ops))
+		goto fail;
+
+	if (!proc_create("topology", 0444, hydra_dir, &hydra_topology_ops))
 		goto fail;
 
 	if (!proc_create("status", 0444, hydra_dir, &hydra_status_ops))

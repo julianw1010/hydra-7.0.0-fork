@@ -20,8 +20,101 @@
 
 DECLARE_STATIC_KEY_FALSE(hydra_repl_ever_enabled);
 
+#define HYDRA_MAP_NODES_MASK ((1UL << NUMA_NODE_COUNT) - 1)
+#define HYDRA_PT_PARKED_BIT (BITS_PER_LONG - 1)
+
+struct seq_file;
+
+struct hydra_topology {
+	bool ready;
+	int nr_nodes;
+	int min_offnode_dist;
+	int share_dist;
+	int nr_domains;
+	int domain[NUMA_NODE_COUNT];
+	u8 dist[NUMA_NODE_COUNT][NUMA_NODE_COUNT];
+};
+
+extern struct hydra_topology hydra_topo;
+extern int sysctl_hydra_domain_dist;
+extern int sysctl_hydra_share_dist;
+extern int sysctl_hydra_rent_base;
+extern int sysctl_hydra_prebuild;
+
+void hydra_topology_update(void);
+int hydra_topology_show(struct seq_file *m, void *v);
+
+static inline int hydra_node_dist(int from, int to)
+{
+	if (from < 0 || from >= NUMA_NODE_COUNT ||
+	    to < 0 || to >= NUMA_NODE_COUNT)
+		return 255;
+	return hydra_topo.dist[from][to];
+}
+
+static inline int hydra_share_dist_eff(void)
+{
+	int v = READ_ONCE(sysctl_hydra_share_dist);
+
+	return v >= 0 ? v : hydra_topo.share_dist;
+}
+
+static inline bool hydra_pt_parked(struct page *page)
+{
+	return test_bit(HYDRA_PT_PARKED_BIT, &page->hydra_map_nodes);
+}
+
+static inline void hydra_pt_set_parked(struct page *page)
+{
+	set_bit(HYDRA_PT_PARKED_BIT, &page->hydra_map_nodes);
+}
+
+static inline void hydra_pt_clear_parked(struct page *page)
+{
+	clear_bit_unlock(HYDRA_PT_PARKED_BIT, &page->hydra_map_nodes);
+}
+
+static inline void hydra_map_node_set(struct page *master, int node)
+{
+	set_bit(node, &master->hydra_map_nodes);
+}
+
+static inline void hydra_map_node_clear(struct page *master, int node)
+{
+	clear_bit(node, &master->hydra_map_nodes);
+}
+
+static inline void hydra_rent_charge(struct page *page)
+{
+	if (READ_ONCE(sysctl_hydra_rent_base))
+		atomic_inc(&page->hydra_rent);
+}
+
+static inline void hydra_rent_clear(struct page *page)
+{
+	atomic_set(&page->hydra_rent, 0);
+}
+
+static inline int hydra_effective_node(struct mm_struct *mm)
+{
+	int nid = numa_node_id();
+	int t;
+
+	if (!mm)
+		return nid;
+	t = READ_ONCE(mm->repl_steering[nid]);
+	if (t >= 0 && t < NUMA_NODE_COUNT && mm->repl_pgd[t])
+		return t;
+	return nid;
+}
+
 void hydra_reload_cr3(void *info);
 int hydra_enable_replication(struct mm_struct *mm);
+void hydra_force_steering_switch(struct mm_struct *mm);
+void hydra_coherence_enforce(struct mm_struct *mm, unsigned long address);
+struct page *hydra_pick_share_source(struct page *master_page, int node);
+struct page *hydra_find_parked(struct page *master_page, int node);
+void hydra_unpark_prepare(struct page *page);
 int hydra_repl_fault(struct vm_fault *vmf, int fault_node);
 bool hydra_move_normal_pmd(struct vm_area_struct *vma, unsigned long old_addr,
 			   pmd_t *old_pmd, pmd_t *new_pmd);
@@ -33,11 +126,6 @@ void hydra_pud_owner_claim(struct mm_struct *mm, unsigned long start,
 void hydra_pud_owner_stamp(struct mm_struct *mm, unsigned long start,
 			   unsigned long end, int node);
 unsigned long hydra_vm_unmapped_pud_area(struct vm_unmapped_area_info *info);
-
-extern int hydra_domain_dist;
-extern nodemask_t hydra_domain_nodemask[NUMA_NODE_COUNT];
-struct seq_file;
-int hydra_domains_proc_show(struct seq_file *m, void *v);
 
 #define HYDRA_WALK_NONE ((void *)0x1)
 
@@ -92,22 +180,23 @@ static inline int hydra_collect_repl_nodes(struct page *const ptpage,
 {
 	struct page *cur_page;
 	struct page *start_page;
+	unsigned long map;
+	int n;
 
 	start_page = ptpage;
 	cur_page = ptpage;
 
 	rcu_read_lock();
 	do {
-		int d = hydra_node_domain(page_to_nid(cur_page));
-
-		if (d >= 0 && d < hydra_nr_domains)
-			nodes_or(*nodemask, *nodemask,
-				 hydra_domain_nodemask[d]);
-		else
+		if (!hydra_pt_parked(cur_page))
 			node_set(page_to_nid(cur_page), *nodemask);
 		cur_page = cur_page->next_replica;
 	} while (cur_page && cur_page != start_page);
 	rcu_read_unlock();
+
+	map = READ_ONCE(ptpage->hydra_map_nodes) & HYDRA_MAP_NODES_MASK;
+	for_each_set_bit(n, &map, NUMA_NODE_COUNT)
+		node_set(n, *nodemask);
 
 	return 0;
 }
@@ -198,6 +287,13 @@ struct hydra_stats {
 
 	atomic_long_t vma_owner_cur[NUMA_NODE_COUNT];
 	atomic_long_t vma_owner_max[NUMA_NODE_COUNT];
+
+	atomic_long_t coh_shared_links;
+	atomic_long_t coh_pte_parks;
+	atomic_long_t coh_pmd_parks;
+	atomic_long_t coh_unparks;
+	atomic_long_t coh_prebuilt;
+	atomic_long_t coh_shared_ref_clears;
 };
 
 struct hydra_stats *hydra_stats_attach(struct mm_struct *mm);
@@ -326,7 +422,7 @@ static inline struct hydra_fault_ctx hydra_stats_fault_begin(struct mm_struct *m
 		if (node >= 0 && node < NUMA_NODE_COUNT)
 			atomic_long_inc(&c.s->faults_node[node]);
 		c.replica = mm->lazy_repl_enabled &&
-			    (hydra_node_home(node) != vma->master_pgd_node);
+			    (node != vma->master_pgd_node);
 		c.write = !!(flags & FAULT_FLAG_WRITE);
 		c.present = !!(flags & FAULT_FLAG_PROT);
 		if (c.replica) {

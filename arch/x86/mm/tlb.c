@@ -964,7 +964,7 @@ reload_tlb:
 
 	if (next->lazy_repl_enabled) {
 		smp_rmb();
-		next_pgd = next->repl_pgd[numa_node_id()];
+		next_pgd = next->repl_pgd[hydra_effective_node(next)];
 	} else {
 		next_pgd = next->pgd;
 	}
@@ -1501,8 +1501,21 @@ void flush_tlb_mm_node_range(struct mm_struct *mm,
 	cpumask_copy(&mm_mask, mm_cpumask(mm));
 
 	if (mm->lazy_repl_enabled && sysctl_hydra_tlbflush_opt && nodemask) {
-		for_each_node_mask(node, *nodemask) {
-			cpumask_or(&flush_mask, &flush_mask, cpumask_of_node(node));
+		for_each_online_node(node) {
+			int steer;
+
+			if (node >= NUMA_NODE_COUNT) {
+				cpumask_or(&flush_mask, &flush_mask,
+					   cpumask_of_node(node));
+				continue;
+			}
+			steer = READ_ONCE(mm->repl_steering[node]);
+			if (steer < 0 || steer >= NUMA_NODE_COUNT)
+				steer = node;
+			if (node_isset(node, *nodemask) ||
+			    node_isset(steer, *nodemask))
+				cpumask_or(&flush_mask, &flush_mask,
+					   cpumask_of_node(node));
 		}
 		cpumask_and(&flush_mask, &flush_mask, &mm_mask);
 	} else {

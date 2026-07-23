@@ -75,14 +75,13 @@ void hydra_stats_detach(struct mm_struct *mm)
 		return;
 	}
 
-	for (i = 0; i < hydra_nr_domains; i++) {
-		if (mm->repl_pgd[hydra_domain_home(i)] &&
-		    mm->repl_pgd[hydra_domain_home(i)] != mm->pgd)
+	for (i = 0; i < NUMA_NODE_COUNT; i++) {
+		if (mm->repl_pgd[i] && mm->repl_pgd[i] != mm->pgd)
 			count++;
 	}
 	count++;
 
-	printk(KERN_INFO "HYDRA: disabled page table replication for mm %px on %d domains\n",
+	printk(KERN_INFO "HYDRA: disabled page table replication for mm %px on %d nodes\n",
 	       mm, count);
 
 	s->end_jiffies = jiffies;
@@ -424,6 +423,20 @@ static void hydra_stats_print(struct seq_file *m, struct hydra_stats *s,
 	hydra_print_section(m, "TLB broadcasts (INVLPGB, no IPIs)");
 	hydra_print_val(m, 4, "Total INVLPGB instructions",
 			atomic_long_read(&s->tlb_broadcasts));
+
+	hydra_print_section(m, "Coherence (share / park)");
+	hydra_print_val(m, 4, "SHARED links installed",
+			atomic_long_read(&s->coh_shared_links));
+	hydra_print_val(m, 4, "PTE copies parked",
+			atomic_long_read(&s->coh_pte_parks));
+	hydra_print_val(m, 4, "PMD copies parked",
+			atomic_long_read(&s->coh_pmd_parks));
+	hydra_print_val(m, 4, "copies unparked",
+			atomic_long_read(&s->coh_unparks));
+	hydra_print_val(m, 4, "SHARED references cleared",
+			atomic_long_read(&s->coh_shared_ref_clears));
+	hydra_print_val(m, 4, "interior tables prebuilt",
+			atomic_long_read(&s->coh_prebuilt));
 
 	hydra_print_section(m,
 		"autoNUMA migrations: 4KB base pages  [rows = source node, cols = dest node]");

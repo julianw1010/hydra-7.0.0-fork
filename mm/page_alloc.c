@@ -5288,6 +5288,8 @@ struct page *__alloc_pages_noprof(gfp_t gfp, unsigned int order,
 	if (page) {
 		page->next_replica = NULL;
 		page->pt_owner_mm = NULL;
+		page->hydra_map_nodes = 0;
+		atomic_set(&page->hydra_rent, 0);
 	}
 
 	return page;
@@ -5335,6 +5337,8 @@ static void ___free_pages(struct page *page, unsigned int order,
 
 	page->next_replica = NULL;
 	page->pt_owner_mm = NULL;
+	page->hydra_map_nodes = 0;
+	atomic_set(&page->hydra_rent, 0);
 
 	if (put_page_testzero(page))
 		__free_frozen_pages(page, order, fpi_flags);

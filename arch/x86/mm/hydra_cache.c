@@ -24,6 +24,8 @@ bool hydra_cache_push(struct page *page, int node)
 	cache = &hydra_cache[node];
 
 	ClearPageHydraFromCache(page);
+	page->hydra_map_nodes = 0;
+	atomic_set(&page->hydra_rent, 0);
 
 	spin_lock_irqsave(&cache->lock, flags);
 	page->next_replica = cache->head;
@@ -58,6 +60,8 @@ struct page *hydra_cache_pop(int node)
 	atomic_dec(&cache->count);
 
 	page->next_replica = NULL;
+	page->hydra_map_nodes = 0;
+	atomic_set(&page->hydra_rent, 0);
 	SetPageHydraFromCache(page);
 
 	clear_highpage(page);
@@ -132,7 +136,13 @@ void hydra_free_replica_chain(struct page *primary, struct mmu_gather *tlb)
 	struct page *cur_page, *next_page;
 	struct page *start_page;
 
-	if (!primary || !primary->next_replica)
+	if (!primary)
+		return;
+
+	WRITE_ONCE(primary->hydra_map_nodes,
+		   READ_ONCE(primary->hydra_map_nodes) & ~HYDRA_MAP_NODES_MASK);
+
+	if (!primary->next_replica)
 		return;
 
 	start_page = primary;
@@ -189,8 +199,7 @@ void hydra_link_page_to_replica_chain(struct page *existing_page,
 	if (!existing_page || !new_page || existing_page == new_page)
 		return;
 
-	BUG_ON(hydra_same_domain(page_to_nid(new_page),
-				 page_to_nid(existing_page)));
+	BUG_ON(page_to_nid(new_page) == page_to_nid(existing_page));
 
 	hydra_chain_lock(existing_page);
 
@@ -201,14 +210,11 @@ void hydra_link_page_to_replica_chain(struct page *existing_page,
 		chain_len++;
 		if (cur_page == new_page)
 			goto out_unlock;
-		if (hydra_same_domain(page_to_nid(cur_page),
-				      page_to_nid(new_page))) {
-			pr_emerg("HYDRA: same-NID race: existing=%px(nid=%d,dom=%d) new=%px(nid=%d,dom=%d) "
+		if (page_to_nid(cur_page) == page_to_nid(new_page)) {
+			pr_emerg("HYDRA: same-NID race: existing=%px(nid=%d) new=%px(nid=%d) "
 				 "master=%px(nid=%d) chain_len=%d cpu=%d\n",
 				 cur_page, page_to_nid(cur_page),
-				 hydra_node_domain(page_to_nid(cur_page)),
 				 new_page, page_to_nid(new_page),
-				 hydra_node_domain(page_to_nid(new_page)),
 				 existing_page, page_to_nid(existing_page),
 				 chain_len, smp_processor_id());
 			BUG();
@@ -231,7 +237,13 @@ void hydra_break_chain(struct page *page)
 	struct page *cur_page, *next_page;
 	struct page *start_page;
 
-	if (!page || !page->next_replica)
+	if (!page)
+		return;
+
+	WRITE_ONCE(page->hydra_map_nodes,
+		   READ_ONCE(page->hydra_map_nodes) & ~HYDRA_MAP_NODES_MASK);
+
+	if (!page->next_replica)
 		return;
 
 	start_page = page;
@@ -244,6 +256,17 @@ void hydra_break_chain(struct page *page)
 	while (cur_page && cur_page != start_page) {
 		next_page = READ_ONCE(cur_page->next_replica);
 		WRITE_ONCE(cur_page->next_replica, NULL);
+		if (hydra_pt_parked(cur_page)) {
+			struct mm_struct *owner = cur_page->pt_owner_mm;
+
+			if (owner) {
+				if (cur_page->pt_level == HYDRA_PT_PTE)
+					mm_dec_nr_ptes(owner);
+				else if (cur_page->pt_level == HYDRA_PT_PMD)
+					mm_dec_nr_pmds(owner);
+			}
+			hydra_free_chain_node_rcu(cur_page);
+		}
 		cur_page = next_page;
 	}
 }
