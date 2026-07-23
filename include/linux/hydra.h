@@ -28,13 +28,23 @@ struct seq_file;
 #define HYDRA_TOPO_SLIT 0
 #define HYDRA_TOPO_MEASURED 1
 
+struct hydra_topo_tier {
+	int dist;
+	int group;
+	u32 shared_ns;
+	u32 repl_ns;
+};
+
 struct hydra_topology {
 	bool ready;
 	int source;
 	int nr_nodes;
 	int min_offnode_dist;
+	int cluster_dist;
 	int share_dist;
 	int nr_domains;
+	int nr_tiers;
+	struct hydra_topo_tier tier[8];
 	int domain[NUMA_NODE_COUNT];
 	u8 dist[NUMA_NODE_COUNT][NUMA_NODE_COUNT];
 	u32 lat_ns[NUMA_NODE_COUNT][NUMA_NODE_COUNT];
