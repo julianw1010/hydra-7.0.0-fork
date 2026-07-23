@@ -70,7 +70,7 @@ struct mmap_state {
 		.middle = vma_,						\
 		.next = (vma_) ? NULL : (map_)->next,			\
 		.state = VMA_MERGE_START,				\
-		.master_pgd_node = numa_node_id(),			\
+		.master_pgd_node = hydra_node_home(numa_node_id()),	\
 	}
 
 /* Was this VMA ever forked from a parent, i.e. maybe contains CoW mappings? */

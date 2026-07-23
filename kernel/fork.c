@@ -596,12 +596,14 @@ static inline void mm_free_pgd(struct mm_struct *mm)
 		mm->hydra_pud_owner = NULL;
 	}
 
-	for (i = 0; i < NUMA_NODE_COUNT; i++) {
-		if (mm->repl_pgd[i] && mm->repl_pgd[i] != mm->pgd) {
-			pgd_free(mm, mm->repl_pgd[i]);
-			mm->repl_pgd[i] = NULL;
-		}
+	for (i = 0; i < hydra_nr_domains; i++) {
+		pgd_t *base = mm->repl_pgd[hydra_domain_home(i)];
+
+		if (base && base != mm->pgd)
+			pgd_free(mm, base);
 	}
+	for (i = 0; i < NUMA_NODE_COUNT; i++)
+		mm->repl_pgd[i] = NULL;
 
 	pgd_free(mm, mm->pgd);
 }

@@ -34,6 +34,11 @@ void hydra_pud_owner_stamp(struct mm_struct *mm, unsigned long start,
 			   unsigned long end, int node);
 unsigned long hydra_vm_unmapped_pud_area(struct vm_unmapped_area_info *info);
 
+extern int hydra_domain_dist;
+extern nodemask_t hydra_domain_nodemask[NUMA_NODE_COUNT];
+struct seq_file;
+int hydra_domains_proc_show(struct seq_file *m, void *v);
+
 #define HYDRA_WALK_NONE ((void *)0x1)
 
 #define HYDRA_WALK_BAD(r) (((unsigned long)(r) & 1) == 1)
@@ -93,7 +98,13 @@ static inline int hydra_collect_repl_nodes(struct page *const ptpage,
 
 	rcu_read_lock();
 	do {
-		node_set(page_to_nid(cur_page), *nodemask);
+		int d = hydra_node_domain(page_to_nid(cur_page));
+
+		if (d >= 0 && d < hydra_nr_domains)
+			nodes_or(*nodemask, *nodemask,
+				 hydra_domain_nodemask[d]);
+		else
+			node_set(page_to_nid(cur_page), *nodemask);
 		cur_page = cur_page->next_replica;
 	} while (cur_page && cur_page != start_page);
 	rcu_read_unlock();
@@ -315,7 +326,7 @@ static inline struct hydra_fault_ctx hydra_stats_fault_begin(struct mm_struct *m
 		if (node >= 0 && node < NUMA_NODE_COUNT)
 			atomic_long_inc(&c.s->faults_node[node]);
 		c.replica = mm->lazy_repl_enabled &&
-			    (node != vma->master_pgd_node);
+			    (hydra_node_home(node) != vma->master_pgd_node);
 		c.write = !!(flags & FAULT_FLAG_WRITE);
 		c.present = !!(flags & FAULT_FLAG_PROT);
 		if (c.replica) {

@@ -27,7 +27,7 @@ void hydra_reload_cr3(void *info)
 
 int hydra_enable_replication(struct mm_struct *mm)
 {
-	int i, primary_node;
+	int i, d, primary_node, master_home;
 
 	if (mm->lazy_repl_enabled)
 		return 0;
@@ -42,6 +42,7 @@ int hydra_enable_replication(struct mm_struct *mm)
 	}
 
 	primary_node = page_to_nid(virt_to_page(mm->pgd));
+	master_home = hydra_node_home(primary_node);
 
 	{
 		struct xarray *xa = kzalloc(sizeof(*xa), GFP_KERNEL);
@@ -59,23 +60,29 @@ int hydra_enable_replication(struct mm_struct *mm)
 		struct vm_area_struct *vma;
 		VMA_ITERATOR(vmi, mm, 0);
 		for_each_vma(vmi, vma) {
-			hydra_vma_chown(vma, primary_node);
+			hydra_vma_chown(vma, master_home);
 		}
 	}
 
-	hydra_stats_mark_enabled(mm, primary_node);
+	hydra_stats_mark_enabled(mm, master_home);
 
-	for (i = 0; i < NUMA_NODE_COUNT; i++) {
-		if (i == primary_node) {
-			mm->repl_pgd[i] = mm->pgd;
-		} else {
-			mm->repl_pgd[i] = hydra_repl_pgd_alloc(mm, i);
-			if (!mm->repl_pgd[i]) {
-				pr_emerg("HYDRA: replica PGD allocation failed for mm %px node %d during enable\n",
-					 mm, i);
-				BUG();
-			}
+	for (i = 0; i < NUMA_NODE_COUNT; i++)
+		mm->repl_pgd[i] = mm->pgd;
+
+	for (d = 0; d < hydra_nr_domains; d++) {
+		int home = hydra_domain_home(d);
+		pgd_t *tree;
+
+		if (hydra_same_domain(home, primary_node))
+			continue;
+		tree = hydra_repl_pgd_alloc(mm, home);
+		if (!tree) {
+			pr_emerg("HYDRA: replica PGD allocation failed for mm %px domain %d home node %d during enable\n",
+				 mm, d, home);
+			BUG();
 		}
+		for_each_node_mask(i, hydra_domain_nodemask[d])
+			mm->repl_pgd[i] = tree;
 	}
 
 	WRITE_ONCE(mm->lazy_repl_enabled, true);
@@ -85,12 +92,12 @@ int hydra_enable_replication(struct mm_struct *mm)
 
 	{
 		int count = 0;
-		for (i = 0; i < NUMA_NODE_COUNT; i++) {
-			if (mm->repl_pgd[i] && mm->repl_pgd[i] != mm->pgd)
+		for (d = 0; d < hydra_nr_domains; d++) {
+			if (mm->repl_pgd[hydra_domain_home(d)] != mm->pgd)
 				count++;
 		}
 		count++;
-		printk(KERN_INFO "HYDRA: enabled page table replication for mm %px on %d nodes\n", mm, count);
+		printk(KERN_INFO "HYDRA: enabled page table replication for mm %px on %d domains\n", mm, count);
 	}
 
 	mmap_write_unlock(mm);

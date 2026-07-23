@@ -459,13 +459,15 @@ void free_pgtables(struct mmu_gather *tlb, struct unmap_desc *unmap)
 
 			hydra_break_chain_range(tlb->mm, addr, vma->vm_end,
 						unmap->pg_start, pg_ceiling);
-			for (i = 0; i < NUMA_NODE_COUNT; i++) {
-				if (!tlb->mm->repl_pgd[i] ||
-				    tlb->mm->repl_pgd[i] == tlb->mm->pgd)
+			for (i = 0; i < hydra_nr_domains; i++) {
+				pgd_t *base =
+					tlb->mm->repl_pgd[hydra_domain_home(i)];
+
+				if (!base || base == tlb->mm->pgd)
 					continue;
 				free_pgd_range_base(tlb, addr, vma->vm_end,
 					unmap->pg_start, pg_ceiling,
-					tlb->mm->repl_pgd[i]);
+					base);
 			}
 			free_pgd_range_base(tlb, addr, vma->vm_end,
 				unmap->pg_start, pg_ceiling,
@@ -6329,9 +6331,9 @@ static vm_fault_t handle_pte_fault(struct vm_fault *vmf, int has_recursed)
 	int fault_node;
 
 	if (vmf->vma->vm_mm->lazy_repl_enabled && vmf->pmd) {
-		fault_node = page_to_nid(virt_to_page(vmf->pmd));
+		fault_node = hydra_node_home(page_to_nid(virt_to_page(vmf->pmd)));
 	} else {
-		fault_node = numa_node_id();
+		fault_node = hydra_node_home(numa_node_id());
 	}
 
 	if (unlikely(pmd_none(*vmf->pmd))) {
@@ -6478,7 +6480,7 @@ vm_fault_t __handle_mm_fault(struct vm_area_struct *vma,
 		node_to_use = owner_node;
 		hydra_stats_mark_serviced(mm);
 	} else {
-		node_to_use = numa_node_id();
+		node_to_use = hydra_node_home(numa_node_id());
 	}
 
 	on_replica = mm->lazy_repl_enabled && (node_to_use != owner_node);

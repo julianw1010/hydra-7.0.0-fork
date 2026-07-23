@@ -75,13 +75,14 @@ void hydra_stats_detach(struct mm_struct *mm)
 		return;
 	}
 
-	for (i = 0; i < NUMA_NODE_COUNT; i++) {
-		if (mm->repl_pgd[i] && mm->repl_pgd[i] != mm->pgd)
+	for (i = 0; i < hydra_nr_domains; i++) {
+		if (mm->repl_pgd[hydra_domain_home(i)] &&
+		    mm->repl_pgd[hydra_domain_home(i)] != mm->pgd)
 			count++;
 	}
 	count++;
 
-	printk(KERN_INFO "HYDRA: disabled page table replication for mm %px on %d nodes\n",
+	printk(KERN_INFO "HYDRA: disabled page table replication for mm %px on %d domains\n",
 	       mm, count);
 
 	s->end_jiffies = jiffies;

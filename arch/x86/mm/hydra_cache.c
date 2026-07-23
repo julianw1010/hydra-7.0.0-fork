@@ -189,7 +189,8 @@ void hydra_link_page_to_replica_chain(struct page *existing_page,
 	if (!existing_page || !new_page || existing_page == new_page)
 		return;
 
-	BUG_ON(page_to_nid(new_page) == page_to_nid(existing_page));
+	BUG_ON(hydra_same_domain(page_to_nid(new_page),
+				 page_to_nid(existing_page)));
 
 	hydra_chain_lock(existing_page);
 
@@ -200,11 +201,14 @@ void hydra_link_page_to_replica_chain(struct page *existing_page,
 		chain_len++;
 		if (cur_page == new_page)
 			goto out_unlock;
-		if (page_to_nid(cur_page) == page_to_nid(new_page)) {
-			pr_emerg("HYDRA: same-NID race: existing=%px(nid=%d) new=%px(nid=%d) "
+		if (hydra_same_domain(page_to_nid(cur_page),
+				      page_to_nid(new_page))) {
+			pr_emerg("HYDRA: same-NID race: existing=%px(nid=%d,dom=%d) new=%px(nid=%d,dom=%d) "
 				 "master=%px(nid=%d) chain_len=%d cpu=%d\n",
 				 cur_page, page_to_nid(cur_page),
+				 hydra_node_domain(page_to_nid(cur_page)),
 				 new_page, page_to_nid(new_page),
+				 hydra_node_domain(page_to_nid(new_page)),
 				 existing_page, page_to_nid(existing_page),
 				 chain_len, smp_processor_id());
 			BUG();

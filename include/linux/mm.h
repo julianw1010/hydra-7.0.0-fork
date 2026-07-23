@@ -94,6 +94,14 @@ extern int sysctl_hydra_auto_enable;
 #define sysctl_legacy_va_layout 0
 #endif
 
+#ifdef CONFIG_X86
+extern int hydra_nr_domains;
+int hydra_node_domain(int node);
+int hydra_domain_home(int domain);
+int hydra_node_home(int node);
+bool hydra_same_domain(int a, int b);
+#endif
+
 #ifdef CONFIG_HAVE_ARCH_MMAP_RND_BITS
 extern const int mmap_rnd_bits_min;
 extern int mmap_rnd_bits_max __ro_after_init;

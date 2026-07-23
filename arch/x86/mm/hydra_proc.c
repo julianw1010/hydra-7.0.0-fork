@@ -171,6 +171,18 @@ static const struct proc_ops hydra_status_ops = {
 	.proc_release	= seq_release,
 };
 
+static int hydra_domains_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, hydra_domains_proc_show, NULL);
+}
+
+static const struct proc_ops hydra_domains_ops = {
+	.proc_open	= hydra_domains_open,
+	.proc_read	= seq_read,
+	.proc_lseek	= seq_lseek,
+	.proc_release	= single_release,
+};
+
 static ssize_t hydra_history_write(struct file *file, const char __user *ubuf,
 				   size_t count, loff_t *ppos)
 {
@@ -221,6 +233,9 @@ static int __init hydra_proc_init(void)
 
 	if (!proc_create_data("invlpgb", 0644, hydra_dir, &hydra_knob_ops,
 			      (void *)&hydra_invlpgb_knob))
+		goto fail;
+
+	if (!proc_create("domains", 0444, hydra_dir, &hydra_domains_ops))
 		goto fail;
 
 	if (!proc_create("status", 0444, hydra_dir, &hydra_status_ops))

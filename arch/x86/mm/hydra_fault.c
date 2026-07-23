@@ -583,19 +583,21 @@ void hydra_break_chain_range(struct mm_struct *mm,
 	pud_t *pud;
 	pmd_t *pmd;
 	pte_t *pte;
-	int node;
+	int d;
 
 	for (addr = start & PUD_MASK; addr < end; addr += PUD_SIZE) {
 		if (hydra_pud_pmd_will_free(addr, addr + PUD_SIZE, floor, ceiling))
 			xa_erase(mm->hydra_pud_owner, addr >> PUD_SHIFT);
 	}
 
-	for (node = 0; node < NUMA_NODE_COUNT; node++) {
-		if (!mm->repl_pgd[node])
+	for (d = 0; d < hydra_nr_domains; d++) {
+		pgd_t *base = mm->repl_pgd[hydra_domain_home(d)];
+
+		if (!base)
 			continue;
 
 		addr = start;
-		pgd = pgd_offset_pgd(mm->repl_pgd[node], addr);
+		pgd = pgd_offset_pgd(base, addr);
 
 		do {
 			next_pgd = pgd_addr_end(addr, end);
