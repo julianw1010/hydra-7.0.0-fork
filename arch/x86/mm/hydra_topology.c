@@ -4,11 +4,29 @@
 #include <linux/nodemask.h>
 #include <linux/seq_file.h>
 #include <linux/sort.h>
+#include <linux/gfp.h>
+#include <linux/mutex.h>
+#include <linux/random.h>
+#include <linux/ktime.h>
+#include <linux/workqueue.h>
+#include <linux/cpumask.h>
+#include <linux/vmalloc.h>
 #include <linux/hydra.h>
 
 struct hydra_topology hydra_topo;
 
 int sysctl_hydra_domain_dist;
+
+static DEFINE_MUTEX(hydra_cal_mutex);
+
+#define HYDRA_CAL_CHUNK_ORDER 10
+#define HYDRA_CAL_CHUNKS 32
+#define HYDRA_CAL_LINE_SHIFT 7
+#define HYDRA_CAL_LINES_PER_CHUNK \
+	((PAGE_SIZE << HYDRA_CAL_CHUNK_ORDER) >> HYDRA_CAL_LINE_SHIFT)
+#define HYDRA_CAL_LINES (HYDRA_CAL_CHUNKS * HYDRA_CAL_LINES_PER_CHUNK)
+#define HYDRA_CAL_BURST 16384
+#define HYDRA_CAL_ROUNDS 8
 
 static int hydra_domain_root(int *parent, int n)
 {
@@ -81,10 +99,22 @@ void hydra_topology_update(void)
 
 	for (i = 0; i < NUMA_NODE_COUNT; i++) {
 		for (j = 0; j < NUMA_NODE_COUNT; j++) {
-			int d = node_distance(i, j);
+			int d;
 
-			if (d < 0 || d > 255)
-				d = 255;
+			if (hydra_topo.source == HYDRA_TOPO_MEASURED) {
+				u32 local = hydra_topo.lat_ns[i][i] ? : 1;
+
+				if (i == j)
+					d = LOCAL_DISTANCE;
+				else
+					d = DIV_ROUND_CLOSEST(LOCAL_DISTANCE *
+						hydra_topo.lat_ns[i][j], local);
+				d = clamp(d, LOCAL_DISTANCE, 255);
+			} else {
+				d = node_distance(i, j);
+				if (d < 0 || d > 255)
+					d = 255;
+			}
 			hydra_topo.dist[i][j] = d;
 			if (i != j && d < hydra_topo.min_offnode_dist)
 				hydra_topo.min_offnode_dist = d;
@@ -125,8 +155,146 @@ void hydra_topology_update(void)
 	smp_wmb();
 	hydra_topo.ready = true;
 
-	pr_info("HYDRA: topology: %d nodes, %d domains, share/domain dist <= %d, min offnode dist %d\n",
+	pr_info("HYDRA: topology (%s): %d nodes, %d domains, share/domain dist <= %d, min offnode dist %d\n",
+		hydra_topo.source == HYDRA_TOPO_MEASURED ? "measured" : "SLIT",
 		NUMA_NODE_COUNT, ndom, thr, hydra_topo.min_offnode_dist);
+}
+
+void hydra_topology_use_slit(void)
+{
+	mutex_lock(&hydra_cal_mutex);
+	hydra_topo.source = HYDRA_TOPO_SLIT;
+	hydra_topology_update();
+	mutex_unlock(&hydra_cal_mutex);
+}
+
+struct hydra_cal_probe {
+	void *start;
+	u64 best_ns;
+};
+
+static long hydra_cal_chase(void *arg)
+{
+	struct hydra_cal_probe *pr = arg;
+	unsigned long flags;
+	u64 t0, t1;
+	void *p = pr->start;
+	int r, k;
+
+	pr->best_ns = U64_MAX;
+	for (r = 0; r < HYDRA_CAL_ROUNDS; r++) {
+		local_irq_save(flags);
+		t0 = ktime_get_ns();
+		for (k = 0; k < HYDRA_CAL_BURST; k++)
+			p = *(void **)p;
+		t1 = ktime_get_ns();
+		local_irq_restore(flags);
+		if (t1 - t0 < pr->best_ns)
+			pr->best_ns = t1 - t0;
+		cond_resched();
+	}
+	pr->start = p;
+	return 0;
+}
+
+static void *hydra_cal_line(struct page **chunks, u32 idx)
+{
+	return page_address(chunks[idx / HYDRA_CAL_LINES_PER_CHUNK]) +
+	       ((unsigned long)(idx % HYDRA_CAL_LINES_PER_CHUNK) <<
+		HYDRA_CAL_LINE_SHIFT);
+}
+
+static void *hydra_cal_build(struct page **chunks, u32 *perm)
+{
+	u32 i, k;
+
+	for (i = 0; i < HYDRA_CAL_LINES; i++)
+		perm[i] = i;
+	for (i = HYDRA_CAL_LINES - 1; i > 0; i--) {
+		u32 r = get_random_u32() % (i + 1);
+
+		swap(perm[i], perm[r]);
+	}
+
+	for (k = 0; k < HYDRA_CAL_LINES; k++)
+		*(void **)hydra_cal_line(chunks, perm[k]) =
+			hydra_cal_line(chunks, perm[(k + 1) % HYDRA_CAL_LINES]);
+
+	return hydra_cal_line(chunks, perm[0]);
+}
+
+int hydra_topology_calibrate(void)
+{
+	struct page *chunks[HYDRA_CAL_CHUNKS];
+	u32 lat[NUMA_NODE_COUNT][NUMA_NODE_COUNT];
+	u32 *perm;
+	int i, j, k, ret = 0;
+
+	perm = kvmalloc_array(HYDRA_CAL_LINES, sizeof(u32), GFP_KERNEL);
+	if (!perm)
+		return -ENOMEM;
+
+	mutex_lock(&hydra_cal_mutex);
+
+	for (i = 0; i < NUMA_NODE_COUNT; i++) {
+		if (!node_online(i) ||
+		    cpumask_first(cpumask_of_node(i)) >= nr_cpu_ids) {
+			pr_info("HYDRA: calibrate: node %d offline or without CPUs, keeping SLIT\n", i);
+			ret = -EINVAL;
+			goto out;
+		}
+	}
+
+	for (j = 0; j < NUMA_NODE_COUNT; j++) {
+		void *start;
+
+		for (k = 0; k < HYDRA_CAL_CHUNKS; k++) {
+			chunks[k] = alloc_pages_node(j,
+				GFP_KERNEL | __GFP_THISNODE,
+				HYDRA_CAL_CHUNK_ORDER);
+			if (!chunks[k] || page_to_nid(chunks[k]) != j) {
+				if (chunks[k])
+					__free_pages(chunks[k],
+						     HYDRA_CAL_CHUNK_ORDER);
+				while (k--)
+					__free_pages(chunks[k],
+						     HYDRA_CAL_CHUNK_ORDER);
+				pr_info("HYDRA: calibrate: cannot allocate probe buffer on node %d\n", j);
+				ret = -ENOMEM;
+				goto out;
+			}
+		}
+
+		start = hydra_cal_build(chunks, perm);
+
+		for (i = 0; i < NUMA_NODE_COUNT; i++) {
+			struct hydra_cal_probe probe = { .start = start };
+			int cpu = cpumask_first(cpumask_of_node(i));
+
+			ret = work_on_cpu(cpu, hydra_cal_chase, &probe);
+			if (ret) {
+				for (k = 0; k < HYDRA_CAL_CHUNKS; k++)
+					__free_pages(chunks[k],
+						     HYDRA_CAL_CHUNK_ORDER);
+				goto out;
+			}
+			lat[i][j] = max_t(u32, 1,
+					  div64_u64(probe.best_ns,
+						    HYDRA_CAL_BURST));
+		}
+
+		for (k = 0; k < HYDRA_CAL_CHUNKS; k++)
+			__free_pages(chunks[k], HYDRA_CAL_CHUNK_ORDER);
+	}
+
+	memcpy(hydra_topo.lat_ns, lat, sizeof(lat));
+	hydra_topo.source = HYDRA_TOPO_MEASURED;
+	hydra_topology_update();
+
+out:
+	mutex_unlock(&hydra_cal_mutex);
+	kvfree(perm);
+	return ret;
 }
 
 int hydra_topology_show(struct seq_file *m, void *v)
@@ -145,8 +313,12 @@ int hydra_topology_show(struct seq_file *m, void *v)
 		   READ_ONCE(sysctl_hydra_share_dist));
 	seq_printf(m, " %-28s %6d\n", "domain dist knob (0 = auto)",
 		   READ_ONCE(sysctl_hydra_domain_dist));
+	seq_printf(m, " %-28s %6s\n", "distance source",
+		   hydra_topo.source == HYDRA_TOPO_MEASURED ? "meas" : "SLIT");
 
-	seq_puts(m, "\n SLIT distances  [rows = from node, cols = to node]\n");
+	seq_printf(m, "\n active distances (%s)  [rows = from node, cols = to node]\n",
+		   hydra_topo.source == HYDRA_TOPO_MEASURED ?
+		   "measured, normalized local=10" : "SLIT");
 	seq_puts(m, "     ");
 	for (j = 0; j < NUMA_NODE_COUNT; j++) {
 		scnprintf(buf, sizeof(buf), "n%d", j);
@@ -159,6 +331,23 @@ int hydra_topology_show(struct seq_file *m, void *v)
 		for (j = 0; j < NUMA_NODE_COUNT; j++)
 			seq_printf(m, " %4d", hydra_topo.dist[i][j]);
 		seq_putc(m, '\n');
+	}
+
+	if (hydra_topo.source == HYDRA_TOPO_MEASURED) {
+		seq_puts(m, "\n measured latency (ns/access)  [rows = from node, cols = to node]\n");
+		seq_puts(m, "     ");
+		for (j = 0; j < NUMA_NODE_COUNT; j++) {
+			scnprintf(buf, sizeof(buf), "n%d", j);
+			seq_printf(m, " %4s", buf);
+		}
+		seq_putc(m, '\n');
+		for (i = 0; i < NUMA_NODE_COUNT; i++) {
+			scnprintf(buf, sizeof(buf), "n%d", i);
+			seq_printf(m, " %-4s", buf);
+			for (j = 0; j < NUMA_NODE_COUNT; j++)
+				seq_printf(m, " %4u", hydra_topo.lat_ns[i][j]);
+			seq_putc(m, '\n');
+		}
 	}
 
 	seq_puts(m, "\n node -> replication domain\n");

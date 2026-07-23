@@ -25,14 +25,19 @@ DECLARE_STATIC_KEY_FALSE(hydra_repl_ever_enabled);
 
 struct seq_file;
 
+#define HYDRA_TOPO_SLIT 0
+#define HYDRA_TOPO_MEASURED 1
+
 struct hydra_topology {
 	bool ready;
+	int source;
 	int nr_nodes;
 	int min_offnode_dist;
 	int share_dist;
 	int nr_domains;
 	int domain[NUMA_NODE_COUNT];
 	u8 dist[NUMA_NODE_COUNT][NUMA_NODE_COUNT];
+	u32 lat_ns[NUMA_NODE_COUNT][NUMA_NODE_COUNT];
 };
 
 extern struct hydra_topology hydra_topo;
@@ -42,6 +47,8 @@ extern int sysctl_hydra_rent_base;
 extern int sysctl_hydra_prebuild;
 
 void hydra_topology_update(void);
+int hydra_topology_calibrate(void);
+void hydra_topology_use_slit(void);
 int hydra_topology_show(struct seq_file *m, void *v);
 
 static inline int hydra_node_dist(int from, int to)

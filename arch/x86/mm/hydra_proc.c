@@ -229,6 +229,52 @@ static const struct proc_ops hydra_topology_ops = {
 	.proc_release	= single_release,
 };
 
+static int hydra_calibrate_show(struct seq_file *m, void *v)
+{
+	seq_printf(m, "%s\n",
+		   hydra_topo.source == HYDRA_TOPO_MEASURED ?
+		   "measured" : "slit");
+	return 0;
+}
+
+static int hydra_calibrate_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, hydra_calibrate_show, NULL);
+}
+
+static ssize_t hydra_calibrate_write(struct file *file,
+				     const char __user *ubuf,
+				     size_t count, loff_t *ppos)
+{
+	long val;
+	int ret;
+
+	ret = hydra_proc_parse_long(ubuf, count, &val);
+	if (ret)
+		return ret;
+
+	if (val == 0) {
+		hydra_topology_use_slit();
+		return count;
+	}
+	if (val != 1)
+		return -EINVAL;
+
+	ret = hydra_topology_calibrate();
+	if (ret)
+		return ret;
+
+	return count;
+}
+
+static const struct proc_ops hydra_calibrate_ops = {
+	.proc_open	= hydra_calibrate_open,
+	.proc_read	= seq_read,
+	.proc_write	= hydra_calibrate_write,
+	.proc_lseek	= seq_lseek,
+	.proc_release	= single_release,
+};
+
 static const struct proc_ops hydra_status_ops = {
 	.proc_open	= hydra_status_open,
 	.proc_read	= seq_read,
@@ -304,6 +350,9 @@ static int __init hydra_proc_init(void)
 		goto fail;
 
 	if (!proc_create("topology", 0444, hydra_dir, &hydra_topology_ops))
+		goto fail;
+
+	if (!proc_create("calibrate", 0644, hydra_dir, &hydra_calibrate_ops))
 		goto fail;
 
 	if (!proc_create("walk", 0600, hydra_dir, &hydra_walk_proc_ops))
