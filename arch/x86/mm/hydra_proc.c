@@ -9,6 +9,8 @@ extern int sysctl_hydra_repl_order;
 extern int sysctl_hydra_first_touch;
 extern int sysctl_hydra_tlbflush_opt;
 extern int sysctl_hydra_invlpgb;
+extern const struct proc_ops hydra_walk_proc_ops;
+extern const struct proc_ops hydra_audit_proc_ops;
 
 static struct proc_dir_entry *hydra_dir;
 
@@ -302,6 +304,12 @@ static int __init hydra_proc_init(void)
 		goto fail;
 
 	if (!proc_create("topology", 0444, hydra_dir, &hydra_topology_ops))
+		goto fail;
+
+	if (!proc_create("walk", 0600, hydra_dir, &hydra_walk_proc_ops))
+		goto fail;
+
+	if (!proc_create("audit", 0600, hydra_dir, &hydra_audit_proc_ops))
 		goto fail;
 
 	if (!proc_create("status", 0444, hydra_dir, &hydra_status_ops))
