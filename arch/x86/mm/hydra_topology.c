@@ -12,6 +12,7 @@
 #include <linux/cpumask.h>
 #include <linux/vmalloc.h>
 #include <linux/hydra.h>
+#include <asm/cacheflush.h>
 
 struct hydra_topology hydra_topo;
 
@@ -170,6 +171,7 @@ void hydra_topology_use_slit(void)
 
 struct hydra_cal_probe {
 	void *start;
+	struct page **chunks;
 	u64 best_ns;
 };
 
@@ -179,7 +181,14 @@ static long hydra_cal_chase(void *arg)
 	unsigned long flags;
 	u64 t0, t1;
 	void *p = pr->start;
-	int r, k;
+	int r, k, c;
+
+	for (c = 0; c < HYDRA_CAL_CHUNKS; c++)
+		clflush_cache_range(page_address(pr->chunks[c]),
+				    PAGE_SIZE << HYDRA_CAL_CHUNK_ORDER);
+
+	for (k = 0; k < 1024; k++)
+		p = *(void **)p;
 
 	pr->best_ns = U64_MAX;
 	for (r = 0; r < HYDRA_CAL_ROUNDS; r++) {
@@ -268,7 +277,10 @@ int hydra_topology_calibrate(void)
 		start = hydra_cal_build(chunks, perm);
 
 		for (i = 0; i < NUMA_NODE_COUNT; i++) {
-			struct hydra_cal_probe probe = { .start = start };
+			struct hydra_cal_probe probe = {
+				.start = start,
+				.chunks = chunks,
+			};
 			int cpu = cpumask_first(cpumask_of_node(i));
 
 			ret = work_on_cpu(cpu, hydra_cal_chase, &probe);
