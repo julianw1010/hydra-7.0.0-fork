@@ -442,78 +442,65 @@ static int hydra_real_best(int *gnodes, int g, int share, u32 *ns_out)
 static void hydra_cal_contention(void)
 {
 	int gnodes[NUMA_NODE_COUNT];
-	int tiers[8];
-	int ntier = 0, best = LOCAL_DISTANCE;
-	int i, j, t;
+	int cands[8];
+	int ncand = 0, best = 0;
+	u32 best_ns = U32_MAX;
+	int i, j, t, g = 0;
 
 	for (j = 0; j < NUMA_NODE_COUNT; j++) {
-		int d = hydra_topo.dist[0][j];
-		bool seen = false;
-
-		if (j == 0 || d > hydra_topo.cluster_dist)
-			continue;
-		for (t = 0; t < ntier; t++) {
-			if (tiers[t] == d)
-				seen = true;
-		}
-		if (!seen && ntier < 8)
-			tiers[ntier++] = d;
+		if (hydra_topo.dist[0][j] <= hydra_topo.cluster_dist)
+			gnodes[g++] = j;
 	}
-
-	if (!ntier) {
+	if (g < 2) {
 		hydra_topo.nr_tiers = 0;
 		return;
 	}
 
-	for (i = 0; i < ntier; i++) {
-		for (j = i + 1; j < ntier; j++) {
-			if (tiers[j] < tiers[i])
-				swap(tiers[i], tiers[j]);
+	for (i = 0; i < g; i++) {
+		for (j = i + 1; j < g; j++) {
+			if (hydra_topo.dist[0][gnodes[j]] <
+			    hydra_topo.dist[0][gnodes[i]])
+				swap(gnodes[i], gnodes[j]);
 		}
 	}
 
+	cands[ncand++] = 0;
+	for (i = 1; i < g; i++) {
+		int d = hydra_topo.dist[0][gnodes[i]];
+		bool seen = false;
+
+		for (t = 0; t < ncand; t++) {
+			if (cands[t] == d)
+				seen = true;
+		}
+		if (!seen && ncand < 8)
+			cands[ncand++] = d;
+	}
+
 	hydra_topo.nr_tiers = 0;
-	for (t = 0; t < ntier; t++) {
+	for (t = 0; t < ncand; t++) {
 		struct hydra_topo_tier *row;
-		u32 sh = 0, rp = 0;
-		int g = 0, a, b;
+		u32 ns = 0;
 
-		for (j = 0; j < NUMA_NODE_COUNT; j++) {
-			if (hydra_topo.dist[0][j] <= tiers[t])
-				gnodes[g++] = j;
-		}
-		if (g < 2)
-			continue;
-
-		for (a = 0; a < g; a++) {
-			for (b = a + 1; b < g; b++) {
-				if (hydra_topo.dist[0][gnodes[b]] <
-				    hydra_topo.dist[0][gnodes[a]])
-					swap(gnodes[a], gnodes[b]);
-			}
-		}
-
-		if (hydra_real_best(gnodes, g, LOCAL_DISTANCE, &rp))
-			continue;
-		if (hydra_real_best(gnodes, g, tiers[t], &sh))
+		if (hydra_real_best(gnodes, g, cands[t], &ns))
 			continue;
 
 		row = &hydra_topo.tier[hydra_topo.nr_tiers++];
-		row->dist = tiers[t];
+		row->dist = cands[t];
 		row->group = g;
-		row->shared_ns = sh;
-		row->repl_ns = rp;
+		row->shared_ns = ns;
+		row->repl_ns = 0;
 
-		if (sh <= rp)
-			best = tiers[t];
-		else
-			break;
+		if (ns < best_ns) {
+			best_ns = ns;
+			best = cands[t];
+		}
 	}
 
 	hydra_topo.share_dist = best;
 
-	pr_info("HYDRA: real-workload calibration: auto share dist %d (cluster dist %d, %d tiers)\n",
-		best, hydra_topo.cluster_dist, hydra_topo.nr_tiers);
+	pr_info("HYDRA: real-workload calibration: auto share dist %d, argmin over %d configs (cluster dist %d)\n",
+		best, hydra_topo.nr_tiers, hydra_topo.cluster_dist);
 }
 
 int hydra_topology_calibrate(void)
@@ -665,17 +652,16 @@ int hydra_topology_show(struct seq_file *m, void *v)
 	}
 
 	if (hydra_topo.nr_tiers) {
-		seq_puts(m, "\n real-workload calibration  [rows = candidate sharing tier, ns per walked page]\n");
-		seq_printf(m, " %-10s %-6s %-12s %-11s %s\n",
-			   "tier_dist", "group", "shared_ns", "repl_ns",
-			   "verdict");
+		seq_puts(m, "\n real-workload calibration  [rows = share config, argmin chosen; 0 = never share]\n");
+		seq_printf(m, " %-10s %-6s %-12s %s\n",
+			   "share_cfg", "group", "ns_per_page", "verdict");
 		for (i = 0; i < hydra_topo.nr_tiers; i++) {
 			struct hydra_topo_tier *t = &hydra_topo.tier[i];
 
-			seq_printf(m, " %-10d %-6d %-12u %-11u %s\n",
-				   t->dist, t->group, t->shared_ns, t->repl_ns,
-				   t->shared_ns <= t->repl_ns ?
-				   "share" : "copy");
+			seq_printf(m, " %-10d %-6d %-12u %s\n",
+				   t->dist, t->group, t->shared_ns,
+				   t->dist == hydra_topo.share_dist ?
+				   "<== chosen" : "");
 		}
 	}
 
