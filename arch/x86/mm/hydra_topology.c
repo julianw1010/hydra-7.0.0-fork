@@ -99,12 +99,23 @@ void hydra_topology_update(void)
 	hydra_topo.min_offnode_dist = 255;
 
 	for (i = 0; i < NUMA_NODE_COUNT; i++) {
+		u32 local = 0;
+
+		if (hydra_topo.source == HYDRA_TOPO_MEASURED) {
+			for (j = 0; j < NUMA_NODE_COUNT; j++) {
+				u32 v = hydra_topo.lat_ns[i][j];
+
+				if (v && (!local || v < local))
+					local = v;
+			}
+			if (!local)
+				local = 1;
+		}
+
 		for (j = 0; j < NUMA_NODE_COUNT; j++) {
 			int d;
 
 			if (hydra_topo.source == HYDRA_TOPO_MEASURED) {
-				u32 local = hydra_topo.lat_ns[i][i] ? : 1;
-
 				if (i == j)
 					d = LOCAL_DISTANCE;
 				else
@@ -286,19 +297,24 @@ static void hydra_sim_fn(struct work_struct *w)
 		hydra_sim_barrier(s);
 		for (e = sw->self; e < HYDRA_CONT_SLOTS; e += s->g) {
 			if (s->shared_mode) {
-				WRITE_ONCE(((u64 *)s->pages[0])[e], x + e);
+				WRITE_ONCE(((u64 *)s->pages[0])[e],
+					   (x + e) & ~1ULL);
 			} else {
 				for (j = 0; j < s->g; j++)
 					WRITE_ONCE(((u64 *)s->pages[j])[e],
-						   x + e);
+						   (x + e) & ~1ULL);
 			}
 		}
 		hydra_sim_barrier(s);
 		for (e = 0; e < HYDRA_CONT_SLOTS; e++) {
 			unsigned long idx = (x + e) & (HYDRA_CONT_SLOTS - 1);
+			u64 v = READ_ONCE(view[idx]);
 
-			atomic_long_or(1, (atomic_long_t *)&view[idx]);
-			x += READ_ONCE(view[idx]);
+			if (!(v & 1)) {
+				atomic_long_or(1, (atomic_long_t *)&view[idx]);
+				v |= 1;
+			}
+			x += v;
 		}
 	}
 }
