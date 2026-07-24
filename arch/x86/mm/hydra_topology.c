@@ -238,89 +238,185 @@ static void *hydra_cal_build(struct page **chunks, u32 *perm)
 #define HYDRA_CONT_ROUNDS 3
 #define HYDRA_CONT_SLOTS 512
 
-struct hydra_cont_worker {
+struct hydra_cont_ant {
 	struct work_struct work;
 	atomic_t *gate;
-	void *own;
-	void **group;
-	int gsize;
-	int self;
-	bool shared_mode;
-	u64 ns;
+	atomic_t *stop;
+	void *target;
 };
 
-static void hydra_cont_fn(struct work_struct *w)
+static void hydra_cont_ant_fn(struct work_struct *w)
 {
-	struct hydra_cont_worker *cw =
-		container_of(w, struct hydra_cont_worker, work);
-	u64 x = 0x9E3779B97F4A7C15ULL * (smp_processor_id() + 1);
-	u64 t0, t1, best = U64_MAX;
-	int r, k, j;
+	struct hydra_cont_ant *aw = container_of(w, struct hydra_cont_ant, work);
+	u64 x = 0x2545F4914F6CDD1DULL * (smp_processor_id() + 3);
+	int k;
 
-	while (!atomic_read(cw->gate))
+	while (!atomic_read(aw->gate))
 		cond_resched();
 
-	for (r = 0; r < HYDRA_CONT_ROUNDS; r++) {
-		t0 = ktime_get_ns();
-		for (k = 0; k < HYDRA_CONT_OPS; k++) {
+	while (!atomic_read(aw->stop)) {
+		for (k = 0; k < 4096; k++) {
 			unsigned long idx;
 
 			x = x * 6364136223846793005ULL + 1442695040888963407ULL;
 			idx = (x >> 33) & (HYDRA_CONT_SLOTS - 1);
-			if (cw->shared_mode) {
-				atomic_long_or(1,
-					(atomic_long_t *)((u64 *)cw->group[0] + idx));
-			} else {
-				atomic_long_or(1,
-					(atomic_long_t *)((u64 *)cw->own + idx));
-				for (j = 0; j < cw->gsize; j++) {
-					if (j == cw->self)
-						continue;
-					WRITE_ONCE(*((u64 *)cw->group[j] + idx), x);
-				}
-			}
+			atomic_long_or(0,
+				(atomic_long_t *)((u64 *)aw->target + idx));
 		}
+		cond_resched();
+	}
+}
+
+struct hydra_cont_meas {
+	void *chase;
+	void *sink;
+	void **fanout;
+	int nfan;
+	u64 chase_ns;
+	u64 fanout_ns;
+};
+
+static long hydra_cont_meas_fn(void *arg)
+{
+	struct hydra_cont_meas *mp = arg;
+	void *p;
+	u64 t0, t1, best = U64_MAX;
+	int r, k, j;
+
+	for (r = 0; r < HYDRA_CONT_ROUNDS; r++) {
+		p = mp->chase;
+		t0 = ktime_get_ns();
+		for (k = 0; k < HYDRA_CONT_OPS; k++)
+			p = *(void **)p;
 		t1 = ktime_get_ns();
 		if (t1 - t0 < best)
 			best = t1 - t0;
+		mp->sink = p;
 	}
-	cw->ns = best;
+	mp->chase_ns = div64_u64(best, HYDRA_CONT_OPS);
+
+	if (mp->nfan) {
+		u64 x = 0x9E3779B97F4A7C15ULL;
+
+		best = U64_MAX;
+		for (r = 0; r < HYDRA_CONT_ROUNDS; r++) {
+			t0 = ktime_get_ns();
+			for (k = 0; k < HYDRA_CONT_OPS; k++) {
+				unsigned long idx;
+
+				x = x * 6364136223846793005ULL +
+				    1442695040888963407ULL;
+				idx = (x >> 33) & (HYDRA_CONT_SLOTS - 1);
+				for (j = 0; j < mp->nfan; j++)
+					WRITE_ONCE(*((u64 *)mp->fanout[j] + idx), x);
+			}
+			t1 = ktime_get_ns();
+			if (t1 - t0 < best)
+				best = t1 - t0;
+		}
+		mp->fanout_ns = div64_u64(best, HYDRA_CONT_OPS);
+	}
+
+	return 0;
 }
 
-static u32 hydra_cont_run(int *gnodes, int g, struct page **npages,
-			  bool shared_mode)
+static void hydra_cont_chain(void *base)
 {
-	struct hydra_cont_worker cw[NUMA_NODE_COUNT];
-	void *group[NUMA_NODE_COUNT];
-	atomic_t gate = ATOMIC_INIT(0);
-	u64 total = 0;
-	int i;
+	u32 perm[HYDRA_CONT_SLOTS];
+	u32 i;
 
-	for (i = 0; i < g; i++)
-		group[i] = page_address(npages[gnodes[i]]);
+	for (i = 0; i < HYDRA_CONT_SLOTS; i++)
+		perm[i] = i;
+	for (i = HYDRA_CONT_SLOTS - 1; i > 0; i--) {
+		u32 r = get_random_u32() % (i + 1);
 
-	for (i = 0; i < g; i++) {
-		INIT_WORK_ONSTACK(&cw[i].work, hydra_cont_fn);
-		cw[i].gate = &gate;
-		cw[i].own = group[i];
-		cw[i].group = group;
-		cw[i].gsize = g;
-		cw[i].self = i;
-		cw[i].shared_mode = shared_mode;
-		cw[i].ns = 0;
-		schedule_work_on(cpumask_first(cpumask_of_node(gnodes[i])),
-				 &cw[i].work);
+		swap(perm[i], perm[r]);
 	}
+	for (i = 0; i < HYDRA_CONT_SLOTS; i++)
+		*(void **)((u64 *)base + perm[i]) =
+			(u64 *)base + perm[(i + 1) % HYDRA_CONT_SLOTS];
+}
 
+static int hydra_cont_tier(int *gnodes, int g, struct page **npages,
+			   u32 *pen_out, u32 *fan_out)
+{
+	struct hydra_cont_ant ant[NUMA_NODE_COUNT];
+	struct hydra_cont_meas meas;
+	void *fanout[NUMA_NODE_COUNT];
+	atomic_t gate, stop;
+	int meas_idx = g - 1;
+	int mnode = gnodes[meas_idx];
+	int mcpu = cpumask_first(cpumask_of_node(mnode));
+	u64 shared_ns, priv_ns;
+	int i, nant, ret;
+
+	hydra_cont_chain(page_address(npages[gnodes[0]]));
+
+	atomic_set(&gate, 0);
+	atomic_set(&stop, 0);
+	nant = 0;
+	for (i = 0; i < g; i++) {
+		if (i == meas_idx)
+			continue;
+		INIT_WORK_ONSTACK(&ant[nant].work, hydra_cont_ant_fn);
+		ant[nant].gate = &gate;
+		ant[nant].stop = &stop;
+		ant[nant].target = page_address(npages[gnodes[0]]);
+		schedule_work_on(cpumask_first(cpumask_of_node(gnodes[i])),
+				 &ant[nant].work);
+		nant++;
+	}
 	atomic_set(&gate, 1);
 
-	for (i = 0; i < g; i++) {
-		flush_work(&cw[i].work);
-		destroy_work_on_stack(&cw[i].work);
-		total += cw[i].ns;
+	memset(&meas, 0, sizeof(meas));
+	meas.chase = page_address(npages[gnodes[0]]);
+	ret = work_on_cpu(mcpu, hydra_cont_meas_fn, &meas);
+	atomic_set(&stop, 1);
+	for (i = 0; i < nant; i++) {
+		flush_work(&ant[i].work);
+		destroy_work_on_stack(&ant[i].work);
 	}
+	if (ret)
+		return ret;
+	shared_ns = meas.chase_ns;
 
-	return div64_u64(total, (u64)g * HYDRA_CONT_OPS);
+	hydra_cont_chain(page_address(npages[mnode]));
+
+	atomic_set(&gate, 0);
+	atomic_set(&stop, 0);
+	nant = 0;
+	for (i = 0; i < g; i++) {
+		if (i == meas_idx)
+			continue;
+		INIT_WORK_ONSTACK(&ant[nant].work, hydra_cont_ant_fn);
+		ant[nant].gate = &gate;
+		ant[nant].stop = &stop;
+		ant[nant].target = page_address(npages[gnodes[i]]);
+		schedule_work_on(cpumask_first(cpumask_of_node(gnodes[i])),
+				 &ant[nant].work);
+		nant++;
+	}
+	atomic_set(&gate, 1);
+
+	memset(&meas, 0, sizeof(meas));
+	meas.chase = page_address(npages[mnode]);
+	for (i = 0; i < g - 1; i++)
+		fanout[i] = page_address(npages[gnodes[i]]);
+	meas.fanout = fanout;
+	meas.nfan = g - 1;
+	ret = work_on_cpu(mcpu, hydra_cont_meas_fn, &meas);
+	atomic_set(&stop, 1);
+	for (i = 0; i < nant; i++) {
+		flush_work(&ant[i].work);
+		destroy_work_on_stack(&ant[i].work);
+	}
+	if (ret)
+		return ret;
+	priv_ns = meas.chase_ns;
+
+	*pen_out = shared_ns > priv_ns ? shared_ns - priv_ns : 0;
+	*fan_out = meas.fanout_ns;
+	return 0;
 }
 
 static void hydra_cal_contention(void)
@@ -373,7 +469,8 @@ static void hydra_cal_contention(void)
 	hydra_topo.nr_tiers = 0;
 	for (t = 0; t < ntier; t++) {
 		struct hydra_topo_tier *row;
-		int g = 0;
+		u32 pen = 0, fan = 0;
+		int g = 0, a, b;
 
 		for (j = 0; j < NUMA_NODE_COUNT; j++) {
 			if (hydra_topo.dist[0][j] <= tiers[t])
@@ -382,14 +479,27 @@ static void hydra_cal_contention(void)
 		if (g < 2)
 			continue;
 
+		for (a = 0; a < g; a++) {
+			for (b = a + 1; b < g; b++) {
+				if (hydra_topo.dist[0][gnodes[b]] <
+				    hydra_topo.dist[0][gnodes[a]])
+					swap(gnodes[a], gnodes[b]);
+			}
+		}
+
+		if (hydra_cont_tier(gnodes, g, npages, &pen, &fan))
+			continue;
+
 		row = &hydra_topo.tier[hydra_topo.nr_tiers++];
 		row->dist = tiers[t];
 		row->group = g;
-		row->shared_ns = hydra_cont_run(gnodes, g, npages, true);
-		row->repl_ns = hydra_cont_run(gnodes, g, npages, false);
+		row->shared_ns = pen;
+		row->repl_ns = fan;
 
-		if (row->shared_ns <= row->repl_ns)
+		if ((u64)pen * g <= fan)
 			best = tiers[t];
+		else
+			break;
 	}
 
 	hydra_topo.share_dist = best;
@@ -551,15 +661,16 @@ int hydra_topology_show(struct seq_file *m, void *v)
 
 	if (hydra_topo.nr_tiers) {
 		seq_puts(m, "\n contention probe  [rows = candidate sharing tier]\n");
-		seq_printf(m, " %-10s %-6s %-13s %-11s %s\n",
-			   "tier_dist", "group", "shared_ns/op", "repl_ns/op",
+		seq_printf(m, " %-10s %-6s %-12s %-11s %s\n",
+			   "tier_dist", "group", "walkpen_ns", "fanout_ns",
 			   "verdict");
 		for (i = 0; i < hydra_topo.nr_tiers; i++) {
 			struct hydra_topo_tier *t = &hydra_topo.tier[i];
 
-			seq_printf(m, " %-10d %-6d %-13u %-11u %s\n",
+			seq_printf(m, " %-10d %-6d %-12u %-11u %s\n",
 				   t->dist, t->group, t->shared_ns, t->repl_ns,
-				   t->shared_ns <= t->repl_ns ? "share" : "copy");
+				   (u64)t->shared_ns * t->group <= t->repl_ns ?
+				   "share" : "copy");
 		}
 	}
 
