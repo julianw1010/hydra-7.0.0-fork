@@ -337,12 +337,15 @@ static void hydra_cont_chain(void *base)
 			(u64 *)base + perm[(i + 1) % HYDRA_CONT_SLOTS];
 }
 
+static struct hydra_cont_ant hydra_cont_ants[NUMA_NODE_COUNT];
+static void *hydra_cont_fan_pages[NUMA_NODE_COUNT];
+
 static int hydra_cont_tier(int *gnodes, int g, struct page **npages,
 			   u32 *pen_out, u32 *fan_out)
 {
-	struct hydra_cont_ant ant[NUMA_NODE_COUNT];
+	struct hydra_cont_ant *ant = hydra_cont_ants;
 	struct hydra_cont_meas meas;
-	void *fanout[NUMA_NODE_COUNT];
+	void **fanout = hydra_cont_fan_pages;
 	atomic_t gate, stop;
 	int meas_idx = g - 1;
 	int mnode = gnodes[meas_idx];
@@ -358,7 +361,7 @@ static int hydra_cont_tier(int *gnodes, int g, struct page **npages,
 	for (i = 0; i < g; i++) {
 		if (i == meas_idx)
 			continue;
-		INIT_WORK_ONSTACK(&ant[nant].work, hydra_cont_ant_fn);
+		INIT_WORK(&ant[nant].work, hydra_cont_ant_fn);
 		ant[nant].gate = &gate;
 		ant[nant].stop = &stop;
 		ant[nant].target = page_address(npages[gnodes[0]]);
@@ -374,7 +377,6 @@ static int hydra_cont_tier(int *gnodes, int g, struct page **npages,
 	atomic_set(&stop, 1);
 	for (i = 0; i < nant; i++) {
 		flush_work(&ant[i].work);
-		destroy_work_on_stack(&ant[i].work);
 	}
 	if (ret)
 		return ret;
@@ -388,7 +390,7 @@ static int hydra_cont_tier(int *gnodes, int g, struct page **npages,
 	for (i = 0; i < g; i++) {
 		if (i == meas_idx)
 			continue;
-		INIT_WORK_ONSTACK(&ant[nant].work, hydra_cont_ant_fn);
+		INIT_WORK(&ant[nant].work, hydra_cont_ant_fn);
 		ant[nant].gate = &gate;
 		ant[nant].stop = &stop;
 		ant[nant].target = page_address(npages[gnodes[i]]);
@@ -408,7 +410,6 @@ static int hydra_cont_tier(int *gnodes, int g, struct page **npages,
 	atomic_set(&stop, 1);
 	for (i = 0; i < nant; i++) {
 		flush_work(&ant[i].work);
-		destroy_work_on_stack(&ant[i].work);
 	}
 	if (ret)
 		return ret;
