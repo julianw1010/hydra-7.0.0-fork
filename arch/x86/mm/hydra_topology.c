@@ -11,6 +11,10 @@
 #include <linux/workqueue.h>
 #include <linux/cpumask.h>
 #include <linux/vmalloc.h>
+#include <linux/sched/mm.h>
+#include <linux/kthread.h>
+#include <linux/uaccess.h>
+#include <linux/mman.h>
 #include <linux/hydra.h>
 #include <asm/cacheflush.h>
 
@@ -245,127 +249,153 @@ static void *hydra_cal_build(struct page **chunks, u32 *perm)
 	return hydra_cal_line(chunks, perm[0]);
 }
 
-#define HYDRA_CONT_SLOTS 512
-#define HYDRA_SIM_ROUNDS 16
+#define HYDRA_REAL_PAGES 65536UL
 
-struct hydra_sim {
+struct hydra_real_ctx {
+	struct mm_struct *mm;
+	unsigned long base;
 	atomic_t gate;
 	atomic_t barrier;
 	atomic_t generation;
+	atomic_t failed;
 	int g;
-	bool shared_mode;
-	void *pages[NUMA_NODE_COUNT];
 };
 
-static struct hydra_sim hydra_sim_state;
+static struct hydra_real_ctx hydra_real_state;
 
-struct hydra_sim_worker {
+struct hydra_real_worker {
 	struct work_struct work;
 	int self;
 };
 
-static struct hydra_sim_worker hydra_sim_workers[NUMA_NODE_COUNT];
+static struct hydra_real_worker hydra_real_workers[NUMA_NODE_COUNT];
 
-static void hydra_sim_barrier(struct hydra_sim *s)
+static void hydra_real_barrier(struct hydra_real_ctx *c)
 {
-	int gen = atomic_read(&s->generation);
+	int gen = atomic_read(&c->generation);
 
-	if (atomic_inc_return(&s->barrier) == s->g) {
-		atomic_set(&s->barrier, 0);
-		atomic_inc(&s->generation);
+	if (atomic_inc_return(&c->barrier) == c->g) {
+		atomic_set(&c->barrier, 0);
+		atomic_inc(&c->generation);
 	} else {
-		while (atomic_read(&s->generation) == gen)
+		while (atomic_read(&c->generation) == gen)
 			cpu_relax();
 	}
 }
 
-static void hydra_sim_fn(struct work_struct *w)
+static void hydra_real_fn(struct work_struct *w)
 {
-	struct hydra_sim_worker *sw =
-		container_of(w, struct hydra_sim_worker, work);
-	struct hydra_sim *s = &hydra_sim_state;
-	u64 *view;
-	u64 x = sw->self + 1;
-	int r, e, j;
+	struct hydra_real_worker *rw =
+		container_of(w, struct hydra_real_worker, work);
+	struct hydra_real_ctx *c = &hydra_real_state;
+	unsigned long i;
+	u64 sum = 0;
 
-	view = s->shared_mode ? s->pages[0] : s->pages[sw->self];
+	kthread_use_mm(c->mm);
 
-	while (!atomic_read(&s->gate))
+	while (!atomic_read(&c->gate))
 		cond_resched();
 
-	for (r = 0; r < HYDRA_SIM_ROUNDS; r++) {
-		hydra_sim_barrier(s);
-		for (e = sw->self; e < HYDRA_CONT_SLOTS; e += s->g) {
-			if (s->shared_mode) {
-				WRITE_ONCE(((u64 *)s->pages[0])[e],
-					   (x + e) & ~1ULL);
-			} else {
-				for (j = 0; j < s->g; j++)
-					WRITE_ONCE(((u64 *)s->pages[j])[e],
-						   (x + e) & ~1ULL);
-			}
-		}
-		hydra_sim_barrier(s);
-		for (e = 0; e < HYDRA_CONT_SLOTS; e++) {
-			unsigned long idx = (x + e) & (HYDRA_CONT_SLOTS - 1);
-			u64 v = READ_ONCE(view[idx]);
+	for (i = rw->self; i < HYDRA_REAL_PAGES; i += c->g) {
+		u64 __user *p = (u64 __user *)(c->base + (i << PAGE_SHIFT));
 
-			if (!(v & 1)) {
-				atomic_long_or(1, (atomic_long_t *)&view[idx]);
-				v |= 1;
-			}
-			x += v;
+		if (put_user((u64)i + 1, p)) {
+			atomic_set(&c->failed, 1);
+			break;
 		}
 	}
+
+	hydra_real_barrier(c);
+
+	for (i = 0; i < HYDRA_REAL_PAGES; i++) {
+		u64 __user *p = (u64 __user *)(c->base + (i << PAGE_SHIFT));
+		u64 v;
+
+		if (get_user(v, p)) {
+			atomic_set(&c->failed, 1);
+			break;
+		}
+		sum += v;
+	}
+
+	kthread_unuse_mm(c->mm);
+
+	if (sum == U64_MAX)
+		atomic_set(&c->failed, 1);
 }
 
-static int hydra_cont_tier(int *gnodes, int g, struct page **npages,
-			   u32 *shared_out, u32 *repl_out)
+static long hydra_real_mmap_fn(void *arg)
 {
-	struct hydra_sim *s = &hydra_sim_state;
-	int mode, i;
+	struct hydra_real_ctx *c = arg;
+	unsigned long addr;
 
-	for (mode = 0; mode < 2; mode++) {
-		u64 t0, t1, per;
+	kthread_use_mm(c->mm);
+	addr = vm_mmap(NULL, 0, HYDRA_REAL_PAGES << PAGE_SHIFT,
+		       PROT_READ | PROT_WRITE,
+		       MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, 0);
+	kthread_unuse_mm(c->mm);
 
-		atomic_set(&s->gate, 0);
-		atomic_set(&s->barrier, 0);
-		atomic_set(&s->generation, 0);
-		s->g = g;
-		s->shared_mode = (mode == 0);
-		for (i = 0; i < g; i++) {
-			s->pages[i] = page_address(npages[gnodes[i]]);
-			memset(s->pages[i], 0, PAGE_SIZE);
-		}
+	if (IS_ERR_VALUE(addr))
+		return -ENOMEM;
+	c->base = addr;
+	return 0;
+}
 
-		for (i = 0; i < g; i++) {
-			hydra_sim_workers[i].self = i;
-			INIT_WORK(&hydra_sim_workers[i].work, hydra_sim_fn);
-			schedule_work_on(
-				cpumask_first(cpumask_of_node(gnodes[i])),
-				&hydra_sim_workers[i].work);
-		}
+static int hydra_real_run(int *gnodes, int g, int share, u32 *ns_out)
+{
+	struct hydra_real_ctx *c = &hydra_real_state;
+	int saved = hydra_topo.share_dist;
+	u64 t0, t1;
+	int i, ret;
 
-		t0 = ktime_get_ns();
-		atomic_set(&s->gate, 1);
-		for (i = 0; i < g; i++)
-			flush_work(&hydra_sim_workers[i].work);
-		t1 = ktime_get_ns();
+	c->mm = mm_alloc();
+	if (!c->mm)
+		return -ENOMEM;
 
-		per = div64_u64(t1 - t0,
-				(u64)HYDRA_SIM_ROUNDS * HYDRA_CONT_SLOTS * g);
-		if (mode == 0)
-			*shared_out = per;
-		else
-			*repl_out = per;
+	hydra_topo.share_dist = share;
+
+	ret = hydra_enable_replication(c->mm);
+	if (ret)
+		goto out;
+
+	ret = work_on_cpu(cpumask_first(cpumask_of_node(gnodes[0])),
+			  hydra_real_mmap_fn, c);
+	if (ret)
+		goto out;
+
+	atomic_set(&c->gate, 0);
+	atomic_set(&c->barrier, 0);
+	atomic_set(&c->generation, 0);
+	atomic_set(&c->failed, 0);
+	c->g = g;
+
+	for (i = 0; i < g; i++) {
+		hydra_real_workers[i].self = i;
+		INIT_WORK(&hydra_real_workers[i].work, hydra_real_fn);
+		schedule_work_on(cpumask_first(cpumask_of_node(gnodes[i])),
+				 &hydra_real_workers[i].work);
 	}
 
-	return 0;
+	t0 = ktime_get_ns();
+	atomic_set(&c->gate, 1);
+	for (i = 0; i < g; i++)
+		flush_work(&hydra_real_workers[i].work);
+	t1 = ktime_get_ns();
+
+	if (atomic_read(&c->failed))
+		ret = -EFAULT;
+	else
+		*ns_out = div64_u64(t1 - t0, HYDRA_REAL_PAGES * (u64)g);
+
+out:
+	hydra_topo.share_dist = saved;
+	mmput(c->mm);
+	c->mm = NULL;
+	return ret;
 }
 
 static void hydra_cal_contention(void)
 {
-	struct page *npages[NUMA_NODE_COUNT];
 	int gnodes[NUMA_NODE_COUNT];
 	int tiers[8];
 	int ntier = 0, best = LOCAL_DISTANCE;
@@ -397,23 +427,10 @@ static void hydra_cal_contention(void)
 		}
 	}
 
-	for (j = 0; j < NUMA_NODE_COUNT; j++) {
-		npages[j] = alloc_pages_node(j,
-			GFP_KERNEL | __GFP_ZERO | __GFP_THISNODE, 0);
-		if (!npages[j] || page_to_nid(npages[j]) != j) {
-			if (npages[j])
-				__free_page(npages[j]);
-			while (j--)
-				__free_page(npages[j]);
-			pr_info("HYDRA: contention probe: page alloc failed, share stays at cluster dist\n");
-			return;
-		}
-	}
-
 	hydra_topo.nr_tiers = 0;
 	for (t = 0; t < ntier; t++) {
 		struct hydra_topo_tier *row;
-		u32 pen = 0, fan = 0;
+		u32 sh = 0, rp = 0;
 		int g = 0, a, b;
 
 		for (j = 0; j < NUMA_NODE_COUNT; j++) {
@@ -431,16 +448,18 @@ static void hydra_cal_contention(void)
 			}
 		}
 
-		if (hydra_cont_tier(gnodes, g, npages, &pen, &fan))
+		if (hydra_real_run(gnodes, g, LOCAL_DISTANCE, &rp))
+			continue;
+		if (hydra_real_run(gnodes, g, tiers[t], &sh))
 			continue;
 
 		row = &hydra_topo.tier[hydra_topo.nr_tiers++];
 		row->dist = tiers[t];
 		row->group = g;
-		row->shared_ns = pen;
-		row->repl_ns = fan;
+		row->shared_ns = sh;
+		row->repl_ns = rp;
 
-		if (pen <= fan)
+		if (sh <= rp)
 			best = tiers[t];
 		else
 			break;
@@ -448,10 +467,7 @@ static void hydra_cal_contention(void)
 
 	hydra_topo.share_dist = best;
 
-	for (j = 0; j < NUMA_NODE_COUNT; j++)
-		__free_page(npages[j]);
-
-	pr_info("HYDRA: contention probe: auto share dist %d (cluster dist %d, %d tiers)\n",
+	pr_info("HYDRA: real-workload calibration: auto share dist %d (cluster dist %d, %d tiers)\n",
 		best, hydra_topo.cluster_dist, hydra_topo.nr_tiers);
 }
 
@@ -604,7 +620,7 @@ int hydra_topology_show(struct seq_file *m, void *v)
 	}
 
 	if (hydra_topo.nr_tiers) {
-		seq_puts(m, "\n lifecycle simulation  [rows = candidate sharing tier, ns per entry visit]\n");
+		seq_puts(m, "\n real-workload calibration  [rows = candidate sharing tier, ns per walked page]\n");
 		seq_printf(m, " %-10s %-6s %-12s %-11s %s\n",
 			   "tier_dist", "group", "shared_ns", "repl_ns",
 			   "verdict");
