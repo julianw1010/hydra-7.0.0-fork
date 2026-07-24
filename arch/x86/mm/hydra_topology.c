@@ -249,16 +249,18 @@ static void *hydra_cal_build(struct page **chunks, u32 *perm)
 	return hydra_cal_line(chunks, perm[0]);
 }
 
-#define HYDRA_REAL_PAGES 65536UL
+#define HYDRA_REAL_MAX_PAGES 262144UL
+#define HYDRA_REAL_MAX_WORKERS 256
 
 struct hydra_real_ctx {
 	struct mm_struct *mm;
 	unsigned long base;
+	unsigned long pages;
 	atomic_t gate;
 	atomic_t barrier;
 	atomic_t generation;
 	atomic_t failed;
-	int g;
+	int nworkers;
 };
 
 static struct hydra_real_ctx hydra_real_state;
@@ -266,15 +268,17 @@ static struct hydra_real_ctx hydra_real_state;
 struct hydra_real_worker {
 	struct work_struct work;
 	int self;
+	int cpu_slot;
+	int node_cpus;
 };
 
-static struct hydra_real_worker hydra_real_workers[NUMA_NODE_COUNT];
+static struct hydra_real_worker hydra_real_workers[HYDRA_REAL_MAX_WORKERS];
 
 static void hydra_real_barrier(struct hydra_real_ctx *c)
 {
 	int gen = atomic_read(&c->generation);
 
-	if (atomic_inc_return(&c->barrier) == c->g) {
+	if (atomic_inc_return(&c->barrier) == c->nworkers) {
 		atomic_set(&c->barrier, 0);
 		atomic_inc(&c->generation);
 	} else {
@@ -289,14 +293,13 @@ static void hydra_real_fn(struct work_struct *w)
 		container_of(w, struct hydra_real_worker, work);
 	struct hydra_real_ctx *c = &hydra_real_state;
 	unsigned long i;
-	u64 sum = 0;
 
 	kthread_use_mm(c->mm);
 
 	while (!atomic_read(&c->gate))
 		cond_resched();
 
-	for (i = rw->self; i < HYDRA_REAL_PAGES; i += c->g) {
+	for (i = rw->self; i < c->pages; i += c->nworkers) {
 		u64 __user *p = (u64 __user *)(c->base + (i << PAGE_SHIFT));
 
 		if (put_user((u64)i + 1, p)) {
@@ -307,7 +310,7 @@ static void hydra_real_fn(struct work_struct *w)
 
 	hydra_real_barrier(c);
 
-	for (i = 0; i < HYDRA_REAL_PAGES; i++) {
+	for (i = rw->cpu_slot; i < c->pages; i += rw->node_cpus) {
 		u64 __user *p = (u64 __user *)(c->base + (i << PAGE_SHIFT));
 		u64 v;
 
@@ -315,13 +318,11 @@ static void hydra_real_fn(struct work_struct *w)
 			atomic_set(&c->failed, 1);
 			break;
 		}
-		sum += v;
+		if (v == U64_MAX)
+			atomic_set(&c->failed, 1);
 	}
 
 	kthread_unuse_mm(c->mm);
-
-	if (sum == U64_MAX)
-		atomic_set(&c->failed, 1);
 }
 
 static long hydra_real_mmap_fn(void *arg)
@@ -330,7 +331,7 @@ static long hydra_real_mmap_fn(void *arg)
 	unsigned long addr;
 
 	kthread_use_mm(c->mm);
-	addr = vm_mmap(NULL, 0, HYDRA_REAL_PAGES << PAGE_SHIFT,
+	addr = vm_mmap(NULL, 0, c->pages << PAGE_SHIFT,
 		       PROT_READ | PROT_WRITE,
 		       MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, 0);
 	kthread_unuse_mm(c->mm);
@@ -346,11 +347,15 @@ static int hydra_real_run(int *gnodes, int g, int share, u32 *ns_out)
 	struct hydra_real_ctx *c = &hydra_real_state;
 	int saved = hydra_topo.share_dist;
 	u64 t0, t1;
-	int i, ret;
+	int i, w, ret;
 
 	c->mm = mm_alloc();
 	if (!c->mm)
 		return -ENOMEM;
+
+	c->pages = min(HYDRA_REAL_MAX_PAGES, totalram_pages() / 32);
+	if (c->pages < 4096)
+		c->pages = 4096;
 
 	hydra_topo.share_dist = share;
 
@@ -367,31 +372,71 @@ static int hydra_real_run(int *gnodes, int g, int share, u32 *ns_out)
 	atomic_set(&c->barrier, 0);
 	atomic_set(&c->generation, 0);
 	atomic_set(&c->failed, 0);
-	c->g = g;
 
 	for (i = 0; i < g; i++) {
-		hydra_real_workers[i].self = i;
-		INIT_WORK(&hydra_real_workers[i].work, hydra_real_fn);
-		schedule_work_on(cpumask_first(cpumask_of_node(gnodes[i])),
-				 &hydra_real_workers[i].work);
+		if (!cpumask_weight(cpumask_of_node(gnodes[i]))) {
+			ret = -EINVAL;
+			goto out;
+		}
 	}
+
+	w = 0;
+	for (i = 0; i < g; i++) {
+		const struct cpumask *nodemask = cpumask_of_node(gnodes[i]);
+		int ncpu = cpumask_weight(nodemask);
+		int budget = HYDRA_REAL_MAX_WORKERS / g;
+		int cslot = 0;
+		int cpu;
+
+		if (ncpu > budget)
+			ncpu = budget;
+
+		for_each_cpu(cpu, nodemask) {
+			if (cslot >= ncpu)
+				break;
+			hydra_real_workers[w].self = w;
+			hydra_real_workers[w].cpu_slot = cslot;
+			hydra_real_workers[w].node_cpus = ncpu;
+			INIT_WORK(&hydra_real_workers[w].work, hydra_real_fn);
+			schedule_work_on(cpu, &hydra_real_workers[w].work);
+			w++;
+			cslot++;
+		}
+	}
+	c->nworkers = w;
 
 	t0 = ktime_get_ns();
 	atomic_set(&c->gate, 1);
-	for (i = 0; i < g; i++)
+	for (i = 0; i < w; i++)
 		flush_work(&hydra_real_workers[i].work);
 	t1 = ktime_get_ns();
 
 	if (atomic_read(&c->failed))
 		ret = -EFAULT;
 	else
-		*ns_out = div64_u64(t1 - t0, HYDRA_REAL_PAGES * (u64)g);
+		*ns_out = div64_u64(t1 - t0, c->pages * (u64)g);
 
 out:
 	hydra_topo.share_dist = saved;
 	mmput(c->mm);
 	c->mm = NULL;
 	return ret;
+}
+
+static int hydra_real_best(int *gnodes, int g, int share, u32 *ns_out)
+{
+	u32 best = U32_MAX, v;
+	int r;
+
+	for (r = 0; r < 2; r++) {
+		if (!hydra_real_run(gnodes, g, share, &v) && v < best)
+			best = v;
+	}
+
+	if (best == U32_MAX)
+		return -EIO;
+	*ns_out = best;
+	return 0;
 }
 
 static void hydra_cal_contention(void)
@@ -448,9 +493,9 @@ static void hydra_cal_contention(void)
 			}
 		}
 
-		if (hydra_real_run(gnodes, g, LOCAL_DISTANCE, &rp))
+		if (hydra_real_best(gnodes, g, LOCAL_DISTANCE, &rp))
 			continue;
-		if (hydra_real_run(gnodes, g, tiers[t], &sh))
+		if (hydra_real_best(gnodes, g, tiers[t], &sh))
 			continue;
 
 		row = &hydra_topo.tier[hydra_topo.nr_tiers++];
