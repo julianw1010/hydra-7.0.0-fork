@@ -322,7 +322,7 @@ static long hydra_cont_meas_fn(void *arg)
 
 static void hydra_cont_chain(void *base)
 {
-	u32 perm[HYDRA_CONT_SLOTS];
+	static u32 perm[HYDRA_CONT_SLOTS];
 	u32 i;
 
 	for (i = 0; i < HYDRA_CONT_SLOTS; i++)
