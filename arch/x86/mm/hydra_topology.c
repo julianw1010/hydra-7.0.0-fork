@@ -334,6 +334,9 @@ static long hydra_real_mmap_fn(void *arg)
 	addr = vm_mmap(NULL, 0, c->pages << PAGE_SHIFT,
 		       PROT_READ | PROT_WRITE,
 		       MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, 0);
+	if (!IS_ERR_VALUE(addr))
+		do_madvise(c->mm, addr, c->pages << PAGE_SHIFT,
+			   MADV_NOHUGEPAGE);
 	kthread_unuse_mm(c->mm);
 
 	if (IS_ERR_VALUE(addr))
@@ -423,21 +426,7 @@ out:
 	return ret;
 }
 
-static int hydra_real_best(int *gnodes, int g, int share, u32 *ns_out)
-{
-	u32 best = U32_MAX, v;
-	int r;
-
-	for (r = 0; r < 2; r++) {
-		if (!hydra_real_run(gnodes, g, share, &v) && v < best)
-			best = v;
-	}
-
-	if (best == U32_MAX)
-		return -EIO;
-	*ns_out = best;
-	return 0;
-}
+#define HYDRA_REAL_ROUNDS 3
 
 static void hydra_cal_contention(void)
 {
@@ -477,23 +466,41 @@ static void hydra_cal_contention(void)
 			cands[ncand++] = d;
 	}
 
-	hydra_topo.nr_tiers = 0;
-	for (t = 0; t < ncand; t++) {
-		struct hydra_topo_tier *row;
-		u32 ns = 0;
+	{
+		u32 per[8];
+		int r;
 
-		if (hydra_real_best(gnodes, g, cands[t], &ns))
-			continue;
+		for (t = 0; t < ncand; t++)
+			per[t] = U32_MAX;
 
-		row = &hydra_topo.tier[hydra_topo.nr_tiers++];
-		row->dist = cands[t];
-		row->group = g;
-		row->shared_ns = ns;
-		row->repl_ns = 0;
+		for (r = 0; r < HYDRA_REAL_ROUNDS; r++) {
+			for (t = 0; t < ncand; t++) {
+				u32 ns = 0;
 
-		if (ns < best_ns) {
-			best_ns = ns;
-			best = cands[t];
+				if (hydra_real_run(gnodes, g, cands[t], &ns))
+					continue;
+				if (ns < per[t])
+					per[t] = ns;
+			}
+		}
+
+		hydra_topo.nr_tiers = 0;
+		for (t = 0; t < ncand; t++) {
+			struct hydra_topo_tier *row;
+
+			if (per[t] == U32_MAX)
+				continue;
+
+			row = &hydra_topo.tier[hydra_topo.nr_tiers++];
+			row->dist = cands[t];
+			row->group = g;
+			row->shared_ns = per[t];
+			row->repl_ns = 0;
+
+			if (per[t] < best_ns) {
+				best_ns = per[t];
+				best = cands[t];
+			}
 		}
 	}
 
