@@ -17,6 +17,7 @@ int sysctl_hydra_rent_base __read_mostly = 8192;
 int sysctl_hydra_prebuild __read_mostly = 1;
 int sysctl_hydra_push __read_mostly = 1;
 int sysctl_hydra_promote __read_mostly = 1;
+int sysctl_hydra_promote_ms __read_mostly = 1000;
 
 struct page *hydra_pick_share_source(struct page *master_page, int node)
 {
@@ -416,7 +417,6 @@ void hydra_coherence_enforce(struct mm_struct *mm, unsigned long address)
 		hydra_park_pte_leaf(mm, pmd, address);
 }
 
-#define HYDRA_PROMOTE_PERIOD_MS 1000
 #define HYDRA_PROMOTE_MM_CAP 64
 #define HYDRA_PROMOTE_LEAF_BATCH 16384
 
@@ -666,13 +666,13 @@ static void hydra_promote_work_fn(struct work_struct *w)
 	}
 
 	schedule_delayed_work(&hydra_promote_work,
-			      msecs_to_jiffies(HYDRA_PROMOTE_PERIOD_MS));
+			      msecs_to_jiffies(READ_ONCE(sysctl_hydra_promote_ms)));
 }
 
 static int __init hydra_promote_init(void)
 {
 	schedule_delayed_work(&hydra_promote_work,
-			      msecs_to_jiffies(HYDRA_PROMOTE_PERIOD_MS));
+			      msecs_to_jiffies(READ_ONCE(sysctl_hydra_promote_ms)));
 	return 0;
 }
 late_initcall(hydra_promote_init);

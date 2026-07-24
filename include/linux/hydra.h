@@ -57,6 +57,7 @@ extern int sysctl_hydra_rent_base;
 extern int sysctl_hydra_prebuild;
 extern int sysctl_hydra_push;
 extern int sysctl_hydra_promote;
+extern int sysctl_hydra_promote_ms;
 
 void hydra_topology_update(void);
 int hydra_topology_calibrate(void);
