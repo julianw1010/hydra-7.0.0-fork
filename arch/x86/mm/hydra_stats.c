@@ -1,5 +1,6 @@
 #include <linux/mm.h>
 #include <linux/sched.h>
+#include <linux/sched/mm.h>
 #include <linux/slab.h>
 #include <linux/list.h>
 #include <linux/spinlock.h>
@@ -105,6 +106,30 @@ int hydra_stats_clear_history(void)
 	spin_unlock(&hydra_stats_lock);
 
 	return freed;
+}
+
+int hydra_stats_collect_repl_mms(struct mm_struct **out, int cap)
+{
+	struct hydra_stats *s;
+	int n = 0;
+
+	spin_lock(&hydra_stats_lock);
+	list_for_each_entry(s, &hydra_live_list, list) {
+		struct mm_struct *mm = s->mm;
+
+		if (n >= cap)
+			break;
+		if (!READ_ONCE(s->ever_enabled) || !mm)
+			continue;
+		if (!READ_ONCE(mm->lazy_repl_enabled))
+			continue;
+		if (!mmget_not_zero(mm))
+			continue;
+		out[n++] = mm;
+	}
+	spin_unlock(&hydra_stats_lock);
+
+	return n;
 }
 
 static void hydra_bump_max(atomic_long_t *maxp, long cur)
@@ -439,6 +464,8 @@ static void hydra_stats_print(struct seq_file *m, struct hydra_stats *s,
 			atomic_long_read(&s->coh_prebuilt));
 	hydra_print_val(m, 4, "pushed installs",
 			atomic_long_read(&s->coh_push_installs));
+	hydra_print_val(m, 4, "SHARED->SYNC promotions",
+			atomic_long_read(&s->coh_promotions));
 
 	hydra_print_section(m,
 		"autoNUMA migrations: 4KB base pages  [rows = source node, cols = dest node]");

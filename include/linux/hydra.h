@@ -56,6 +56,7 @@ extern int sysctl_hydra_share_dist;
 extern int sysctl_hydra_rent_base;
 extern int sysctl_hydra_prebuild;
 extern int sysctl_hydra_push;
+extern int sysctl_hydra_promote;
 
 void hydra_topology_update(void);
 int hydra_topology_calibrate(void);
@@ -100,6 +101,24 @@ static inline void hydra_map_node_set(struct page *master, int node)
 static inline void hydra_map_node_clear(struct page *master, int node)
 {
 	clear_bit(node, &master->hydra_map_nodes);
+}
+
+#define HYDRA_HEAT_SHIFT 32
+
+static inline bool hydra_heat_test(struct page *master, int node)
+{
+	return test_bit(HYDRA_HEAT_SHIFT + node, &master->hydra_map_nodes);
+}
+
+static inline void hydra_heat_set(struct page *master, int node)
+{
+	BUILD_BUG_ON(HYDRA_HEAT_SHIFT + NUMA_NODE_COUNT > HYDRA_PT_PARKED_BIT);
+	set_bit(HYDRA_HEAT_SHIFT + node, &master->hydra_map_nodes);
+}
+
+static inline void hydra_heat_clear(struct page *master, int node)
+{
+	clear_bit(HYDRA_HEAT_SHIFT + node, &master->hydra_map_nodes);
 }
 
 static inline void hydra_rent_charge(struct page *page)
@@ -317,6 +336,8 @@ struct hydra_stats {
 	atomic_long_t coh_prebuilt;
 	atomic_long_t coh_shared_ref_clears;
 	atomic_long_t coh_push_installs;
+	atomic_long_t coh_promotions;
+	unsigned long coh_scan_cursor;
 };
 
 struct hydra_stats *hydra_stats_attach(struct mm_struct *mm);
@@ -329,6 +350,7 @@ void hydra_vma_chown(struct vm_area_struct *vma, int node);
 int hydra_status_open(struct inode *inode, struct file *file);
 int hydra_history_open(struct inode *inode, struct file *file);
 int hydra_stats_clear_history(void);
+int hydra_stats_collect_repl_mms(struct mm_struct **out, int cap);
 
 static inline void hydra_stats_pt_write(void *tablep, int level, long pages)
 {

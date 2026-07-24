@@ -141,7 +141,7 @@ void hydra_topology_update(void)
 	if (thr <= 0)
 		thr = hydra_auto_threshold();
 	hydra_topo.cluster_dist = thr;
-	hydra_topo.share_dist = 0;
+	hydra_topo.share_dist = thr;
 	hydra_topo.nr_tiers = 0;
 
 	for (i = 0; i < NUMA_NODE_COUNT; i++)
